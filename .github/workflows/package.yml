@@ -37,12 +37,22 @@ jobs:
         run: |
           rustup update stable
           rustup default stable
-      - name: Build
+      - name: Build Unix
+        if: runner.os != 'Windows'
         shell: bash
         run: cargo build --locked --release
-      - name: Smoke test
+      - name: Build Windows
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: cargo build --locked --release
+      - name: Smoke test Unix
+        if: runner.os != 'Windows'
         shell: bash
-        run: target/release/${{ matrix.binary }} --version
+        run: target/release/xrun --version
+      - name: Smoke test Windows
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: .\target\release\xrun.exe --version
       - name: Package Unix
         if: runner.os != 'Windows'
         shell: bash
