@@ -1,0 +1,64 @@
+name: Package
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  package:
+    name: ${{ matrix.platform }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux-x86_64
+            runner: ubuntu-24.04
+            binary: xrun
+          - platform: darwin-arm64
+            runner: macos-15
+            binary: xrun
+          - platform: windows-x86_64
+            runner: windows-2022
+            binary: xrun.exe
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ilammy/msvc-dev-cmd@0b201ec74fa43914dc39ae48a89fd1d8cb592756 # v1.13.0
+        if: runner.os == 'Windows'
+        with:
+          arch: x64
+      - name: Install current stable Rust
+        shell: bash
+        run: |
+          rustup update stable
+          rustup default stable
+      - name: Build
+        shell: bash
+        run: cargo build --locked --release
+      - name: Smoke test
+        shell: bash
+        run: target/release/${{ matrix.binary }} --version
+      - name: Package Unix
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          mkdir -p dist/package
+          cp "target/release/${{ matrix.binary }}" LICENSE README.md dist/package/
+          tar -C dist/package -czf "dist/xrun-${{ matrix.platform }}.tar.gz" .
+      - name: Package Windows
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force dist/package | Out-Null
+          Copy-Item "target/release/${{ matrix.binary }}", LICENSE, README.md -Destination dist/package
+          Compress-Archive -Path dist/package/* -DestinationPath "dist/xrun-${{ matrix.platform }}.zip"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: xrun-${{ matrix.platform }}-${{ github.sha }}
+          path: dist/xrun-${{ matrix.platform }}.*
+          if-no-files-found: error
