@@ -1,6 +1,6 @@
 # xrun 设计文档
 
-状态：第一阶段设计，尚未实现。
+状态：第一阶段设计；实现与验收进度见 [README.md](README.md)。
 
 ## 1. 目标与范围
 
@@ -100,7 +100,7 @@ Coding Agent 可能受提示注入影响。白名单限制受影响来源能触�
 
 Server 首次启动时自动生成私有 CA 和服务端密钥，签发包含公开 IP SAN 及 `serverAuth` 用途的服务端证书，直接提供 `https://<公网IP>:7443` 和 WSS。证书由 xrun 管理，无需 ACME 或预先配置 HTTPS。
 
-配对链接同时携带 Token 和 CA 公钥的 SHA-256 SPKI 指纹。CLI 首次连接时，将服务端提供的根证书与链接指纹核对，再以该根为信任锚完成证书链、IP SAN、有效期和 TLS 握手签名校验；校验完成前不发送 Token 或业务数据。禁止明文引导、跳过校验和默默接受首次见到的证书。
+配对链接同时携带 Token、CA 证书和 CA 公钥的 SHA-256 SPKI 指纹。CLI 首次连接时，先核对链接内证书与指纹，再以该证书为信任锚完成证书链、IP SAN、有效期和 TLS 握手签名校验；校验完成前不发送 Token 或业务数据。禁止明文引导、跳过校验和默默接受首次见到的证书。
 
 配对链接必须经管理员已有的可信渠道交给设备。攻击者若替换整个链接，就能替换信任锚；指纹不能解决链接本身不可信的问题。配对后本地保存 CA 证书、指纹及 Server 地址，后续不依赖系统信任链；恢复链接不得覆盖已有 CA 固定值。服务端叶证书在同一 CA 下自动续期；更换 CA 必须显式重新建立信任。
 
@@ -117,7 +117,7 @@ Server 首次启动时自动生成私有 CA 和服务端密钥，签发包含公
 xrun pair
 
 # 设备端：注册身份后，显式启动 Agent
-xrun join 'https://203.0.113.10:7443/pair#token=<token>&ca=<sha256-spki>' --name mac1
+xrun join 'https://203.0.113.10:7443/pair#token=<token>&ca=<sha256-spki>&cert=<base64url-ca-der>' --name mac1
 xrun agent
 ```
 

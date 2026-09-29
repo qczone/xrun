@@ -1,0 +1,25 @@
+# Build output
+/target/
+
+# Local deployment state and credentials
+/server.toml
+/data/
+/.xrun/
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal
+*.sqlite-journal
+*.pem
+*.key
+/server.lock
+/admin.sock
+/.env
+/.env.*
+!/.env.example
+
+# Editor and OS files
+.DS_Store
+/.idea/
+/.vscode/
+*.swp
+*~
