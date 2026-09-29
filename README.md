@@ -10,7 +10,7 @@ xrun 是自托管的跨设备命令执行工具。CLI 和 Agent 使用同一个�
 cargo build --release
 ```
 
-GitHub Actions 的 `Package` 工作流可手动触发，分别构建 Linux x86_64、Windows x86_64 和 macOS Apple Silicon 压缩包。每个压缩包包含可执行文件、许可证和 README，可从对应工作流的 Artifacts 下载。
+GitHub Actions 的 `Package` 工作流可手动触发，分别构建 Linux x86_64、Windows x86_64 和 macOS Apple Silicon 压缩包。macOS 可执行文件使用 Developer ID 签名，并在 Apple 公证通过后上传。每个压缩包包含可执行文件、许可证和 README，可从对应工作流的 Artifacts 下载。
 
 在 Server 主机创建配置，例如 `server.toml`：
 
