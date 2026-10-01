@@ -740,7 +740,9 @@ async fn execute(rt: Arc<Runtime>, mut job: Job, request: Execution, input: Vec<
         args = prefix;
         program = shell;
         stdin = vec![];
-        script = Some(file);
+        // Close the write handle before the shell opens the script. TempPath
+        // retains cleanup ownership without Windows file-sharing conflicts.
+        script = Some(file.into_temp_path());
     }
     let resolved = resolve_program(&program, &cwd, &env)?;
     let mut child = {
