@@ -1049,7 +1049,9 @@ fn resolve_windows_program(
                 if ext.eq_ignore_ascii_case("bat") || ext.eq_ignore_ascii_case("cmd") {
                     bail!("SHELL_REQUIRED: {}", candidate.display());
                 }
-                return Ok(std::fs::canonicalize(candidate)?);
+                // Preserve ordinary absolute paths for child applications such as
+                // Windows PowerShell; canonicalize adds an incompatible \\?\ prefix.
+                return Ok(std::path::absolute(candidate)?);
             }
         }
     }
