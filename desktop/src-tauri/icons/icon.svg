@@ -1,0 +1,17 @@
+<?xml version="1.0" ?>
+<svg xmlns="http://www.w3.org/2000/svg" width="200" height="200" viewBox="0 0 200 200" fill="none" role="img" aria-label="xrun X icon">
+  <g transform="translate(51 170) scale(1.4)">
+    <defs>
+      <linearGradient id="xrun-icon-a" x1="0" y1="-89" x2="70" y2="-11" gradientUnits="userSpaceOnUse">
+        <stop offset="0" stop-color="#3EE0FF"/>
+        <stop offset="1" stop-color="#2F6BFF"/>
+      </linearGradient>
+      <linearGradient id="xrun-icon-b" x1="70" y1="-89" x2="0" y2="-11" gradientUnits="userSpaceOnUse">
+        <stop offset="0" stop-color="#B8F55A"/>
+        <stop offset="1" stop-color="#1FCB6B"/>
+      </linearGradient>
+    </defs>
+    <path d="M70 -89L0 -11" fill="none" stroke="url(#xrun-icon-b)" stroke-width="22" stroke-linecap="round" stroke-linejoin="round"/>
+    <path d="M0 -89L70 -11" fill="none" stroke="url(#xrun-icon-a)" stroke-width="22" stroke-linecap="round" stroke-linejoin="round"/>
+  </g>
+</svg>

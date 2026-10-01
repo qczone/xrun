@@ -1,3 +1,8 @@
+#![cfg_attr(
+    all(windows, feature = "desktop-helper"),
+    windows_subsystem = "windows"
+)]
+
 #[tokio::main]
 async fn main() {
     tracing_subscriber::fmt()

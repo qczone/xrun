@@ -1,5 +1,8 @@
 # Build output
 /target/
+/desktop/src-tauri/binaries/
+/desktop/src-tauri/gen/
+/desktop/node_modules/
 
 # Local deployment state and credentials
 /server.toml

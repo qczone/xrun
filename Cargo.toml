@@ -3,6 +3,21 @@ name = "xrun"
 version = "0.0.1-beta.1"
 edition = "2024"
 
+[workspace]
+members = ["desktop/src-tauri"]
+default-members = ["."]
+resolver = "3"
+
+[features]
+desktop-helper = []
+
+# Some Rust/LLVM versions misalign stripped proc-macro dylibs on macOS 27.
+[profile.dev.build-override]
+strip = "none"
+
+[profile.release.build-override]
+strip = "none"
+
 [dependencies]
 anyhow = "1.0.104"
 axum = { version = "0.8.9", features = ["ws"] }

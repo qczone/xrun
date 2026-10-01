@@ -12,7 +12,32 @@ cargo build --locked --release
 
 将 `target/release/xrun`（Windows 为 `xrun.exe`）放到固定目录并加入 PATH，再安装服务。CLI、Server 和 daemon 的完整发布版本必须一致。
 
-GitHub Actions 的 `Package` 工作流可手动构建 Linux x86_64、Windows x86_64 和 macOS Apple Silicon 压缩包；macOS 签名、公证需要配置已有工作流列出的凭据。
+GitHub Actions 的 `Package` 工作流可手动构建三个平台的 CLI 压缩包，以及 macOS Apple Silicon App 和 Windows x86_64 用户级安装包；macOS 签名、公证需要配置工作流列出的凭据。
+
+## 桌面 App
+
+macOS 13 及以上将 `xrun.app` 放入 `/Applications`，Windows 运行安装包。打开 App 后可以粘贴邀请链接加入部署、查看连接状态、控制后台服务，以及允许其他设备访问本机。已有 CLI 身份和配置会直接复用。
+
+已加入时，启动 App 默认显示菜单栏或系统托盘图标；点击图标打开管理窗口。关闭窗口会留在托盘。“隐藏图标”同时隐藏窗口，重新打开 App 会恢复图标和窗口。App 只有一个实例，重新打开不会启动第二个 daemon。
+
+“退出 App”只退出界面。后台服务独立运行，随用户登录启动；“停止服务”正常结束 daemon 和本机运行中的任务，保留任务结果，服务会在下次登录时再启动。“移除后台服务”取消服务的登录启动并保留本机数据。“登录时打开 App”单独控制托盘界面的登录启动。
+
+macOS App 通过 SMAppService 注册包内 LaunchAgent，系统登录项会关联到 xrun App；需要授权时界面会提示前往系统设置。Windows 后台程序运行在当前用户的登录会话中，不显示控制台窗口。纯 CLI 安装继续使用原来的系统服务。
+
+从 CLI 服务迁移时，先停止服务再在 App 中启动，App 会替换旧的服务注册；打开 App 本身不会中断已有任务。旧版 Windows daemon 不支持安全停止时，应先使用旧版 CLI 的 `xrun daemon uninstall`，再启动 App 服务。App 管理的 macOS 服务请在 App 中移除。
+
+本地构建桌面版需要 Rust、Node.js 24，以及 macOS Xcode 命令行工具或 Windows MSVC / WebView2：
+
+```bash
+cd desktop
+npm ci
+npm run build
+# 调试包，不做发布签名
+npm run build -- --debug --bundles app  # macOS
+npm run build -- --debug --bundles nsis # Windows
+```
+
+产物位于 `target/release/bundle/`。构建脚本先编译配套 daemon，再打包 App，两者完整版本必须一致。发布 macOS App 需要 Developer ID 签名和公证；Windows 安装包目前未签名。
 
 ## 部署和加入
 
@@ -135,6 +160,8 @@ PATH = "/usr/local/bin:/usr/bin:/bin"
 `xrun guide` 直接输出本 README 的使用说明。
 
 `down` 移除本机服务、保留数据；`down --purge` 经终端确认后删除本机数据。`daemon reset` 要求 daemon 已停止，明确重建任务数据库，保留设备身份。
+
+CLI 安装的服务可用 `xrun daemon stop` 正常停止、`xrun daemon start` 再启动。停止也会取消本机运行中的任务。
 
 ## 断线与结果确认
 

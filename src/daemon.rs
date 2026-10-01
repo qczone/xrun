@@ -71,6 +71,7 @@ pub fn reset() -> Result<()> {
     Ok(())
 }
 struct Runtime {
+    control: Arc<crate::control::Control>,
     id: Identity,
     store: Arc<TaskStore>,
     running: Mutex<HashMap<String, u32>>,
@@ -145,9 +146,10 @@ pub async fn shutdown_signal() {
 }
 pub async fn run() -> Result<()> {
     let _lock = instance_lock()?;
-    let mut id = Identity::load()?;
-    let _ = net::renew_identity(&mut id).await;
     let dir = config::device_dir()?;
+    let control = Arc::new(crate::control::Control::new(&dir)?);
+    let mut id = Identity::load()?;
+    tokio::select! { _=net::renew_identity(&mut id)=>{}, result=control.shutdown()=>{result?;return Ok(())} }
     if !dir.join("daemon.initialized").exists() {
         bail!("DAEMON_NOT_INITIALIZED: run daemon install")
     }
@@ -180,6 +182,7 @@ pub async fn run() -> Result<()> {
     }
     let (stop, _) = watch::channel(false);
     let rt = Arc::new(Runtime {
+        control: control.clone(),
         id,
         store,
         running: Mutex::new(HashMap::new()),
@@ -196,9 +199,11 @@ pub async fn run() -> Result<()> {
     let outcome = tokio::select! {
         result=&mut connector=>result,
         _=shutdown_signal()=>Ok(()),
+        result=control.shutdown()=>result,
         _=stop.changed()=>Err(anyhow::anyhow!("STORAGE_ERROR: {}", rt.fatal.lock().unwrap().as_deref().unwrap_or("daemon stopped"))),
     };
     rt.stopping.store(true, Ordering::SeqCst);
+    let _ = control.connected(false);
     let _ = rt.stop.send(true);
     if let Ok(jobs) = rt.store.all() {
         for job in jobs {
@@ -221,6 +226,7 @@ async fn control_reconnect(rt: Arc<Runtime>) -> Result<()> {
     loop {
         let started = tokio::time::Instant::now();
         let result = control_once(rt.clone()).await;
+        rt.control.connected(false)?;
         if started.elapsed() > Duration::from_secs(45) {
             delay = 1;
         }
@@ -265,6 +271,7 @@ async fn control_once(rt: Arc<Runtime>) -> Result<()> {
         Control::HelloAck => {}
         _ => bail!("INVALID_MESSAGE: expected hello acknowledgement"),
     }
+    rt.control.connected(true)?;
     let mut ping = tokio::time::interval(Duration::from_secs(15));
     let mut last = tokio::time::Instant::now();
     loop {

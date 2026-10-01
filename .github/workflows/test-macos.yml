@@ -8,7 +8,10 @@ permissions:
 jobs:
   test:
     runs-on: macos-15
-    timeout-minutes: 30
+    timeout-minutes: 45
+    env:
+      MACOSX_DEPLOYMENT_TARGET: '13.0'
+      CARGO_PROFILE_DEV_DEBUG: '0'
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
@@ -36,3 +39,18 @@ jobs:
           cargo fmt --all -- --check
           cargo clippy --locked --all-targets -- -D warnings
           cargo test --locked
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: desktop/package-lock.json
+      - name: Build desktop App
+        working-directory: desktop
+        run: |
+          npm ci
+          npm run check
+          npm run build -- --debug --bundles app
+      - name: Check desktop code and bundled helper
+        run: |
+          cargo clippy --locked -p xrun-desktop --all-targets -- -D warnings
+          target/debug/bundle/macos/xrun.app/Contents/MacOS/xrun-desktop --self-check

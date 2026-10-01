@@ -4,10 +4,14 @@ use crate::config::device_dir;
 use anyhow::{Context, Result, bail};
 #[cfg(unix)]
 use std::path::PathBuf;
+use std::{path::Path, time::Duration};
 
 async fn command(program: &str, args: &[&str]) -> Result<()> {
-    let output = tokio::process::Command::new(program)
-        .args(args)
+    let mut cmd = tokio::process::Command::new(program);
+    cmd.args(args);
+    #[cfg(windows)]
+    cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW for service-manager utilities.
+    let output = cmd
         .output()
         .await
         .with_context(|| format!("SERVICE_UNAVAILABLE: {program}"))?;
@@ -38,11 +42,16 @@ fn systemd_quote(value: &str) -> String {
 }
 #[cfg(target_os = "linux")]
 pub async fn install(kind: &str) -> Result<()> {
+    install_with_executable(kind, &std::env::current_exe()?).await
+}
+
+/// The desktop application must register the bundled CLI, never its own executable.
+#[cfg(target_os = "linux")]
+pub async fn install_with_executable(kind: &str, exe: &Path) -> Result<()> {
     if !["server", "daemon"].contains(&kind) {
         bail!("INVALID_SERVICE: {kind}")
     }
     let path = unit_path(kind)?;
-    let exe = std::env::current_exe()?;
     let text = format!(
         "[Unit]\nDescription=xrun {kind}\nAfter=network-online.target\n\n[Service]\nExecStart={} {kind}\nRestart=on-failure\nRestartSec=2\nTimeoutStopSec=12\n\n[Install]\nWantedBy=default.target\n",
         systemd_quote(&exe.to_string_lossy())
@@ -97,11 +106,14 @@ fn xml(s: &str) -> String {
 }
 #[cfg(target_os = "macos")]
 pub async fn install(kind: &str) -> Result<()> {
+    install_with_executable(kind, &std::env::current_exe()?).await
+}
+#[cfg(target_os = "macos")]
+pub async fn install_with_executable(kind: &str, exe: &Path) -> Result<()> {
     if kind != "daemon" {
         bail!("UNSUPPORTED_PLATFORM: Server requires Linux")
     }
     let path = unit_path(kind)?;
-    let exe = std::env::current_exe()?;
     let dir = device_dir()?;
     let log = xml(&dir.join("daemon-service.log").to_string_lossy());
     let text = format!(
@@ -149,20 +161,92 @@ pub async fn uninstall(kind: &str) -> Result<()> {
 }
 #[cfg(windows)]
 pub async fn install(kind: &str) -> Result<()> {
+    install_with_executable(kind, &std::env::current_exe()?).await
+}
+#[cfg(windows)]
+pub async fn install_with_executable(kind: &str, exe: &Path) -> Result<()> {
     if kind != "daemon" {
         bail!("UNSUPPORTED_PLATFORM: Server requires Linux")
     }
     let script = r#"$u=[Security.Principal.WindowsIdentity]::GetCurrent().Name; $a=New-ScheduledTaskAction -Execute $env:XRUN_SERVICE_EXE -Argument daemon; $t=New-ScheduledTaskTrigger -AtLogOn -User $u; $p=New-ScheduledTaskPrincipal -UserId $u -LogonType Interactive -RunLevel Limited; $s=New-ScheduledTaskSettingsSet -RestartCount 999 -RestartInterval (New-TimeSpan -Minutes 1) -ExecutionTimeLimit ([TimeSpan]::Zero) -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries; Register-ScheduledTask -TaskName xrun-daemon -Action $a -Trigger $t -Principal $p -Settings $s -Force | Out-Null; Start-ScheduledTask -TaskName xrun-daemon"#;
-    let status = tokio::process::Command::new("powershell.exe")
+    let output = tokio::process::Command::new("powershell.exe")
         .args(["-NoProfile", "-NonInteractive", "-Command", script])
-        .env("XRUN_SERVICE_EXE", std::env::current_exe()?)
-        .status()
+        .env("XRUN_SERVICE_EXE", exe)
+        .creation_flags(0x08000000)
+        .output()
         .await?;
-    if !status.success() {
-        bail!("SERVICE_FAILED: scheduled task installation failed")
+    if !output.status.success() {
+        bail!(
+            "SERVICE_FAILED: {}",
+            String::from_utf8_lossy(&output.stderr)
+        )
     }
     config::atomic_private_write(&device_dir()?.join("daemon.service"), b"scheduled-task\n")?;
     Ok(())
+}
+
+pub async fn start(kind: &str) -> Result<()> {
+    if !installed(kind)? {
+        bail!("SERVICE_NOT_INSTALLED: {kind}")
+    }
+    #[cfg(target_os = "linux")]
+    return command(
+        "systemctl",
+        &["--user", "start", &format!("xrun-{kind}.service")],
+    )
+    .await;
+    #[cfg(target_os = "macos")]
+    {
+        let domain = format!("gui/{}", unsafe { libc::getuid() });
+        let _ = command(
+            "launchctl",
+            &["bootstrap", &domain, &unit_path(kind)?.to_string_lossy()],
+        )
+        .await;
+        command(
+            "launchctl",
+            &["kickstart", &format!("{domain}/com.xrun.{kind}")],
+        )
+        .await
+    }
+    #[cfg(windows)]
+    command("schtasks", &["/Run", "/TN", &format!("xrun-{kind}")]).await
+}
+
+/// A successful daemon exit is deliberately not restarted by its supervisor.
+pub async fn stop_daemon() -> Result<()> {
+    let dir = config::device_dir()?;
+    if !config::instance_running(&dir.join("daemon.lock"))? {
+        return Ok(());
+    }
+    if crate::control::state(&dir)?.is_some() {
+        crate::control::request_shutdown(&dir)?;
+    } else {
+        // Older daemons do not have the private stop channel. Unix SIGTERM still
+        // follows the same cleanup path; Windows task termination does not.
+        #[cfg(target_os = "macos")]
+        command(
+            "launchctl",
+            &[
+                "kill",
+                "SIGTERM",
+                &format!("gui/{}/com.xrun.daemon", unsafe { libc::getuid() }),
+            ],
+        )
+        .await?;
+        #[cfg(target_os = "linux")]
+        command("systemctl", &["--user", "stop", "xrun-daemon.service"]).await?;
+        #[cfg(windows)]
+        bail!("DAEMON_UPGRADE_REQUIRED: stop the old daemon before upgrading to the desktop app");
+    }
+    tokio::time::timeout(Duration::from_secs(12), async {
+        while config::instance_running(&dir.join("daemon.lock"))? {
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+        Ok::<_, anyhow::Error>(())
+    })
+    .await
+    .context("DAEMON_STOP_TIMEOUT: daemon did not finish cleanup")?
 }
 #[cfg(windows)]
 pub async fn uninstall(kind: &str) -> Result<()> {

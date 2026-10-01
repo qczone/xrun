@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>xrun</title>
+  <link rel="stylesheet" href="style.css">
+  <script src="app.js" defer></script>
+</head>
+<body>
+  <main>
+    <header><div class="brand"><img src="icon.png" alt=""><span>xrun</span></div><span id="version" class="muted"></span></header>
+    <section class="hero">
+      <div class="eyebrow">本机设备</div>
+      <div class="headline"><h1 id="device-name">准备连接</h1><span id="badge" class="badge">检查状态</span></div>
+      <p id="summary" class="muted">正在读取本机状态…</p>
+      <dl id="identity" hidden><dt>设备 ID</dt><dd id="device-id"></dd></dl>
+      <div id="service-actions" class="actions" hidden>
+        <button id="start" class="primary">启动服务</button><button id="stop">停止服务</button>
+      </div>
+      <p id="approval" class="notice" hidden>请在系统设置 → 通用 → 登录项中允许 xrun，然后点击启动服务。</p>
+      <p id="legacy" class="notice" hidden>当前使用 CLI 安装的服务。停止后再次启动，即可迁移到 App 的后台服务。</p>
+    </section>
+
+    <section id="join-section" class="card" hidden>
+      <h2>加入已有部署</h2><p class="muted">在已加入的设备上运行 <code>xrun invite</code>，把邀请链接粘贴到这里。</p>
+      <form id="join-form">
+        <label for="link">邀请链接</label><input id="link" type="password" placeholder="xrun://…" autocomplete="off" spellcheck="false" required>
+        <label for="name">本机名称</label><input id="name" placeholder="mac1 或 win1" pattern="[a-z][a-z0-9-]{0,31}" maxlength="32" autocomplete="off" spellcheck="false" required>
+        <p class="hint">名称用小写字母、数字和短横线，以字母开头。</p>
+        <button class="primary" type="submit">加入并启动服务</button>
+      </form>
+    </section>
+
+    <section id="devices-section" class="card" hidden>
+      <div class="section-heading"><h2>设备与访问权限</h2><button id="refresh" class="text-button">刷新</button></div>
+      <p class="muted compact">允许的设备可以用本机用户的权限执行命令、传输文件和截图。</p>
+      <p id="devices-message" class="hint">点击刷新查看设备。</p><div id="devices"></div>
+    </section>
+
+    <section class="card settings">
+      <label class="toggle"><span>登录时打开 App<span class="hint">自动显示菜单栏或托盘图标</span></span><input id="autostart" type="checkbox"></label>
+      <div class="settings-row"><span>隐藏图标<span class="hint">再次打开 xrun，图标和窗口就会恢复</span></span><button id="hide">隐藏</button></div>
+      <div id="remove-row" class="settings-row" hidden><span>移除后台服务<span class="hint">保留设备身份、权限和任务记录</span></span><button id="remove" class="text-button danger">移除</button></div>
+    </section>
+    <p id="error" class="error" role="alert" hidden></p>
+    <footer>关闭窗口或退出 App，后台服务继续运行。<br>安装后的后台服务随用户登录启动；停止服务会结束运行中的任务。</footer>
+  </main>
+  <dialog id="confirm"><form method="dialog"><h2 id="confirm-title"></h2><p id="confirm-message"></p><div class="actions"><button value="cancel">取消</button><button class="primary" value="ok">确认</button></div></form></dialog>
+</body>
+</html>

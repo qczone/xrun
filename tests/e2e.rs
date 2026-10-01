@@ -607,6 +607,46 @@ async fn execution_transfer_and_identity() -> Result<()> {
     ok(cli(&target, &["join", &invite, "--no-daemon"]).await);
     let id_after = std::fs::read_to_string(target.join(".xrun/identity.toml"))?;
     assert!(id_before.contains(&target_id) && id_after.contains(&target_id));
+    // Desktop Stop must cancel jobs, record the outcome and exit successfully,
+    // so supervisors do not immediately relaunch the daemon.
+    let graceful = json(
+        cli(
+            &source,
+            &["runner1", "start", "--json", "--", &runner, "sleep"],
+        )
+        .await,
+    );
+    let graceful_id = graceful["job_id"].as_str().unwrap();
+    tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            if json(cli(&source, &["runner1", "jobs", graceful_id, "--json"]).await)["state"]
+                == "running"
+            {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    })
+    .await?;
+    assert_eq!(
+        json(cli(&target, &["status", "--json"]).await)["local"]["daemon_connected"],
+        true
+    );
+    ok(cli(&target, &["daemon", "stop"]).await);
+    assert!(
+        tokio::time::timeout(Duration::from_secs(12), target_daemon.0.wait())
+            .await??
+            .success()
+    );
+    assert!(!xrun::config::instance_running(
+        &target.join(".xrun/daemon.lock")
+    )?);
+    target_daemon = daemon(&target);
+    online(&source, "runner1").await;
+    assert_eq!(
+        json(cli(&source, &["runner1", "jobs", graceful_id, "--json"]).await)["state"],
+        "canceled"
+    );
     // A crash never replays the intent. The stored PID/start proof cleans up the
     // old process, and its result becomes lost without consuming new capacity.
     let crashed = json(

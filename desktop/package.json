@@ -1,0 +1,11 @@
+{
+  "name": "xrun-desktop",
+  "version": "0.0.1-beta.1",
+  "private": true,
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "dev": "node scripts/build.mjs --debug --no-bundle",
+    "check": "node --check ui/app.js"
+  },
+  "devDependencies": { "@tauri-apps/cli": "^2.12.0" }
+}

@@ -1,6 +1,8 @@
 pub mod cli;
+pub mod client;
 pub mod clock;
 pub mod config;
+pub mod control;
 pub mod crypto;
 pub mod daemon;
 pub mod net;
