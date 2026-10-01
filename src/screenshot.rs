@@ -1,0 +1,173 @@
+use crate::protocol::MAX_FILE;
+use anyhow::{Context, Result, bail};
+pub struct Capture {
+    pub bytes: Vec<u8>,
+    pub width: u32,
+    pub height: u32,
+    pub at: String,
+}
+pub async fn capture() -> Result<Capture> {
+    let bytes = platform().await?;
+    if bytes.len() as u64 > MAX_FILE {
+        bail!("FILE_TOO_LARGE: screenshot exceeds 64 MiB")
+    }
+    let decoder = png::Decoder::new(std::io::Cursor::new(&bytes));
+    let reader = decoder
+        .read_info()
+        .context("SCREENSHOT_FAILED: invalid PNG")?;
+    let width = reader.info().width;
+    let height = reader.info().height;
+    Ok(Capture {
+        bytes,
+        width,
+        height,
+        at: time::OffsetDateTime::now_utc()
+            .format(&time::format_description::well_known::Rfc3339)?,
+    })
+}
+#[cfg(target_os = "macos")]
+async fn platform() -> Result<Vec<u8>> {
+    #[link(name = "CoreGraphics", kind = "framework")]
+    unsafe extern "C" {
+        fn CGPreflightScreenCaptureAccess() -> bool;
+    }
+    if !unsafe { CGPreflightScreenCaptureAccess() } {
+        bail!("PERMISSION_DENIED: grant Screen Recording permission to the daemon executable")
+    }
+    let temp = tempfile::Builder::new().suffix(".png").tempfile()?;
+    let status = tokio::process::Command::new("/usr/sbin/screencapture")
+        .args(["-x", "-m"])
+        .arg(temp.path())
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .await?;
+    if !status.success() {
+        bail!("NO_DISPLAY: screenshot requires a logged-in graphical session")
+    }
+    crate::transfer::read_file(temp.path())
+}
+#[cfg(windows)]
+async fn platform() -> Result<Vec<u8>> {
+    let temp = tempfile::Builder::new().suffix(".png").tempfile()?;
+    let script = r#"Add-Type -AssemblyName System.Windows.Forms; Add-Type -AssemblyName System.Drawing
+Add-Type -TypeDefinition 'using System; using System.Runtime.InteropServices; public class DesktopCheck { [DllImport("user32.dll", SetLastError=true)] public static extern IntPtr OpenInputDesktop(uint flags, bool inherit, uint access); [DllImport("user32.dll")] public static extern bool CloseDesktop(IntPtr handle); }'
+$d=[DesktopCheck]::OpenInputDesktop(0,$false,1); if($d -eq [IntPtr]::Zero){exit 77}; [void][DesktopCheck]::CloseDesktop($d)
+$r=[Windows.Forms.Screen]::PrimaryScreen.Bounds; $b=New-Object Drawing.Bitmap $r.Width,$r.Height; $g=[Drawing.Graphics]::FromImage($b); try{$g.CopyFromScreen($r.Location,[Drawing.Point]::Empty,$r.Size);$b.Save($env:XRUN_CAPTURE_PATH,[Drawing.Imaging.ImageFormat]::Png)}finally{$g.Dispose();$b.Dispose()}"#;
+    let status = tokio::process::Command::new("powershell.exe")
+        .args(["-NoProfile", "-NonInteractive", "-Command", script])
+        .env("XRUN_CAPTURE_PATH", temp.path())
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .await?;
+    if status.code() == Some(77) {
+        bail!("SCREEN_LOCKED: interactive desktop is inaccessible")
+    }
+    if !status.success() {
+        bail!("NO_DISPLAY: screenshot requires an interactive user session")
+    }
+    crate::transfer::read_file(temp.path())
+}
+#[cfg(target_os = "linux")]
+async fn platform() -> Result<Vec<u8>> {
+    if std::env::var_os("WAYLAND_DISPLAY").is_some()
+        || std::env::var("XDG_SESSION_TYPE").is_ok_and(|s| s == "wayland")
+    {
+        bail!("SCREENSHOT_UNAVAILABLE: this release supports X11 only")
+    }
+    if std::env::var_os("DISPLAY").is_none() {
+        bail!("NO_DISPLAY: DISPLAY is unset")
+    }
+    tokio::task::spawn_blocking(x11_capture).await?
+}
+#[cfg(target_os = "linux")]
+fn x11_capture() -> Result<Vec<u8>> {
+    use x11_dl::{xlib, xrandr};
+    let x = xlib::Xlib::open().context("SCREENSHOT_UNAVAILABLE: libX11 is required")?;
+    unsafe {
+        let display = (x.XOpenDisplay)(std::ptr::null());
+        if display.is_null() {
+            bail!("NO_DISPLAY: cannot open X11 display")
+        }
+        struct DisplayGuard<'a>(&'a xlib::Xlib, *mut xlib::Display);
+        impl Drop for DisplayGuard<'_> {
+            fn drop(&mut self) {
+                unsafe {
+                    (self.0.XCloseDisplay)(self.1);
+                }
+            }
+        }
+        let _display = DisplayGuard(&x, display);
+        let screen = (x.XDefaultScreen)(display);
+        let root = (x.XRootWindow)(display, screen);
+        let (mut left, mut top) = (0, 0);
+        let (mut width, mut height) = (
+            (x.XDisplayWidth)(display, screen),
+            (x.XDisplayHeight)(display, screen),
+        );
+        if let Ok(randr) = xrandr::Xrandr::open() {
+            let mut count = 0;
+            let monitors = (randr.XRRGetMonitors)(display, root, 1, &mut count);
+            if !monitors.is_null() && count > 0 {
+                let list = std::slice::from_raw_parts(monitors, count as usize);
+                let monitor = list.iter().find(|m| m.primary != 0).unwrap_or(&list[0]);
+                left = monitor.x;
+                top = monitor.y;
+                width = monitor.width;
+                height = monitor.height;
+                (randr.XRRFreeMonitors)(monitors);
+            }
+        }
+        if width <= 0 || height <= 0 || (width as u64) * (height as u64) * 3 > 256 * 1024 * 1024 {
+            bail!("SCREENSHOT_FAILED: unsupported display size")
+        }
+        let image = (x.XGetImage)(
+            display,
+            root,
+            left,
+            top,
+            width as u32,
+            height as u32,
+            !0,
+            xlib::ZPixmap,
+        );
+        if image.is_null() {
+            bail!("SCREENSHOT_FAILED: XGetImage returned no pixels")
+        }
+        struct ImageGuard<'a>(&'a xlib::Xlib, *mut xlib::XImage);
+        impl Drop for ImageGuard<'_> {
+            fn drop(&mut self) {
+                unsafe {
+                    (self.0.XDestroyImage)(self.1);
+                }
+            }
+        }
+        let _image = ImageGuard(&x, image);
+        let masks = [(*image).red_mask, (*image).green_mask, (*image).blue_mask];
+        if masks.contains(&0) {
+            bail!("SCREENSHOT_UNAVAILABLE: indexed-color X11 displays are unsupported")
+        }
+        let mut pixels = Vec::with_capacity(width as usize * height as usize * 3);
+        for row in 0..height {
+            for col in 0..width {
+                let pixel = (x.XGetPixel)(image, col, row);
+                for mask in masks {
+                    let shift = mask.trailing_zeros();
+                    let value = (pixel & mask) >> shift;
+                    pixels.push((value * 255 / (mask >> shift)) as u8);
+                }
+            }
+        }
+        let mut bytes = vec![];
+        {
+            let mut encoder = png::Encoder::new(&mut bytes, width as u32, height as u32);
+            encoder.set_color(png::ColorType::Rgb);
+            encoder.set_depth(png::BitDepth::Eight);
+            encoder.write_header()?.write_image_data(&pixels)?;
+        }
+        Ok(bytes)
+    }
+}

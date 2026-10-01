@@ -1,142 +1,183 @@
+use crate::protocol::Registration;
 use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
 use std::{
     collections::BTreeMap,
     path::{Path, PathBuf},
 };
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ServerConfig {
-    pub listen: String,
-    pub public_url: String,
+    pub port: u16,
+    pub addresses: Vec<String>,
+    pub manual: bool,
+    pub no_detect: bool,
     pub data_dir: PathBuf,
 }
-
 impl ServerConfig {
-    pub fn load(path: &Path) -> Result<Self> {
-        let value: Self = toml::from_str(
-            &std::fs::read_to_string(path).with_context(|| format!("read {}", path.display()))?,
-        )?;
-        let url = url::Url::parse(&value.public_url)?;
-        if url.scheme() != "https" || url.host_str().is_none() || url.port().is_none() {
-            bail!("public_url must be an https URL with an explicit port");
-        }
-        Ok(value)
+    pub fn load() -> Result<Self> {
+        read(&device_dir()?.join("config.toml"))
+    }
+    pub fn save(&self) -> Result<()> {
+        write(&device_dir()?.join("config.toml"), self)
+    }
+    pub fn urls(&self) -> Vec<String> {
+        self.addresses
+            .iter()
+            .map(|a| format!("https://{a}"))
+            .collect()
     }
 }
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Identity {
     pub device_id: String,
     pub name: String,
-    pub server_url: String,
+    pub addresses: Vec<String>,
     pub ca_pem: String,
     pub cert_pem: String,
     pub key_pem: String,
+    pub registration: Registration,
 }
-
+impl Identity {
+    pub fn load() -> Result<Self> {
+        read(&device_dir()?.join("identity.toml"))
+    }
+    pub fn save(&self) -> Result<()> {
+        write(&device_dir()?.join("identity.toml"), self)
+    }
+}
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct PendingIdentity {
+    pub key_pem: String,
+    pub ca_pem: String,
+    pub pin: String,
+}
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct AgentConfig {
+pub struct DaemonConfig {
     #[serde(default)]
     pub allow_from: Vec<String>,
     #[serde(default)]
     pub default_cwd: Option<PathBuf>,
-    #[serde(default = "default_concurrency")]
+    #[serde(default = "concurrency")]
     pub max_concurrent_jobs: usize,
     #[serde(default)]
     pub env: BTreeMap<String, String>,
 }
-
-fn default_concurrency() -> usize {
+fn concurrency() -> usize {
     4
 }
-
-impl Default for AgentConfig {
+impl Default for DaemonConfig {
     fn default() -> Self {
         Self {
-            allow_from: Vec::new(),
+            allow_from: vec![],
             default_cwd: None,
             max_concurrent_jobs: 4,
             env: BTreeMap::new(),
         }
     }
 }
-
-pub fn home_dir() -> Result<PathBuf> {
-    #[cfg(unix)]
-    let value = std::env::var_os("HOME");
-    #[cfg(windows)]
-    let value = std::env::var_os("USERPROFILE").or_else(|| std::env::var_os("HOME"));
-    value
-        .map(PathBuf::from)
-        .context("HOME/USERPROFILE is unset")
-}
-
-pub fn device_dir() -> Result<PathBuf> {
-    Ok(home_dir()?.join(".xrun"))
-}
-
-impl Identity {
+impl DaemonConfig {
     pub fn load() -> Result<Self> {
-        let path = device_dir()?.join("identity.toml");
-        toml::from_str(
-            &std::fs::read_to_string(&path).with_context(|| format!("read {}", path.display()))?,
-        )
-        .context("parse identity")
-    }
-
-    pub fn save(&self) -> Result<()> {
-        let dir = device_dir()?;
-        std::fs::create_dir_all(&dir)?;
-        restrict_dir(&dir)?;
-        let path = dir.join("identity.toml");
-        atomic_private_write(&path, toml::to_string(self)?.as_bytes())
-    }
-}
-
-impl AgentConfig {
-    pub fn load() -> Result<Self> {
-        let path = device_dir()?.join("agent.toml");
-        if !path.exists() {
-            return Ok(Self::default());
-        }
-        let value: Self =
-            toml::from_str(&std::fs::read_to_string(&path)?).context("parse agent.toml")?;
+        let path = device_dir()?.join("daemon.toml");
+        let value: Self = if path.exists() {
+            read(&path)?
+        } else {
+            Self::default()
+        };
         if !(1..=64).contains(&value.max_concurrent_jobs) {
-            bail!("max_concurrent_jobs must be 1..64");
+            bail!("INVALID_CONFIG: max_concurrent_jobs must be 1..64")
         }
-        if value
-            .default_cwd
-            .as_ref()
-            .is_some_and(|cwd| !cwd.is_absolute())
-        {
-            bail!("default_cwd must be absolute");
+        if value.default_cwd.as_ref().is_some_and(|p| !p.is_absolute()) {
+            bail!("INVALID_CONFIG: default_cwd must be absolute")
         }
         if value
             .env
             .iter()
-            .any(|(k, v)| k.is_empty() || k.contains(['\0', '=']) || v.contains('\0'))
+            .any(|(k, v)| k.is_empty() || k.contains(['=', '\0']) || v.contains('\0'))
         {
-            bail!("invalid Agent environment override");
+            bail!("INVALID_CONFIG: invalid environment")
         }
         #[cfg(windows)]
         {
-            let mut names = std::collections::HashSet::new();
+            let mut keys = std::collections::HashSet::new();
             if value
                 .env
                 .keys()
-                .any(|name| !names.insert(name.to_ascii_lowercase()))
+                .any(|k| !keys.insert(k.to_ascii_lowercase()))
             {
-                bail!("duplicate Windows Agent environment key");
+                bail!("INVALID_CONFIG: duplicate environment key")
             }
         }
         Ok(value)
     }
+    pub fn save(&self) -> Result<()> {
+        write(&device_dir()?.join("daemon.toml"), self)
+    }
+}
+pub fn home_dir() -> Result<PathBuf> {
+    #[cfg(windows)]
+    let value = std::env::var_os("USERPROFILE");
+    #[cfg(not(windows))]
+    let value = std::env::var_os("HOME");
+    value
+        .map(PathBuf::from)
+        .context("HOME/USERPROFILE is unset")
+}
+pub fn device_dir() -> Result<PathBuf> {
+    Ok(home_dir()?.join(".xrun"))
+}
+pub fn instance_running(path: &Path) -> Result<bool> {
+    let file = match std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(path)
+    {
+        Ok(file) => file,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+        Err(error) => return Err(error.into()),
+    };
+    match file.try_lock() {
+        Ok(()) => Ok(false),
+        Err(std::fs::TryLockError::WouldBlock) => Ok(true),
+        Err(std::fs::TryLockError::Error(error)) => Err(error.into()),
+    }
+}
+pub fn read<T: serde::de::DeserializeOwned>(path: &Path) -> Result<T> {
+    toml::from_str(
+        &std::fs::read_to_string(path).with_context(|| format!("read {}", path.display()))?,
+    )
+    .context("parse config")
+}
+pub fn write<T: Serialize>(path: &Path, value: &T) -> Result<()> {
+    if path.parent() == Some(device_dir()?.as_path()) {
+        std::fs::create_dir_all(path.parent().unwrap())?;
+        restrict_dir(path.parent().unwrap())?;
+    }
+    atomic_private_write(path, toml::to_string(value)?.as_bytes())
 }
 
+pub fn update_permission(device_id: &str, allow: bool) -> Result<()> {
+    let lock = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(device_dir()?.join("permissions.lock"))?;
+    lock.lock()?;
+    let mut cfg = DaemonConfig::load()?;
+    cfg.allow_from.retain(|id| id != device_id);
+    if allow {
+        cfg.allow_from.push(device_id.to_string());
+    }
+    cfg.save()
+}
+pub fn sync_parent(_path: &Path) -> Result<()> {
+    #[cfg(unix)]
+    std::fs::File::open(_path.parent().context("missing parent")?)?.sync_all()?;
+    Ok(())
+}
 pub fn atomic_private_write(path: &Path, bytes: &[u8]) -> Result<()> {
     let parent = path.parent().context("path has no parent")?;
     std::fs::create_dir_all(parent)?;
@@ -150,6 +191,7 @@ pub fn atomic_private_write(path: &Path, bytes: &[u8]) -> Result<()> {
     std::io::Write::write_all(&mut file, bytes)?;
     file.as_file().sync_all()?;
     file.persist(path).map_err(|e| e.error)?;
+    sync_parent(path)?;
     #[cfg(windows)]
     private_acl(path, false)?;
     Ok(())
@@ -167,7 +209,7 @@ pub fn restrict_dir(_path: &Path) -> Result<()> {
 }
 
 #[cfg(windows)]
-fn private_acl(path: &Path, directory: bool) -> Result<()> {
+pub(crate) fn private_acl(path: &Path, directory: bool) -> Result<()> {
     use std::{
         os::windows::ffi::OsStrExt,
         ptr::{null, null_mut},

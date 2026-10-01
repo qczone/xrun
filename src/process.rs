@@ -79,12 +79,18 @@ pub fn spawn(
 
 #[cfg(unix)]
 pub fn terminate(pid: u32) {
+    if pid == 0 {
+        return;
+    }
     unsafe {
         libc::kill(-(pid as i32), libc::SIGTERM);
     }
 }
 #[cfg(unix)]
 pub fn force_kill(pid: u32) {
+    if pid == 0 {
+        return;
+    }
     unsafe {
         libc::kill(-(pid as i32), libc::SIGKILL);
     }
@@ -275,13 +281,13 @@ mod windows {
     }
 
     unsafe fn pipe() -> Result<(Handle, Handle)> {
-        let mut sa = SECURITY_ATTRIBUTES {
+        let sa = SECURITY_ATTRIBUTES {
             nLength: size_of::<SECURITY_ATTRIBUTES>() as u32,
             lpSecurityDescriptor: null_mut(),
             bInheritHandle: 1,
         };
         let (mut read, mut write) = (null_mut(), null_mut());
-        if unsafe { CreatePipe(&mut read, &mut write, &mut sa, 0) } == 0 {
+        if unsafe { CreatePipe(&mut read, &mut write, &sa, 0) } == 0 {
             return Err(std::io::Error::last_os_error().into());
         }
         Ok((Handle::new(read)?, Handle::new(write)?))
@@ -292,7 +298,7 @@ mod windows {
         args: &[String],
         cwd: &Path,
         env: &BTreeMap<String, String>,
-        job_id: &str,
+        _job_id: &str,
     ) -> Result<Spawned> {
         let app = wide(path.as_os_str());
         let cwd_w = wide(cwd.as_os_str());
@@ -314,8 +320,7 @@ mod windows {
                 return Err(std::io::Error::last_os_error().into());
             }
         }
-        let name = wide(OsStr::new(&format!("Local\\xrun_{job_id}")));
-        let job = Handle::new(unsafe { CreateJobObjectW(null(), name.as_ptr()) })?;
+        let job = Handle::new(unsafe { CreateJobObjectW(null(), null()) })?;
         let mut limit = JOBOBJECT_EXTENDED_LIMIT_INFORMATION::default();
         limit.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
         if unsafe {

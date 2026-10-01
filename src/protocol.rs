@@ -1,30 +1,98 @@
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
-
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
-pub const MAX_STDIN: usize = 1024 * 1024;
-pub const MAX_EXEC_BODY: usize = 2 * 1024 * 1024;
-pub const MAX_OUTPUT_CHUNK: usize = 32 * 1024;
-
+pub const MAX_MESSAGE: usize = 1024 * 1024;
+pub const MAX_INPUT: usize = 1024 * 1024;
+pub const MAX_FILE: u64 = 64 * 1024 * 1024;
+pub const FILE_CHUNK: usize = 64 * 1024;
+pub const LOG_CHUNK: usize = 32 * 1024;
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Device {
+    pub device_id: String,
+    pub name: String,
+    pub online: bool,
+    pub admin: bool,
+    pub revoked: bool,
+    pub os: Option<String>,
+    pub arch: Option<String>,
+    #[serde(rename = "daemon_version")]
+    pub version: Option<String>,
+    pub hostname: Option<String>,
+    pub execution_user: Option<String>,
+    pub default_cwd: Option<String>,
+    pub last_seen: Option<i64>,
+}
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Registration {
+    pub inviter_id: Option<String>,
+    pub allow_inviter: bool,
+}
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PairRequest {
+    pub token: String,
+    pub name: String,
+    pub csr_base64: String,
+}
+#[derive(Debug, Serialize, Deserialize)]
+pub struct PairResponse {
+    pub device_id: String,
+    pub name: String,
+    pub cert_pem: String,
+    pub registration: Registration,
+}
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
+pub enum Control {
+    Hello {
+        version: String,
+        os: String,
+        arch: String,
+        hostname: Option<String>,
+        execution_user: Option<String>,
+        default_cwd: Option<String>,
+    },
+    HelloAck,
+    SessionRequest {
+        session_id: String,
+        source_device_id: String,
+    },
+    SessionReject {
+        session_id: String,
+        code: String,
+    },
+    Grant {
+        device_id: String,
+    },
+    GrantAck {
+        device_id: String,
+    },
+}
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct ExecRequest {
+pub struct Execution {
     pub request_id: String,
-    pub target_device_id: String,
+    pub db_id: String,
     pub program: String,
-    #[serde(default)]
     pub args: Vec<String>,
-    pub cwd: Option<String>,
-    #[serde(default)]
+    pub cwd: String,
     pub env: BTreeMap<String, String>,
-    pub stdin_base64: Option<String>,
-    pub timeout_seconds: u64,
+    pub timeout: u64,
+    pub shell: Option<String>,
+    pub input_size: u64,
+    pub input_sha256: String,
 }
-
+impl Execution {
+    pub fn hash(&self) -> String {
+        let mut value = serde_json::to_value(self).expect("serializable execution");
+        value.as_object_mut().unwrap().remove("request_id");
+        value.as_object_mut().unwrap().remove("db_id");
+        sha256(&serde_json::to_vec(&value).unwrap())
+    }
+}
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum JobState {
-    Accepted,
     Starting,
     Running,
     Exited,
@@ -32,174 +100,193 @@ pub enum JobState {
     Canceled,
     TimedOut,
     Lost,
-    Unknown,
 }
-
 impl JobState {
     pub fn terminal(&self) -> bool {
-        matches!(
-            self,
-            Self::Exited | Self::Failed | Self::Canceled | Self::TimedOut | Self::Lost
-        )
+        !matches!(self, Self::Starting | Self::Running)
     }
 }
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ErrorData {
-    pub code: String,
-    pub message: String,
+pub struct ProcessIdentity {
+    pub pid: u32,
+    pub boot_id: String,
+    pub start: Option<String>,
 }
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Job {
     pub job_id: String,
     pub request_id: String,
+    pub request_hash: String,
     pub source_device_id: String,
     pub target_device_id: String,
-    pub request_hash: String,
+    pub db_id: String,
     pub program: String,
     pub args: Vec<String>,
-    pub cwd: Option<String>,
+    pub cwd: String,
     pub state: JobState,
-    pub last_confirmed_state: JobState,
-    pub origin: String,
     pub exit_code: Option<i64>,
     pub signal: Option<i32>,
     pub duration_ms: Option<u64>,
     pub last_seq: u64,
     pub output_complete: bool,
-    pub error: Option<ErrorData>,
-    pub created_at_ms: u64,
-    pub updated_at_ms: u64,
-    pub dispatch_started: bool,
-    pub target_store_id: String,
+    pub incomplete_reason: Option<String>,
+    pub error: Option<String>,
+    pub created_at_ms: i64,
+    pub updated_at_ms: i64,
+    pub leftover_possible: bool,
+    pub process: Option<ProcessIdentity>,
 }
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Device {
-    pub device_id: String,
-    pub name: String,
-    pub os: String,
-    pub arch: String,
-    pub hostname: String,
-    pub agent_version: String,
-    pub execution_user: String,
-    pub home_dir: String,
-    pub default_cwd: String,
-    pub path: String,
-    pub online: bool,
-    pub last_seen_ms: Option<u64>,
-    pub allow_from: Vec<String>,
-    pub store_id: String,
-    pub boot_id: String,
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LogEvent {
-    pub job_id: String,
     pub seq: u64,
     pub stream: String,
     pub data_base64: String,
 }
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(tag = "type", rename_all = "snake_case")]
-pub enum AgentMessage {
-    Hello {
-        agent_version: String,
-        store_id: String,
-        boot_id: String,
-        os: String,
-        arch: String,
-        hostname: String,
-        execution_user: String,
-        home_dir: String,
-        default_cwd: String,
-        path: String,
-        allow_from: Vec<String>,
+#[serde(tag = "op", rename_all = "snake_case", deny_unknown_fields)]
+pub enum Request {
+    Exec {
+        execution: Execution,
     },
-    State {
-        job: Job,
-    },
-    Output {
-        event: LogEvent,
-    },
-    ReconcileResult {
-        job: Job,
+    Jobs {
+        id: Option<String>,
+        running: bool,
+        request_id: Option<String>,
+        limit: usize,
+        offset: usize,
     },
     Logs {
-        correlation_id: String,
-        events: Vec<LogEvent>,
-        done: bool,
-    },
-    Pong,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(tag = "type", rename_all = "snake_case")]
-pub enum ServerMessage {
-    HelloAck {
-        session_id: String,
-    },
-    Exec {
-        job_id: String,
-        source_device_id: String,
-        store_id: String,
-        session_id: String,
-        request_hash: String,
-        request: Box<ExecRequest>,
-    },
-    Cancel {
-        job_id: String,
-        source_device_id: String,
-    },
-    ReconcileJob {
-        job_id: String,
-    },
-    ReadLogs {
-        correlation_id: String,
-        job_id: String,
+        id: String,
         after: u64,
+        follow: bool,
     },
-    Ping,
+    Wait {
+        id: String,
+    },
+    Kill {
+        id: String,
+    },
+    Push {
+        path: String,
+        cwd: Option<String>,
+        size: u64,
+        sha256: String,
+        mkdir: bool,
+        no_overwrite: bool,
+        expect: Option<String>,
+    },
+    Pull {
+        path: String,
+        cwd: Option<String>,
+    },
+    Screenshot,
 }
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct PairRequest {
-    pub token: String,
-    pub name: Option<String>,
-    pub csr_base64: String,
+#[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
+pub enum Data {
+    Ready {
+        version: String,
+        device_id: String,
+        db_id: String,
+        default_cwd: String,
+    },
+    Request {
+        request: Request,
+    },
+    Job {
+        job: Job,
+    },
+    Jobs {
+        jobs: Vec<Job>,
+    },
+    Logs {
+        events: Vec<LogEvent>,
+        job: Job,
+    },
+    File {
+        path: String,
+        size: u64,
+        sha256: String,
+        width: Option<u32>,
+        height: Option<u32>,
+        captured_at: Option<String>,
+    },
+    End,
+    Error {
+        code: String,
+        message: String,
+    },
 }
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct PairResponse {
-    pub device_id: String,
-    pub name: String,
-    pub cert_pem: String,
-    pub ca_pem: String,
-    pub server_url: String,
+impl Data {
+    pub fn error(error: &anyhow::Error) -> Self {
+        let message = format!("{error:#}");
+        let candidate = message
+            .split([':', ' '])
+            .next()
+            .unwrap_or("EXECUTION_ERROR")
+            .to_string();
+        let code = if candidate
+            .bytes()
+            .all(|c| c.is_ascii_uppercase() || c == b'_')
+        {
+            candidate
+        } else if let Some(error) = error
+            .chain()
+            .find_map(|e| e.downcast_ref::<std::io::Error>())
+        {
+            match error.kind() {
+                std::io::ErrorKind::NotFound => "FILE_NOT_FOUND",
+                std::io::ErrorKind::PermissionDenied => "PERMISSION_DENIED",
+                std::io::ErrorKind::WouldBlock => "FILE_BUSY",
+                std::io::ErrorKind::InvalidInput => "INVALID_PATH",
+                _ => "STORAGE_ERROR",
+            }
+            .to_string()
+        } else {
+            "EXECUTION_ERROR".to_string()
+        };
+        Self::Error { code, message }
+    }
 }
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct RenewRequest {
-    pub csr_base64: String,
+pub fn sha256(bytes: &[u8]) -> String {
+    use sha2::{Digest, Sha256};
+    hex::encode(Sha256::digest(bytes))
 }
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct RenewResponse {
-    pub cert_pem: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ApiError {
-    pub error: ErrorData,
-}
-
-pub fn now_ms() -> u64 {
+pub fn now_ms() -> i64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
-        .as_millis() as u64
+        .as_millis() as i64
+}
+pub const RESERVED: &[&str] = &[
+    "up",
+    "join",
+    "invite",
+    "allow-from",
+    "deny-from",
+    "revoke",
+    "status",
+    "recent",
+    "down",
+    "server",
+    "daemon",
+    "guide",
+    "start",
+    "info",
+    "jobs",
+    "wait",
+    "logs",
+    "kill",
+    "push",
+    "pull",
+    "screenshot",
+    "help",
+];
+pub fn valid_name(name: &str) -> bool {
+    !RESERVED.contains(&name)
+        && (1..=32).contains(&name.len())
+        && name.as_bytes()[0].is_ascii_lowercase()
+        && name
+            .bytes()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == b'-')
 }
