@@ -729,8 +729,8 @@ CLI、Server 和 daemon 的完整发布版本必须完全一致，使用二进�
 | 环境 | 已运行的检查 | 尚需验收 |
 | --- | --- | --- |
 | macOS ARM64 | fmt/clippy；真实 TLS 配对、参数和输入字节、退出码、后台任务、去重、并发、文件、撤销、daemon 崩溃、DB_RESET、日志保留与状态查询 | LaunchAgent、真实桌面/TCC、睡眠和磁盘故障 |
-| Linux ARM64 容器 | 上述执行/传输测试；up 前台部署、手动地址保留、CA 稳定和管理身份恢复；Xvfb PNG 截图 | systemd/linger、真实桌面、睡眠和磁盘故障 |
-| Windows x86_64 | 交叉类型检查；已配置原生 CI 测试入口 | 原生进程/编码、登录计划任务、截图与锁屏 |
+| Linux ARM64 容器、x86_64 CI | 上述执行/传输测试；up 前台部署、手动地址保留、CA 稳定和管理身份恢复；Xvfb PNG 截图；1 MiB 主线程栈下的执行与取消回归检查 | systemd/linger、真实桌面、睡眠和磁盘故障 |
+| Windows x86_64 原生 CI | fmt/clippy；真实 TLS 配对、原生进程参数和输入字节、退出码、PowerShell UTF-8/BOM 脚本、后台任务、去重、并发、文件传输和原子替换、撤销、daemon 崩溃、DB_RESET、日志保留与状态查询 | 登录计划任务、截图与锁屏 |
 
 ## 8. 验收标准
 
