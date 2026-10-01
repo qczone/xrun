@@ -1044,12 +1044,14 @@ fn save_download(
     if let Some(path) = path {
         return crate::transfer::save_local(&std::env::current_dir()?.join(path), bytes);
     }
-    let temp = tempfile::Builder::new()
+    let mut temp = tempfile::Builder::new()
         .prefix(prefix)
         .suffix(suffix)
         .tempfile()?;
-    let path = crate::transfer::save_local(temp.path(), bytes)?;
-    temp.into_temp_path().keep()?;
+    temp.write_all(bytes)?;
+    temp.as_file().sync_all()?;
+    config::sync_parent(temp.path())?;
+    let (_, path) = temp.keep()?;
     Ok(path)
 }
 async fn remote(cli: DeviceCli) -> Result<i32> {

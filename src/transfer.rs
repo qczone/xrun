@@ -244,6 +244,9 @@ fn replace(temp: tempfile::NamedTempFile, path: &Path) -> Result<()> {
 }
 #[cfg(windows)]
 fn replace(temp: tempfile::NamedTempFile, path: &Path) -> Result<()> {
+    // ReplaceFileW opens its replacement without sharing, so release our
+    // write handle while retaining cleanup ownership of its path.
+    let temp = temp.into_temp_path();
     if !path.exists() {
         temp.persist(path).map_err(|e| e.error)?;
         return Ok(());
@@ -251,12 +254,7 @@ fn replace(temp: tempfile::NamedTempFile, path: &Path) -> Result<()> {
     use std::os::windows::ffi::OsStrExt;
     use windows_sys::Win32::Storage::FileSystem::ReplaceFileW;
     let old: Vec<u16> = path.as_os_str().encode_wide().chain(Some(0)).collect();
-    let new: Vec<u16> = temp
-        .path()
-        .as_os_str()
-        .encode_wide()
-        .chain(Some(0))
-        .collect();
+    let new: Vec<u16> = temp.as_os_str().encode_wide().chain(Some(0)).collect();
     if unsafe {
         ReplaceFileW(
             old.as_ptr(),
