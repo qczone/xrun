@@ -12,6 +12,8 @@ pub struct ManagedChild {
     pub stderr: Option<Output>,
     #[cfg(unix)]
     child: tokio::process::Child,
+    #[cfg(unix)]
+    reaped: bool,
     #[cfg(windows)]
     child: windows::NativeChild,
 }
@@ -20,11 +22,59 @@ impl ManagedChild {
     pub async fn wait(&mut self) -> Result<std::process::ExitStatus> {
         #[cfg(unix)]
         {
-            Ok(self.child.wait().await?)
+            use std::os::unix::process::ExitStatusExt;
+            loop {
+                {
+                    let mut info: libc::siginfo_t = unsafe { std::mem::zeroed() };
+                    let result = unsafe {
+                        libc::waitid(
+                            libc::P_PID,
+                            self.pid as libc::id_t,
+                            &mut info,
+                            libc::WEXITED | libc::WNOWAIT | libc::WNOHANG,
+                        )
+                    };
+                    if result == -1 {
+                        let error = std::io::Error::last_os_error();
+                        if error.kind() == std::io::ErrorKind::Interrupted {
+                            continue;
+                        }
+                        return Err(error.into());
+                    }
+                    if unsafe { info.si_pid() } != 0 {
+                        let status = unsafe { info.si_status() };
+                        let raw = match info.si_code {
+                            libc::CLD_EXITED => status << 8,
+                            libc::CLD_DUMPED => status | 0x80,
+                            _ => status,
+                        };
+                        return Ok(std::process::ExitStatus::from_raw(raw));
+                    }
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+            }
         }
         #[cfg(windows)]
         {
             self.child.wait().await
+        }
+    }
+    // Keep the leader waitable until all group signals have been sent. Its PID
+    // cannot be reused while it remains a zombie.
+    pub async fn reap(&mut self) -> Result<()> {
+        #[cfg(unix)]
+        {
+            self.reaped = true;
+            self.child.wait().await?;
+        }
+        Ok(())
+    }
+}
+#[cfg(unix)]
+impl Drop for ManagedChild {
+    fn drop(&mut self) {
+        if !self.reaped {
+            force_kill(self.pid);
         }
     }
 }
@@ -36,6 +86,7 @@ pub fn spawn(
     cwd: &Path,
     env: &BTreeMap<String, String>,
     _job_id: &str,
+    _cmd_script: bool,
 ) -> Result<ManagedChild> {
     use std::os::unix::process::CommandExt;
     let mut cmd = tokio::process::Command::new(path);
@@ -56,6 +107,7 @@ pub fn spawn(
         stdout: Some(Box::new(child.stdout.take().unwrap())),
         stderr: Some(Box::new(child.stderr.take().unwrap())),
         child,
+        reaped: false,
     })
 }
 
@@ -66,8 +118,9 @@ pub fn spawn(
     cwd: &Path,
     env: &BTreeMap<String, String>,
     job_id: &str,
+    cmd_script: bool,
 ) -> Result<ManagedChild> {
-    let native = windows::spawn(path, args, cwd, env, job_id)?;
+    let native = windows::spawn(path, args, cwd, env, job_id, cmd_script)?;
     Ok(ManagedChild {
         pid: native.pid,
         stdin: Some(Box::new(native.stdin)),
@@ -299,19 +352,43 @@ mod windows {
         cwd: &Path,
         env: &BTreeMap<String, String>,
         _job_id: &str,
+        cmd_script: bool,
     ) -> Result<Spawned> {
         let app = wide(path.as_os_str());
         let cwd_w = wide(cwd.as_os_str());
         let mut cmdline = quote_arg(&path.to_string_lossy());
-        for arg in args {
-            cmdline.push(' ');
-            cmdline.push_str(&quote_arg(arg));
+        let mut env = env.clone();
+        if cmd_script {
+            // cmd has different quoting rules from the CRT. Expand each value
+            // once inside quotes, with delayed expansion disabled, so paths
+            // containing &, ^, %, ! and spaces remain literal.
+            cmdline.push_str(" /D /S /V:OFF /C \"");
+            for (i, arg) in args.iter().enumerate() {
+                if arg.contains(['\"', '\r', '\n']) {
+                    bail!(
+                        "INVALID_SCRIPT_ARGUMENT: cmd arguments cannot contain quotes or newlines"
+                    );
+                }
+                let name = format!("XRUN_CMD_ARG_{i}");
+                env.retain(|key, _| !key.eq_ignore_ascii_case(&name));
+                env.insert(name.clone(), arg.clone());
+                if i != 0 {
+                    cmdline.push(' ');
+                }
+                cmdline.push_str(&format!("\"%{name}%\""));
+            }
+            cmdline.push('\"');
+        } else {
+            for arg in args {
+                cmdline.push(' ');
+                cmdline.push_str(&quote_arg(arg));
+            }
         }
         let mut command: Vec<u16> = cmdline.encode_utf16().chain(std::iter::once(0)).collect();
         if command.len() > 32767 {
             bail!("Windows command line exceeds 32767 UTF-16 units");
         }
-        let environment = environment(env)?;
+        let environment = environment(&env)?;
         let (stdin_read, stdin_write) = unsafe { pipe()? };
         let (stdout_read, stdout_write) = unsafe { pipe()? };
         let (stderr_read, stderr_write) = unsafe { pipe()? };

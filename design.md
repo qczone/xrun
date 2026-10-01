@@ -1,6 +1,6 @@
 # xrun 设计文档
 
-核心功能已实现。Linux/macOS 执行与传输、Linux X11 截图已有运行证据；Windows 原生、系统服务和真实桌面场景仍按第 8 节验收。使用说明见 [README.md](README.md)。
+核心功能已实现。Linux、macOS、Windows 原生执行与传输、Linux X11 截图已有运行证据；系统服务与真实桌面场景的验收进度见当前验证记录，验收标准见第 8 节。使用说明见 [README.md](README.md)。
 
 ## 1. 概述
 
@@ -118,20 +118,20 @@ xrun join 'xrun://203.0.113.10:9528,172.31.5.20:9528/7q3kxm…#r4t9…'
 mac1 (dev_…)
 ```
 
-之后可执行 `xrun admin -- uname -a`。命令诊断使用英文，`guide` 输出 README 内容。
+在 Linux Server 上执行 `xrun allow-from mac1` 后，Mac 可以执行 `xrun admin -- uname -a`。需要反向控制时，在 Mac 执行 `xrun allow-from admin`。命令诊断使用英文，`guide` 输出 README 内容。
 
 ### 2.4 信任与授权
 
-- Server 是受信任节点。TLS 保护设备与 Server 之间的连接；Server 主机上的人能够看到或修改会话内容。
+- Server 完全受信任。TLS 保护设备与 Server 之间的连接；Server 能看到或修改命令、输出和文件内容，也能向 daemon 下发邀请授权。Server 被攻破可能导致所有设备被控制。
 - daemon 以启动它的用户身份运行，不提权，不提供沙箱。授权控制一台设备，就授予了该用户可执行命令和访问文件的权限。
 - 每个 daemon 在 `daemon.toml` 中保存来源白名单 `allow_from`，以设备 ID 为键，约束执行、文件传输、截图、任务查询、日志和取消。默认拒绝所有来源。
 - Server 只认证设备和转发，不保存白名单副本。
-- **邀请即互信**：首次注册时，新设备将邀请方加入本机白名单；邀请方的 daemon 在线时，Server 通知它加入新设备。邀请方不在线时，`join` 提示之后执行 `xrun allow-from <新设备>`，Server 不保存待授权队列。
-- `invite --no-allow` 只注册、不授权。注册重试、更新地址和证书更新都不产生新的授权。
+- 邀请默认只注册、不授权。显式使用 `invite --allow` 或 `up --allow` 时，首次注册的新设备将邀请方加入本机白名单；邀请方的 daemon 在线时，Server 通知它加入新设备。邀请方不在线时，`join` 提示之后执行 `xrun allow-from <新设备>`，Server 不保存待授权队列。
+- 注册重试、更新地址和证书更新都不产生新的授权。撤销设备时，在同一数据库事务中删除它生成的未使用邀请；创建邀请和注册时都检查邀请方仍然有效。已加入的设备不被连带撤销。
 - `allow-from/deny-from` 在被控设备上执行，参数是调用来源。例如在 win1 执行 `xrun allow-from mac1`，表示允许 mac1 控制 win1。可以手动编辑白名单，也可以经已授权的远程执行调整，几秒内生效；每次热更新都关闭已不允许的来源会话。
 - `deny-from` 不终止已启动任务；需要时先取消并确认。管理设备可以用本机命令 `xrun revoke <设备>` 切断该身份的全部连接。
 
-邀请链接通过可信渠道传递。默认邀请意味着对邀请方的控制权。第三台设备与邀请双方之间仍然默认拒绝。
+邀请链接通过可信渠道传递，CLI 输出时提醒它是一次性凭证。带 `--allow` 的邀请意味着对邀请方的控制权。第三台设备与邀请双方之间仍然默认拒绝。
 
 ## 3. Linux Server
 
@@ -140,6 +140,8 @@ mac1 (dev_…)
 Server 只支持 Linux。默认使用 systemd 用户服务，并启用 linger，使用户退出后和机器重启后继续运行。没有 systemd 时，用 `up --no-service` 在前台运行，由使用方管理进程。
 
 Server 监听默认 TCP 9528，默认绑定 `0.0.0.0`。本版 Server 监听和客户端连接均只支持 IPv4；手动指定的域名必须有 A 记录，客户端只使用其 IPv4 地址。只有 AAAA 记录的域名和纯 IPv6 网络不支持。使用方放行入站端口，xrun 不自动修改防火墙或云安全组。
+
+Server 最多保留 512 条 TCP 连接，每个 IP 最多 16 条尚未认证的连接；WebSocket 升级后仍占用总连接名额。TLS 握手和 HTTP 请求头分别最多等待 10 秒，升级前的整个 HTTP 连接最多 30 秒，并关闭 HTTP keep-alive。accept 出错时记录日志，间隔 250 毫秒重试，不退出服务。连接限制只缓解资源耗尽，不承诺在持续攻击下始终可用。
 
 ### 3.2 部署：`xrun up`
 
@@ -302,9 +304,9 @@ xrun <设备> start [执行选项] -- <程序> [程序参数…]
 
 | 命令 | 用途 |
 | --- | --- |
-| `xrun up [--port N] [--addr 主机:端口] [--no-detect] [--no-service] [--no-daemon]` | 只在 Linux 上部署 Server |
+| `xrun up [--port N] [--addr 主机:端口] [--allow] [--no-detect] [--no-service] [--no-daemon]` | 只在 Linux 上部署 Server，邀请默认只注册 |
 | `xrun join <链接> [--name 名称] [--no-daemon]` | 首次加入，或恢复同一设备的地址和证书 |
-| `xrun invite [--no-allow]` | 以本机身份生成邀请 |
+| `xrun invite [--allow]` | 以本机身份生成邀请，默认只注册 |
 | `xrun allow-from <来源设备>`、`xrun deny-from <来源设备>` | 允许或拒绝该来源控制本机 daemon |
 | `xrun revoke <设备>` | 本机须为管理设备身份；向 Server 撤销该设备，不要求目标在线 |
 | `xrun status` | 显示本机状态和已加入的设备列表 |
@@ -433,10 +435,12 @@ AI 应把“执行未确认”与“已失败”区分开。xrun 不根据相同
 | --- | --- |
 | `powershell` | UTF-8 BOM；`powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File` |
 | `pwsh` | UTF-8；`pwsh -NoProfile -NonInteractive -File` |
-| `cmd` | CRLF，只保证 ASCII；`cmd.exe /D /C` |
+| `cmd` | CRLF，只保证 ASCII；`cmd.exe /D /S /V:OFF /C`，使用 cmd 的引号规则保护脚本路径与参数 |
 | `sh/bash/zsh` | 原样；使用所选 Shell 执行 |
 
 `--script` 必须显式指定上述 Shell，不按目标平台选择默认值；缺少名称返回参数错误。未安装所选 Shell 返回 `SHELL_NOT_FOUND`。脚本参数写在 `--` 后面；脚本与 `--stdin` 互斥。
+
+cmd 脚本参数不接受双引号或换行，返回 `INVALID_SCRIPT_ARGUMENT`；空格、`&`、`^`、`%` 和 `!` 按字面传入。脚本自身仍须正确引用参数，xrun 不改写脚本内容。
 
 进程默认 stdin 为 EOF。`--stdin` 要求管道或重定向，CLI 先完整读取最多 1 MiB；超限或失败时不提交。daemon 收齐后才启动任务，写 stdin 与读取输出同时进行。进程提前关闭 stdin 时以进程结果为准，其他输入写入错误取消任务并报告 `STDIN_IO_ERROR`。输入可包含 NUL 和非 UTF-8 字节。
 
@@ -451,6 +455,8 @@ AI 应把“执行未确认”与“已失败”区分开。xrun 不根据相同
 
 脱离 Unix 进程组的进程不受管理；取消和超时的保证限于受管理的进程。终止失败时不能提前报告已取消或已超时。
 
+Unix 使用 `waitid(WNOWAIT)` 观察主进程退出，保留其可等待状态；清理进程组并移除运行记录后才回收主进程，避免向已复用的进程组 ID 发送信号。
+
 ### 4.10 单个文件传输
 
 push、pull 和截图请求由 daemon 直接处理，不创建任务，使用相同来源白名单，共享每台设备最多 8 个请求的并发上限。文件传输只处理单个文件，内容为原始字节，不解析文本、编码、换行或编辑指令。
@@ -463,6 +469,8 @@ push、pull 和截图请求由 daemon 直接处理，不创建任务，使用相
 | `xrun <设备> pull <远端源> [本地目标] [-C 目录] [--json]` | 下载最多 64 MiB 的单个文件；校验完成后保存，stdout 输出本地绝对路径；本地目标为 - 时输出原始字节 |
 
 路径按**源、目标**排列。push 的两条路径都必填；pull 省略本地目标时保存到系统临时目录中的唯一文件。本地相对路径以 CLI 当前目录为准，`-C` 只影响远端路径。目标按文件路径处理，不自动拼接文件名；创建远端父目录用 `--mkdir`，本地父目录需已存在。
+
+pull 和截图保存到指定本地路径时，拒绝最后一级符号链接（包括悬空链接），在同目录写入临时文件并原子替换该文件名，不跟随最终目标。已有普通文件保留权限位；Windows 的本地新文件继承父目录 ACL。父目录可以解析符号链接，调用方应选择可信的保存目录；此规则不构成文件系统沙箱。
 
 ```bash
 xrun win1 push ./config.json 'D:\valle\config.json'
@@ -704,7 +712,7 @@ CLI、Server 和 daemon 的完整发布版本必须完全一致，使用二进�
 | --- | --- |
 | 连接和身份 | CONNECT_FAILED、CONNECT_TIMEOUT、INVALID_TOKEN、NAME_IN_USE、DEPLOYMENT_MISMATCH、UNAUTHENTICATED、DEVICE_REVOKED、SOURCE_NOT_ALLOWED、NOT_ADMIN、ADMIN_PROTECTED、DEVICE_OFFLINE、VERSION_MISMATCH、RATE_LIMITED |
 | 参数和启动 | INVALID_REQUEST、INVALID_CWD、INVALID_PATH、PROGRAM_NOT_FOUND、SHELL_REQUIRED、SHELL_UNSUPPORTED、DEVICE_BUSY、EXECUTION_ERROR、PORT_IMMUTABLE |
-| 输入 | INPUT_TOO_LARGE、INVALID_SCRIPT |
+| 输入 | INPUT_TOO_LARGE、INVALID_SCRIPT、INVALID_SCRIPT_ARGUMENT |
 | 任务和存储 | REQUEST_CONFLICT、DB_RESET、DB_MISSING、DB_CORRUPT、IDENTITY_CHANGED、JOB_NOT_FOUND、RESULT_LOST、LOG_TRUNCATED、LOG_UNAVAILABLE、LOG_INCOMPLETE、STORAGE_ERROR |
 | 文件 | FILE_NOT_FOUND、PARENT_NOT_FOUND、PERMISSION_DENIED、IS_DIRECTORY、FILE_TOO_LARGE、FILE_BUSY、ALREADY_EXISTS、STALE |
 | 截图 | PERMISSION_DENIED、SCREEN_LOCKED、NO_DISPLAY、SCREENSHOT_UNAVAILABLE、SCREENSHOT_FAILED |
@@ -728,9 +736,11 @@ CLI、Server 和 daemon 的完整发布版本必须完全一致，使用二进�
 
 | 环境 | 已运行的检查 | 尚需验收 |
 | --- | --- | --- |
-| macOS ARM64 | fmt/clippy；真实 TLS 配对、参数和输入字节、退出码、后台任务、去重、并发、文件、撤销、daemon 崩溃、DB_RESET、日志保留与状态查询 | LaunchAgent、真实桌面/TCC、睡眠和磁盘故障 |
-| Linux ARM64 容器、x86_64 CI | 上述执行/传输测试；up 前台部署、手动地址保留、CA 稳定和管理身份恢复；Xvfb PNG 截图；1 MiB 主线程栈下的执行与取消回归检查 | systemd/linger、真实桌面、睡眠和磁盘故障 |
+| macOS ARM64 | fmt/clippy；真实 TLS 配对、参数和输入字节、退出码、后台任务、去重、并发、文件、撤销、daemon 崩溃、DB_RESET、日志保留与状态查询；实机 LaunchAgent 安装与崩溃自动重启 | 重新登录后的启动、真实桌面/TCC、睡眠和磁盘故障 |
+| Linux ARM64 容器、x86_64 CI 及 Ubuntu 26.04 云主机 | 上述执行/传输测试；up 前台部署、手动地址保留、CA 稳定和管理身份恢复；Xvfb PNG 截图；1 MiB 主线程栈下的执行与取消回归检查；公网 8080 双向调用、systemd/linger 安装、Server 与 daemon 崩溃自动重启 | 重启主机后的启动、真实桌面、睡眠和磁盘故障 |
 | Windows x86_64 原生 CI | fmt/clippy；真实 TLS 配对、原生进程参数和输入字节、退出码、PowerShell UTF-8/BOM 脚本、后台任务、去重、并发、文件传输和原子替换、撤销、daemon 崩溃、DB_RESET、日志保留与状态查询 | 登录计划任务、截图与锁屏 |
+
+云主机与本机组合使用提交 `7071b6b` 的 [Package 构建物](https://github.com/qczone/xrun/actions/runs/36873804615)，两端均为 `0.0.1-beta.1`。14 组实机检查涵盖双向参数/脚本/原始输入输出、退出码/超时、约 2.6 MB 文件的 SHA-256 与覆盖条件、任务查询/去重/取消、授权和繁忙重试、无桌面截图错误，以及服务故障恢复。Server 中断期间任务继续执行，80 行日志恢复后各返回一次；两端 daemon 崩溃后设备与数据库 ID 保持不变，未完成任务为 lost，原请求 ID 重试不重跑，并清理受管理的子进程。已检查服务启用和 linger 配置，未重启主机或重新登录。
 
 ## 8. 验收标准
 
@@ -740,7 +750,7 @@ CLI、Server 和 daemon 的完整发布版本必须完全一致，使用二进�
 
 | 场景 | 通过条件 |
 | --- | --- |
-| 默认部署 | Linux up 使用 9528，客户端 join 完成注册、授权和服务安装；自定义端口也可用 |
+| 默认部署 | Linux up 使用 9528，客户端 join 完成注册和服务安装，默认不授权；显式 --allow 时互信，自定义端口也可用 |
 | 显式地址 | --addr 使用指定地址，不访问公网查询服务；Server 重启和无地址选项的重复 up 保留手动地址；显式 up --addr 才替换；端口映射后链接可连接 |
 | 地址尝试顺序 | 同一 CA 的上次成功地址仍在候选列表时优先尝试，失败后依次尝试其他地址且不重复；缓存失效不影响连接；每次仍验证指纹、证书和 SAN |
 | IPv4 范围 | IPv4 地址和有 A 记录的域名可用；双栈域名只使用 IPv4；只有 AAAA 记录的域名和纯 IPv6 网络明确不支持 |
@@ -760,7 +770,7 @@ CLI、Server 和 daemon 的完整发布版本必须完全一致，使用二进�
 | 场景 | 通过条件 |
 | --- | --- |
 | 连接验证 | 指纹、证书签名、有效期和 SAN 校验；验证通过前不发 Token |
-| 授权 | 邀请双方互信；第三方默认拒绝；离线邀请方无待授权队列；allow-from/deny-from 调整本机的调用来源，deny-from 关闭被拒绝来源的现有会话；本机 revoke 须管理身份，不依赖目标在线 |
+| 授权 | 邀请默认只注册；显式 --allow 时双方互信，第三方默认拒绝；撤销邀请方后未使用邀请失效；离线邀请方无待授权队列；allow-from/deny-from 调整本机的调用来源，deny-from 关闭被拒绝来源的现有会话；本机 revoke 须管理身份，不依赖目标在线 |
 | 自启动 | Linux linger；macOS 登录 LaunchAgent；Windows 登录计划任务，无额外窗口 |
 | 参数与脚本 | 空格、反斜杠、Unicode、空参数保真；--script 必须给出 Shell；PowerShell 中文脚本和 cmd ASCII 脚本正确；批处理不会被隐式执行 |
 | 命令组织 | 执行、任务、传输和截图操作先写设备；授权、revoke 和 status 为本机命令；未知操作被拒绝；执行入口 -- 后的参数不被 xrun 解析；路径不拆分冒号；完整任务引用指向其他设备时不转发 |

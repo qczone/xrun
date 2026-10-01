@@ -24,7 +24,7 @@ xrun up --addr 192.168.1.10:9528
 
 替换为其他设备可访问的 IPv4 地址或有 A 记录的域名，并放行 TCP 9528。省略 `--addr` 时自动探测地址；手动地址持久保留，重复 `up` 不会覆盖。Server 主机注册为管理设备 `admin`，默认同时启动本机 daemon。
 
-`up` 默认安装 systemd 用户服务并启用 linger。没有 systemd 时使用前台模式：
+`up` 默认安装 systemd 用户服务并启用 linger。systemd 是 Linux 自带的后台程序管理器，负责启动 Server 和 daemon，并在异常退出后重启；linger 让服务在退出 SSH 后继续运行，并在开机后启动。没有 systemd 时使用前台模式：
 
 ```bash
 xrun up --addr 192.168.1.10:9528 --no-service --no-daemon
@@ -39,9 +39,13 @@ xrun join 'xrun://192.168.1.10:9528/<CA指纹>#<Token>' --name win1
 xrun status
 ```
 
-邀请有效期 10 分钟，首次加入默认与邀请方相互授权。其他设备间需要分别授权；邀请方 daemon 离线时，在邀请方执行 `xrun allow-from win1`。生成新邀请用 `xrun invite`；只注册、不相互授权用 `xrun invite --no-allow`。
+邀请有效期 10 分钟，只能使用一次，默认只注册设备。要允许 win1 控制 Server 主机，在 Server 主机执行 `xrun allow-from win1`；要允许 admin 控制 win1，在 win1 执行 `xrun allow-from admin`。
+
+生成新邀请用 `xrun invite`。需要邀请双方互相授权时，使用 `xrun invite --allow` 或部署时使用 `xrun up --allow`；邀请方 daemon 离线时，在邀请方补执行 `xrun allow-from <新设备>`。邀请链接应通过可信渠道传递，带 `--allow` 的链接等于邀请方当前用户的命令执行权。撤销邀请方后，它未使用的邀请立即失效。
 
 `join` 安装当前用户的 daemon：Linux 使用 systemd，macOS 使用 LaunchAgent，Windows 使用登录计划任务。只安装 CLI 身份可加 `--no-daemon`，之后用 `xrun daemon install` 安装服务，或 `xrun daemon` 前台运行。
+
+LaunchAgent 是 macOS 的用户后台程序配置，由系统的 launchd 管理。本地 daemon 在登录后启动，异常退出后重启；关闭终端不影响它运行。`up` 和 `join` 会自动配置对应服务。
 
 ## 日常命令
 
@@ -75,7 +79,7 @@ xrun win1 pull 'D:\demo\artifacts\page.png' ./page.png
 
 执行默认超时 30 分钟，`start` 默认不限时；用 `--timeout 秒` 覆盖，0 表示不限时。`wait --timeout 秒` 只限制等待，不取消任务。`--env KEY=VALUE` 可重复指定；`--stdin` 透传输入，最多 1 MiB。
 
-执行不会隐式启动 Shell。脚本从 stdin 读取，Shell 名称必填，支持 sh、bash、zsh、powershell、pwsh 和 cmd。PowerShell 脚本使用 UTF-8，cmd 脚本仅接受 ASCII：
+执行不会隐式启动 Shell。脚本从 stdin 读取，Shell 名称必填，支持 sh、bash、zsh、powershell、pwsh 和 cmd。PowerShell 脚本使用 UTF-8，cmd 脚本仅接受 ASCII，脚本参数不接受双引号或换行：
 
 ```bash
 xrun linux1 -C /repo --script bash < ./build.sh
@@ -89,6 +93,8 @@ xrun linux1 pull /repo/config.json -
 printf '%s\n' 'hello' | xrun linux1 push - /repo/note.txt
 xrun linux1 push ./config.json /repo/config.json --expect '<pull返回的sha256>'
 ```
+
+pull 和截图保存到指定本地文件时，拒绝目标文件的符号链接；保存目录需由调用方信任。远端 push 仍跟随符号链接，写入链接指向的文件。
 
 `--expect` 可防止覆盖修改后的目标；`--no-overwrite` 要求目标不存在，两者互斥。截图保存 PNG，省略目标路径时使用唯一临时文件。Linux 截图仅支持 X11；macOS 需要屏幕录制权限，Windows 需要可访问的交互桌面。网页截图可以在无桌面的设备上通过项目的无头浏览器脚本生成，再用 pull 取回。
 
@@ -132,7 +138,7 @@ PATH = "/usr/local/bin:/usr/bin:/bin"
 
 ## 断线与结果确认
 
-前台执行原样输出远端 stdout/stderr，并保留远端退出码。超时为 124，本地参数错误为 2，连接、身份或执行层错误为 125。日志不完整会注明原因。
+前台执行原样输出远端 stdout/stderr，并保留远端退出码。超时为 124，本地参数错误为 2，连接、身份或执行层错误为 125；已确认的文件或截图操作失败为 1。日志不完整会注明原因。
 
 返回 **75 表示结果未确认**。已知任务 ID 就查询 jobs 或 wait；只有请求 ID 时：
 
@@ -155,6 +161,8 @@ cargo test --locked
 xvfb-run -a -s '-screen 0 1024x768x24' cargo test --locked --test screenshot -- --ignored
 ```
 
-已在 macOS 和 Linux 容器运行 TLS 配对、执行、后台任务、去重、并发、文件传输、撤销与故障恢复测试，并在 Linux Xvfb 中验证 PNG 截图。Windows 已通过交叉类型检查；[Test Linux](.github/workflows/test-linux.yml)、[Test macOS](.github/workflows/test-macos.yml) 和 [Test Windows](.github/workflows/test-windows.yml) 分别在对应平台原生运行测试。测试直接调用 Server 库以覆盖转发，公开的 Server CLI 仍仅支持 Linux。
+已在 macOS、Linux 和 Windows 原生环境运行 TLS 配对、执行、后台任务、去重、并发、文件传输、撤销与故障恢复测试，并在 Linux Xvfb 中验证 PNG 截图。[Test Linux](.github/workflows/test-linux.yml)、[Test macOS](.github/workflows/test-macos.yml) 和 [Test Windows](.github/workflows/test-windows.yml) 分别在对应平台原生运行测试。测试直接调用 Server 库以覆盖转发，公开的 Server CLI 仍仅支持 Linux。
 
-系统服务安装、Windows 原生进程行为、真实桌面截图权限/锁屏、设备睡眠和磁盘故障仍需对应环境验收。详细设计和验收清单见 [design.md](design.md)。
+Ubuntu 26.04 x86_64 云主机与 macOS ARM64 本机已通过公网 TCP 8080 实机检查：双向执行与文件传输、任务去重/等待/取消、授权、繁忙重试、Server 中断后的日志恢复，以及 systemd 和 LaunchAgent 的异常重启。云端无桌面时截图返回 `NO_DISPLAY` 和退出码 1。
+
+系统服务、真实桌面截图权限/锁屏、设备睡眠和磁盘故障的验收进度见 [design.md](design.md)。

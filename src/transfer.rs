@@ -271,7 +271,42 @@ fn replace(temp: tempfile::NamedTempFile, path: &Path) -> Result<()> {
     Ok(())
 }
 pub fn save_local(path: &Path, bytes: &[u8]) -> Result<PathBuf> {
-    let path = destination(path, false)?;
-    save(&path, &mut &*bytes, false, None)?;
+    // Resolve the chosen parent, never the final path component. Publication
+    // replaces that directory entry rather than writing through a link.
+    let name = path.file_name().context("INVALID_PATH: missing filename")?;
+    let path = path
+        .parent()
+        .context("INVALID_PATH: missing parent")?
+        .canonicalize()?
+        .join(name);
+    let metadata = local_metadata(&path)?;
+    let mut temp = tempfile::NamedTempFile::new_in(path.parent().unwrap())?;
+    std::io::Write::write_all(&mut temp, bytes)?;
+    if let Some(metadata) = metadata {
+        temp.as_file().set_permissions(metadata.permissions())?;
+    }
+    temp.as_file().sync_all()?;
+    local_metadata(&path)?;
+    // MoveFileExW on Windows, rename on Unix; do not use ReplaceFileW here.
+    temp.into_temp_path().persist(&path).map_err(|e| e.error)?;
+    sync_parent(&path).context("UNCONFIRMED: destination replaced but directory sync failed")?;
     Ok(path)
+}
+fn local_metadata(path: &Path) -> Result<Option<std::fs::Metadata>> {
+    match std::fs::symlink_metadata(path) {
+        Ok(metadata) => {
+            if metadata.file_type().is_symlink() {
+                bail!("INVALID_PATH: local destination must not be a symbolic link")
+            }
+            if metadata.is_dir() {
+                bail!("IS_DIRECTORY: local destination is a directory")
+            }
+            if !metadata.is_file() {
+                bail!("INVALID_PATH: local destination must be a regular file")
+            }
+            Ok(Some(metadata))
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(error.into()),
+    }
 }

@@ -44,6 +44,9 @@ enum Local {
         no_service: bool,
         #[arg(long)]
         no_daemon: bool,
+        /// Grant mutual access to the joining device
+        #[arg(long)]
+        allow: bool,
     },
     /// Join a deployment using an invitation link
     Join {
@@ -53,10 +56,10 @@ enum Local {
         #[arg(long)]
         no_daemon: bool,
     },
-    /// Create a ten-minute invitation (mutual access by default)
+    /// Create a ten-minute invitation (registration only by default)
     Invite {
         #[arg(long)]
-        no_allow: bool,
+        allow: bool,
     },
     /// Allow a source device to control this machine
     AllowFrom { device: String },
@@ -328,7 +331,8 @@ async fn local(cli: LocalCli) -> Result<i32> {
             no_detect,
             no_service,
             no_daemon,
-        } => up(port, addr, no_detect, no_service, no_daemon, json).await?,
+            allow,
+        } => up(port, addr, no_detect, no_service, no_daemon, allow, json).await?,
         Local::Join {
             link,
             name,
@@ -365,18 +369,22 @@ async fn local(cli: LocalCli) -> Result<i32> {
                 }
             }
         }
-        Local::Invite { no_allow } => {
+        Local::Invite { allow } => {
             let id = identity().await?;
             let value: serde_json::Value = net::http(
                 &id,
                 reqwest::Method::POST,
                 "/invites",
-                Some(serde_json::json!({"no_allow":no_allow})),
+                Some(serde_json::json!({"allow":allow})),
             )
             .await?;
+            if value["allow"].as_bool() != Some(allow) {
+                bail!("VERSION_MISMATCH: invitation policy differs; upgrade all components")
+            }
             print(json, &value, || {
                 println!("{}", value["link"].as_str().unwrap_or_default())
             });
+            invitation_notice(allow);
         }
         Local::AllowFrom { device } => permission(&device, true, json).await?,
         Local::DenyFrom { device } => permission(&device, false, json).await?,
@@ -786,6 +794,7 @@ async fn up(
     no_detect: bool,
     no_service: bool,
     no_daemon: bool,
+    allow: bool,
     json: bool,
 ) -> Result<()> {
     require_linux()?;
@@ -896,7 +905,7 @@ async fn up(
     }
     let invitation = store.invite(&Invitation {
         inviter_id: Some(id.device_id.clone()),
-        allow: true,
+        allow,
         admin: false,
     })?;
     let link = format!(
@@ -906,12 +915,13 @@ async fn up(
     );
     print(
         json,
-        &serde_json::json!({"device_id":id.device_id,"link":link,"addresses":cfg.addresses}),
+        &serde_json::json!({"device_id":id.device_id,"link":link,"addresses":cfg.addresses,"allow":allow}),
         || {
             println!("server: {}", cfg.addresses.join(", "));
             println!("xrun join '{link}'");
         },
     );
+    invitation_notice(allow);
     eprintln!(
         "[xrun] allow inbound TCP {} in your firewall or cloud security group",
         cfg.port
@@ -925,6 +935,14 @@ async fn up(
         server.abort();
     }
     Ok(())
+}
+fn invitation_notice(allow: bool) {
+    eprintln!("[xrun] invitation is a secret, valid once for 10 minutes");
+    if allow {
+        eprintln!(
+            "[xrun] --allow grants mutual command execution as the device's user; share only with a trusted device"
+        );
+    }
 }
 
 struct Session {

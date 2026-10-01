@@ -85,7 +85,10 @@ async fn execution_transfer_and_identity() -> Result<()> {
     let temp = tempfile::tempdir()?;
     let root = temp.path();
     let source = root.join("source");
+    #[cfg(not(windows))]
     let target = root.join("target");
+    #[cfg(windows)]
+    let target = root.join("target &^%XRUN_PATH_TEST%! space");
     std::fs::create_dir_all(&source)?;
     std::fs::create_dir_all(&target)?;
     let fresh = json(cli(&source, &["status", "--json"]).await);
@@ -140,7 +143,7 @@ async fn execution_transfer_and_identity() -> Result<()> {
         }
         tokio::time::sleep(Duration::from_millis(50)).await;
     }
-    let invite = json(cli(&source, &["invite", "--json"]).await)["link"]
+    let invite = json(cli(&source, &["invite", "--allow", "--json"]).await)["link"]
         .as_str()
         .unwrap()
         .to_string();
@@ -168,6 +171,29 @@ async fn execution_transfer_and_identity() -> Result<()> {
     let mut target_daemon = daemon(&target);
     online(&source, "runner1").await;
     online(&target, "admin").await;
+    // An ordinary invitation only registers a device, in both directions.
+    let observer = root.join("observer");
+    std::fs::create_dir_all(&observer)?;
+    let registration = json(cli(&source, &["invite", "--json"]).await);
+    assert_eq!(registration["allow"], false);
+    ok(cli(
+        &observer,
+        &[
+            "join",
+            registration["link"].as_str().unwrap(),
+            "--name",
+            "observer",
+            "--no-daemon",
+        ],
+    )
+    .await);
+    let _observer_daemon = daemon(&observer);
+    online(&source, "observer").await;
+    for (caller, device) in [(&source, "observer"), (&observer, "admin")] {
+        let denied = cli(caller, &[device, "--", "unused"]).await;
+        assert_eq!(denied.status.code(), Some(125));
+        assert!(String::from_utf8_lossy(&denied.stderr).contains("SOURCE_NOT_ALLOWED"));
+    }
     // Compile a tiny portable child so argument quoting, stdin and process lifetime
     // exercise the actual platform process layer without requiring a project toolchain.
     let fixture = root.join("fixture.rs");
@@ -398,6 +424,28 @@ async fn execution_transfer_and_identity() -> Result<()> {
             "script ok\r\n"
         );
     }
+    #[cfg(windows)]
+    {
+        // cmd paths and arguments must survive its own parser, not CRT quoting.
+        let argument = "space & caret^ percent%XRUN_PATH_TEST% bang!";
+        assert_eq!(
+            ok(input(
+                &source,
+                &["runner1", "--script", "cmd", "--", argument],
+                b"@echo off\necho \"%~1\"\n"
+            )
+            .await),
+            format!("\"{argument}\"\r\n")
+        );
+        let invalid = input(
+            &source,
+            &["runner1", "--script", "cmd", "--", "a\"b"],
+            b"echo unused\n",
+        )
+        .await;
+        assert_eq!(invalid.status.code(), Some(125));
+        assert!(String::from_utf8_lossy(&invalid.stderr).contains("INVALID_SCRIPT_ARGUMENT"));
+    }
     // Capacity rejection does not create a job or poison the request ID.
     let mut jobs = vec![];
     for _ in 0..4 {
@@ -462,6 +510,21 @@ async fn execution_transfer_and_identity() -> Result<()> {
     let pulled = json(cli(&source, &["runner1", "pull", &remote, &local, "--json"]).await);
     assert_eq!(pulled["sha256"], sha256(&content));
     assert_eq!(std::fs::read(&*local)?, content);
+    #[cfg(unix)]
+    {
+        let victim = source.join("victim");
+        let link = source.join("output-link");
+        std::fs::write(&victim, b"keep")?;
+        std::os::unix::fs::symlink(&victim, &link)?;
+        let refused = cli(
+            &source,
+            &["runner1", "pull", &remote, link.to_str().unwrap()],
+        )
+        .await;
+        assert_eq!(refused.status.code(), Some(1));
+        assert!(String::from_utf8_lossy(&refused.stderr).contains("INVALID_PATH"));
+        assert_eq!(std::fs::read(&victim)?, b"keep");
+    }
     let default = json(cli(&source, &["runner1", "pull", &remote, "--json"]).await);
     let temporary = std::path::PathBuf::from(default["path"].as_str().unwrap());
     assert!(
@@ -648,7 +711,23 @@ async fn execution_transfer_and_identity() -> Result<()> {
     // Revoked identities retain distinct errors and cannot renew using their key.
     let not_admin = cli(&target, &["revoke", "admin"]).await;
     assert_eq!(not_admin.status.code(), Some(125));
+    let orphan = json(cli(&target, &["invite", "--allow", "--json"]).await);
     ok(cli(&source, &["revoke", "runner1"]).await);
+    let newcomer = root.join("newcomer");
+    std::fs::create_dir_all(&newcomer)?;
+    let refused = cli(
+        &newcomer,
+        &[
+            "join",
+            orphan["link"].as_str().unwrap(),
+            "--name",
+            "newcomer",
+            "--no-daemon",
+        ],
+    )
+    .await;
+    assert_eq!(refused.status.code(), Some(125));
+    assert!(String::from_utf8_lossy(&refused.stderr).contains("INVALID_TOKEN"));
     let revoked = cli(&source, &["runner1", "jobs", id]).await;
     assert_eq!(revoked.status.code(), Some(125));
     assert!(String::from_utf8_lossy(&revoked.stderr).contains("DEVICE_REVOKED"));
@@ -707,6 +786,7 @@ async fn linux_foreground_deployment_and_admin_recovery() -> Result<()> {
         tokio::time::timeout(Duration::from_secs(15), output.read_line(&mut line)).await??;
         assert!(!line.is_empty(), "up exited before deployment output");
         let value: Value = serde_json::from_str(&line)?;
+        assert_eq!(value["allow"], false);
         let id = value["device_id"].as_str().unwrap().to_string();
         assert_eq!(value["addresses"], serde_json::json!([address]));
         if generation == 1 {

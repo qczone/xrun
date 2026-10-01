@@ -81,6 +81,15 @@ struct Runtime {
     fatal: Mutex<Option<String>>,
     stop: watch::Sender<bool>,
 }
+struct RunningJob {
+    rt: Arc<Runtime>,
+    id: String,
+}
+impl Drop for RunningJob {
+    fn drop(&mut self) {
+        self.rt.running.lock().unwrap().remove(&self.id);
+    }
+}
 struct FileAudit {
     store: Arc<TaskStore>,
     value: serde_json::Value,
@@ -609,6 +618,14 @@ fn submit(rt: Arc<Runtime>, source: &str, request: Execution, input: Vec<u8>) ->
         if shell == "cmd" && !input.is_ascii() {
             bail!("INVALID_SCRIPT: cmd requires ASCII")
         }
+        if shell == "cmd"
+            && request
+                .args
+                .iter()
+                .any(|arg| arg.contains(['\"', '\r', '\n']))
+        {
+            bail!("INVALID_SCRIPT_ARGUMENT: cmd arguments cannot contain quotes or newlines")
+        }
     }
     let hash = request.hash();
     if let Some(job) = rt.store.by_request(source, &request.request_id)? {
@@ -699,6 +716,7 @@ async fn execute(rt: Arc<Runtime>, mut job: Job, request: Execution, input: Vec<
     }
     let mut program = request.program;
     let mut args = request.args;
+    let cmd_script = request.shell.as_deref() == Some("cmd");
     let mut script = None;
     let mut stdin = input;
     if let Some(shell) = request.shell {
@@ -733,7 +751,6 @@ async fn execute(rt: Arc<Runtime>, mut job: Job, request: Execution, input: Vec<
                 "-File".into(),
                 path,
             ],
-            "cmd" => vec!["/D".into(), "/C".into(), path],
             _ => vec![path],
         };
         prefix.append(&mut args);
@@ -753,7 +770,7 @@ async fn execute(rt: Arc<Runtime>, mut job: Job, request: Execution, input: Vec<
             rt.store.save(&job)?;
             return Ok(());
         }
-        let child = crate::process::spawn(&resolved, &args, &cwd, &env, &job.job_id)?;
+        let child = crate::process::spawn(&resolved, &args, &cwd, &env, &job.job_id, cmd_script)?;
         job.process = Some(ProcessIdentity {
             pid: child.pid,
             boot_id: boot_id(),
@@ -768,6 +785,11 @@ async fn execute(rt: Arc<Runtime>, mut job: Job, request: Execution, input: Vec<
             .unwrap()
             .insert(job.job_id.clone(), child.pid);
         child
+    };
+    // Remove the PID before the child can be reaped, including error paths.
+    let running = RunningJob {
+        rt: rt.clone(),
+        id: job.job_id.clone(),
     };
     let pid = child.pid;
     job.state = JobState::Running;
@@ -835,8 +857,9 @@ async fn execute(rt: Arc<Runtime>, mut job: Job, request: Execution, input: Vec<
         writer.abort();
     }
     crate::process::force_kill(pid);
+    drop(running);
+    child.reap().await?;
     drop(script);
-    rt.running.lock().unwrap().remove(&job.job_id);
     rt.canceled.lock().unwrap().remove(&job.job_id);
     job.last_seq = rt.store.get(&job.job_id)?.context("job missing")?.last_seq;
     job.state = reason.unwrap_or(JobState::Exited);

@@ -125,7 +125,12 @@ impl ServerStore {
     }
     pub fn invite(&self, invitation: &Invitation) -> Result<String> {
         let token = crate::crypto::random_token();
-        self.0.lock().unwrap().execute(
+        let mut db = self.0.lock().unwrap();
+        let tx = db.transaction()?;
+        if !inviter_active(&tx, invitation)? {
+            bail!("DEVICE_REVOKED: inviter is no longer active")
+        }
+        tx.execute(
             "INSERT INTO tokens VALUES(?1,?2,?3)",
             params![
                 sha256(token.as_bytes()),
@@ -133,6 +138,7 @@ impl ServerStore {
                 serde_json::to_string(invitation)?
             ],
         )?;
+        tx.commit()?;
         Ok(token)
     }
     pub fn register(&self, token: &str, name: &str, key_fp: &str) -> Result<(Registered, bool)> {
@@ -162,6 +168,9 @@ impl ServerStore {
             .optional()?
             .context("INVALID_TOKEN: expired or consumed invitation")?;
         let invitation: Invitation = decode(invitation)?;
+        if !inviter_active(&tx, &invitation)? {
+            bail!("INVALID_TOKEN: inviter is no longer active")
+        }
         let value = Registered {
             device: Device {
                 device_id: format!("dev_{}", uuid::Uuid::new_v4().simple()),
@@ -200,6 +209,27 @@ impl ServerStore {
         tx.commit()?;
         Ok((value, true))
     }
+    pub fn revoke(&self, selector: &str) -> Result<Registered> {
+        let mut db = self.0.lock().unwrap();
+        let tx = db.transaction()?;
+        let data: String = tx.query_row("SELECT data FROM devices WHERE id=?1 OR name=?1 ORDER BY id=?1 DESC,revoked ASC,rowid DESC LIMIT 1", [selector], |r| r.get(0))
+            .optional()?.context("UNKNOWN_DEVICE: device not registered")?;
+        let mut target: Registered = decode(data)?;
+        if target.device.admin {
+            bail!("ADMIN_PROTECTED: administrator identity cannot be revoked")
+        }
+        target.device.revoked = true;
+        tx.execute(
+            "UPDATE devices SET revoked=1,data=?2 WHERE id=?1",
+            params![target.device.device_id, serde_json::to_string(&target)?],
+        )?;
+        tx.execute(
+            "DELETE FROM tokens WHERE json_extract(data,'$.inviter_id')=?1",
+            [&target.device.device_id],
+        )?;
+        tx.commit()?;
+        Ok(target)
+    }
     pub fn audit(&self, event: &str, value: serde_json::Value) -> Result<()> {
         self.0.lock().unwrap().execute(
             "INSERT INTO audit VALUES(?1,?2,?3)",
@@ -226,10 +256,25 @@ impl ServerStore {
                     "UPDATE devices SET revoked=1,data=?2 WHERE id=?1",
                     params![old.device.device_id, serde_json::to_string(&old)?],
                 )?;
+                tx.execute(
+                    "DELETE FROM tokens WHERE json_extract(data,'$.inviter_id')=?1",
+                    [&old.device.device_id],
+                )?;
             }
         }
         tx.commit()?;
         Ok(())
+    }
+}
+
+fn inviter_active(db: &Connection, invitation: &Invitation) -> Result<bool> {
+    match &invitation.inviter_id {
+        Some(id) => Ok(db.query_row(
+            "SELECT EXISTS(SELECT 1 FROM devices WHERE id=?1 AND revoked=0)",
+            [id],
+            |r| r.get(0),
+        )?),
+        None => Ok(true), // Local CA bootstrap has no inviting device.
     }
 }
 
