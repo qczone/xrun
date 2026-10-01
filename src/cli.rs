@@ -290,7 +290,9 @@ pub async fn run() -> Result<i32> {
             &cli.command,
             Remote::Push { .. } | Remote::Pull { .. } | Remote::Screenshot { .. }
         );
-        return match remote(cli).await {
+        // Keep each command's async state on the heap; Windows has a smaller
+        // default main-thread stack, especially visible in debug builds.
+        return match Box::pin(remote(cli)).await {
             Ok(code) => Ok(code),
             Err(e) => {
                 diagnostic(json, &e);
@@ -304,7 +306,7 @@ pub async fn run() -> Result<i32> {
     }
     let cli = LocalCli::parse_from(args);
     let json = cli.json;
-    match local(cli).await {
+    match Box::pin(local(cli)).await {
         Ok(code) => Ok(code),
         Err(e) => {
             diagnostic(json, &e);
@@ -1106,7 +1108,7 @@ async fn remote(cli: DeviceCli) -> Result<i32> {
     let target = &target.device_id;
     match cli.command {
         Remote::Run(e) => {
-            execute_cli(
+            Box::pin(execute_cli(
                 &id,
                 (target, &target_name),
                 e,
@@ -1114,11 +1116,11 @@ async fn remote(cli: DeviceCli) -> Result<i32> {
                 json,
                 &submissions,
                 prior,
-            )
+            ))
             .await
         }
         Remote::Start(e) => {
-            execute_cli(
+            Box::pin(execute_cli(
                 &id,
                 (target, &target_name),
                 e,
@@ -1126,7 +1128,7 @@ async fn remote(cli: DeviceCli) -> Result<i32> {
                 json,
                 &submissions,
                 prior,
-            )
+            ))
             .await
         }
         Remote::Info => {
@@ -1617,7 +1619,7 @@ async fn execute_cli(
             if definitive(&error){submission.status="not_accepted".into();store.save(&submission)?;diagnostic(json,&error);return Ok(125)}
             match recover(id,target,&execution.request_id,Some(&execution.db_id)).await{Ok(job)=>job,Err(e)=>{if e.to_string().starts_with("DB_RESET"){diagnostic(json,&e);return Ok(125)}diagnostic(json,&anyhow::anyhow!("UNCONFIRMED: request {} may have executed; use recent or jobs --request-id",execution.request_id));return Ok(75)}}
         }},
-        _=tokio::signal::ctrl_c()=>{if !sent.load(std::sync::atomic::Ordering::SeqCst){submission.status="not_accepted".into();store.save(&submission)?;return Ok(130)}return cancel_unknown(id,target,&execution.request_id,&execution.db_id,json).await;},
+        _=tokio::signal::ctrl_c()=>{if !sent.load(std::sync::atomic::Ordering::SeqCst){submission.status="not_accepted".into();store.save(&submission)?;return Ok(130)}return Box::pin(cancel_unknown(id,target,&execution.request_id,&execution.db_id,json)).await;},
         _=termination()=>{if !sent.load(std::sync::atomic::Ordering::SeqCst){submission.status="not_accepted".into();store.save(&submission)?;return Ok(125)}diagnostic(json,&anyhow::anyhow!("UNCONFIRMED: request {} may have executed",execution.request_id));return Ok(75)}
     };
     submission.job_id = Some(job_ref(&job));
@@ -1639,7 +1641,7 @@ async fn execute_cli(
             tokio::pin!(logs);
             tokio::select! {
                 r=&mut logs=>r,
-                _=tokio::signal::ctrl_c()=>{return cancel_known(id,target,&job.job_id,json).await},
+                _=tokio::signal::ctrl_c()=>{return Box::pin(cancel_known(id,target,&job.job_id,json)).await},
                 _=termination()=>{diagnostic(json,&anyhow::anyhow!("UNCONFIRMED: {} continues remotely",job_ref(&job)));return Ok(75)}
             }
         };

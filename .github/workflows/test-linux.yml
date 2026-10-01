@@ -35,6 +35,8 @@ jobs:
         run: |
           cargo fmt --all -- --check
           cargo clippy --locked --all-targets -- -D warnings
+          # Catch command stack overflows with a Windows-sized main-thread stack.
+          ulimit -s 1024
           cargo test --locked
       - name: X11 screenshot
         shell: bash

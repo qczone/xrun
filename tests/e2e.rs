@@ -43,6 +43,7 @@ async fn input(home: &Path, args: &[&str], bytes: &[u8]) -> std::process::Output
         .unwrap()
         .unwrap()
 }
+#[track_caller]
 fn ok(out: std::process::Output) -> String {
     assert!(
         out.status.success(),
@@ -53,6 +54,7 @@ fn ok(out: std::process::Output) -> String {
     );
     String::from_utf8(out.stdout).unwrap()
 }
+#[track_caller]
 fn json(out: std::process::Output) -> Value {
     serde_json::from_str(&ok(out)).unwrap()
 }
