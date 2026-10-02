@@ -60,14 +60,19 @@ async function fixture(handlers: Record<string, Handler> = {}, joined = true) {
   ];
   const timers = new Map<number, () => void>();
   let timerId = 0;
+  const realSetInterval = globalThis.setInterval;
+  const realClearInterval = globalThis.clearInterval;
+  // Control application polling without swallowing waitFor's retry timers.
   spyOn(globalThis, "setInterval").mockImplementation(((
     callback: () => void,
+    delay?: number,
   ) => {
-    timers.set(++timerId, callback);
+    if (delay !== 3000) return realSetInterval(callback, delay);
+    timers.set(--timerId, callback);
     return timerId;
   }) as unknown as typeof setInterval);
   spyOn(globalThis, "clearInterval").mockImplementation((id) => {
-    timers.delete(Number(id));
+    if (!timers.delete(Number(id))) realClearInterval(Number(id));
   });
   mockIPC((command, payload) => {
     const args = (payload || {}) as Args;
@@ -381,7 +386,9 @@ test("joining passes the link only to join and clears it from the form", async (
   fireEvent.change(screen.getByLabelText("本机名称"), {
     target: { value: "mac2" },
   });
-  fireEvent.submit(document.getElementById("join-form")!);
+  await act(async () => {
+    fireEvent.submit(document.getElementById("join-form")!);
+  });
   await waitFor(() => expect(screen.queryByLabelText("邀请链接")).toBeNull());
   expect(calls.find((call) => call.command === "join")?.args).toEqual({
     link: "xrun://test-secret",
