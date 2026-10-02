@@ -93,7 +93,7 @@ AI Coding Agent / 开发者
 
 ### 2.2 连接方式
 
-桌面 App 使用独立的 Tauri 2 crate，直接调用核心库中的加入、状态查询和授权操作；CLI、Server 和 daemon 仍可单独构建。首期使用本地静态界面，不加载远端网页，也不提供前端 Shell 或文件系统访问接口。身份私钥、证书和邀请令牌不会作为状态 DTO 传到前端；邀请输入只用于当前加入请求，不持久化到 WebView。
+桌面 App 使用独立的 Tauri 2 crate，直接调用核心库中的加入、状态查询和授权操作；CLI、Server 和 daemon 仍可单独构建。界面使用 React + TypeScript，以 Vite 构建为包内静态资源，Bun 负责依赖、开发脚本和界面测试；发布包不包含 Bun 运行时。不加载远端网页，也不提供前端 Shell 或文件系统访问接口。身份私钥、证书和邀请令牌不会作为状态 DTO 传到前端；邀请输入只用于当前加入请求，不持久化到 WebView。
 
 App 与 daemon 是两个进程。关闭窗口、隐藏图标或退出 App 不影响 daemon；单实例机制和 macOS reopen 事件负责恢复图标与窗口。执行和传输仍由独立 daemon 完成。
 

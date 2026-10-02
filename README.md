@@ -30,29 +30,39 @@ macOS App 通过 SMAppService 注册包内 LaunchAgent，系统登录项会关�
 
 从 CLI 服务迁移时，先停止服务再在 App 中启动，App 会替换旧的服务注册；打开 App 本身不会中断已有任务。旧版 Windows daemon 不支持安全停止时，应先使用旧版 CLI 的 `xrun daemon uninstall`，再启动 App 服务。App 管理的 macOS 服务请在 App 中移除。
 
-本地构建桌面版需要 Rust、Node.js 24，以及 macOS Xcode 命令行工具或 Windows MSVC / WebView2：
+桌面端使用 Tauri 2 + React + TypeScript，Vite 构建前端，Bun 管理依赖、运行脚本和测试。本地构建需要 Rust、Bun 1.4.2，以及 macOS Xcode 命令行工具或 Windows MSVC / WebView2：
 
 在项目根目录安装打包依赖：
 
 ```bash
-npm --prefix desktop ci
+bun install --cwd desktop --frozen-lockfile
 ```
 
 然后在对应的平台执行打包命令：
 
 | 平台 | 命令 | 默认产物位置（相对项目根目录） |
 | --- | --- | --- |
-| macOS | `npm --prefix desktop run build -- --bundles app` | `target/release/bundle/macos/xrun.app` |
-| Windows | `npm --prefix desktop run build -- --bundles nsis` | `target/release/bundle/nsis/` 下的安装程序 |
+| macOS | `bun run --cwd desktop build --bundles app` | `target/release/bundle/macos/xrun.app` |
+| Windows | `bun run --cwd desktop build --bundles nsis` | `target/release/bundle/nsis/` 下的安装程序 |
 
 本机调试时添加 `--debug`，产物改为 `target/debug/bundle/`：
 
 ```bash
-npm --prefix desktop run build -- --debug --bundles app  # macOS
+bun run --cwd desktop build --debug --bundles app  # macOS
 # Windows 使用 --bundles nsis
 ```
 
-打包入口为 `desktop/scripts/build.mjs`，先编译配套 daemon，再打包 App，两者完整版本必须一致。默认构建目录是项目根目录的 `target/`；如果设置了 `CARGO_TARGET_DIR`，构建缓存和产物会使用指定目录。macOS 本地包默认对整个 App 和内嵌程序做 ad-hoc 签名，打包后校验签名；正式发布需要 Developer ID 签名和公证，可通过 `APPLE_SIGNING_IDENTITY` 指定签名身份。Windows 安装包目前未签名。
+开发和检查同样可以在项目根目录运行：
+
+```bash
+bun run --cwd desktop dev       # 启动桌面端和前端热更新
+bun run --cwd desktop check     # TypeScript 检查与界面测试
+bun run --cwd desktop build:ui  # 只构建前端
+```
+
+macOS 开发模式可在界面中启动和停止后台 daemon，无需先打包 App；它复用本机身份与配置，退出开发界面后仍会运行，不设置登录启动。daemon 的运行日志写入 `~/.xrun/daemon-dev.log`。App 的登录启动需要使用打包后的 `xrun.app`。
+
+桌面入口为 `desktop/scripts/desktop.ts`，先编译配套 daemon，再调用 Tauri；打包时自动构建前端，两者完整版本必须一致。默认构建目录是项目根目录的 `target/`；如果设置了 `CARGO_TARGET_DIR`，构建缓存和产物会使用指定目录。前端源代码在 `desktop/src/`，构建输出在 `desktop/dist/`。macOS 本地包默认对整个 App 和内嵌程序做 ad-hoc 签名，打包后校验签名；正式发布需要 Developer ID 签名和公证，可通过 `APPLE_SIGNING_IDENTITY` 指定签名身份。Windows 安装包目前未签名。
 
 ## 部署和加入
 

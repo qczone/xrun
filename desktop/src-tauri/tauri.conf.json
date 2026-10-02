@@ -3,15 +3,20 @@
   "productName": "xrun",
   "version": "0.0.1-beta.1",
   "identifier": "dev.qczone.xrun",
-  "build": { "frontendDist": "../ui" },
+  "build": {
+    "beforeDevCommand": "bun run dev:ui",
+    "beforeBuildCommand": "bun run build:ui",
+    "devUrl": "http://127.0.0.1:5173",
+    "frontendDist": "../dist"
+  },
   "app": {
-    "withGlobalTauri": true,
     "windows": [{
       "label": "main", "title": "xrun", "width": 980, "height": 760,
       "minWidth": 780, "minHeight": 650, "visible": false
     }],
     "security": {
       "csp": "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src ipc: http://ipc.localhost; object-src 'none'; base-uri 'none'; form-action 'none'",
+      "devCsp": "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src ipc: http://ipc.localhost http://127.0.0.1:5173 ws://127.0.0.1:5173; object-src 'none'; base-uri 'none'; form-action 'none'",
       "capabilities": []
     }
   },

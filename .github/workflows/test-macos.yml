@@ -39,18 +39,23 @@ jobs:
           cargo fmt --all -- --check
           cargo clippy --locked --all-targets -- -D warnings
           cargo test --locked
-      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
         with:
-          node-version: '24'
-          cache: npm
-          cache-dependency-path: desktop/package-lock.json
+          bun-version-file: desktop/package.json
+      - name: Cache Bun dependencies
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.bun/install/cache
+          key: xrun-${{ runner.os }}-${{ runner.arch }}-bun-${{ hashFiles('desktop/bun.lock', 'desktop/package.json') }}
+          restore-keys: xrun-${{ runner.os }}-${{ runner.arch }}-bun-
       - name: Build desktop App
         working-directory: desktop
         run: |
-          npm ci
-          npm run check
-          npm run build -- --debug --bundles app
+          bun install --frozen-lockfile
+          bun run check
+          bun run build --debug --bundles app
       - name: Check desktop code and bundled helper
         run: |
           cargo clippy --locked -p xrun-desktop --all-targets -- -D warnings
+          cargo test --locked -p xrun-desktop
           target/debug/bundle/macos/xrun.app/Contents/MacOS/xrun-desktop --self-check

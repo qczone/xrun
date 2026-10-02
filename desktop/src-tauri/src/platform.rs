@@ -10,6 +10,7 @@ pub struct ServiceStatus {
     pub approval_required: bool,
     pub app_at_login: bool,
     pub legacy_installed: bool,
+    pub development: bool,
 }
 
 pub fn helper() -> Result<PathBuf> {
@@ -58,7 +59,35 @@ mod mac {
 
     pub const LABEL: &str = "dev.qczone.xrun.daemon";
 
-    pub fn state() -> ServiceStatus {
+    fn is_bundle_executable(exe: &std::path::Path) -> bool {
+        let Some(macos) = exe.parent() else {
+            return false;
+        };
+        let Some(contents) = macos.parent() else {
+            return false;
+        };
+        macos.file_name().is_some_and(|name| name == "MacOS")
+            && contents.file_name().is_some_and(|name| name == "Contents")
+            && contents
+                .parent()
+                .and_then(|path| path.extension())
+                .is_some_and(|ext| ext == "app")
+    }
+
+    pub fn development() -> Result<bool> {
+        Ok(tauri::is_dev() && !is_bundle_executable(&std::env::current_exe()?))
+    }
+
+    pub fn state() -> Result<ServiceStatus> {
+        if development()? {
+            return Ok(ServiceStatus {
+                installed: false,
+                approval_required: false,
+                app_at_login: false,
+                legacy_installed: xrun::service::installed("daemon")?,
+                development: true,
+            });
+        }
         // These services are resolved relative to the calling App's main bundle.
         let agent = unsafe {
             SMAppService::agentServiceWithPlistName(&NSString::from_str(
@@ -67,21 +96,18 @@ mod mac {
         };
         let main = unsafe { SMAppService::mainAppService() };
         let agent_status = unsafe { agent.status() }.0;
-        ServiceStatus {
+        Ok(ServiceStatus {
             installed: matches!(agent_status, 1 | 2),
             approval_required: agent_status == 2 || unsafe { main.status() }.0 == 2,
             app_at_login: matches!(unsafe { main.status() }.0, 1 | 2),
             legacy_installed: xrun::service::installed("daemon").unwrap_or(false),
-        }
+            development: false,
+        })
     }
 
     pub fn register_agent() -> Result<()> {
         let exe = std::env::current_exe()?;
-        if exe
-            .parent()
-            .and_then(|p| p.file_name())
-            .is_none_or(|p| p != "MacOS")
-        {
+        if !is_bundle_executable(&exe) {
             bail!("APP_BUNDLE_REQUIRED: run the packaged xrun.app");
         }
         let service = unsafe {
@@ -113,6 +139,9 @@ mod mac {
     }
 
     pub fn autostart(enabled: bool) -> Result<()> {
+        if !is_bundle_executable(&std::env::current_exe()?) {
+            bail!("APP_BUNDLE_REQUIRED: login startup requires the packaged xrun.app");
+        }
         let service = unsafe { SMAppService::mainAppService() };
         if enabled && !matches!(unsafe { service.status() }.0, 1 | 2) {
             unsafe { service.registerAndReturnError() }
@@ -123,14 +152,148 @@ mod mac {
         }
         Ok(())
     }
+
+    pub async fn start_dev_daemon(helper: &std::path::Path, dir: &std::path::Path) -> Result<()> {
+        use std::{
+            os::unix::fs::OpenOptionsExt, os::unix::fs::PermissionsExt, process::Stdio,
+            time::Duration,
+        };
+        let log_path = dir.join("daemon-dev.log");
+        let log = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .mode(0o600)
+            .custom_flags(libc::O_NOFOLLOW)
+            .open(&log_path)?;
+        log.set_permissions(std::fs::Permissions::from_mode(0o600))?;
+        let previous = xrun::control::state(dir)?.map(|state| state.generation);
+        let mut command = tokio::process::Command::new(helper);
+        command
+            .arg("daemon")
+            .current_dir(dir)
+            .stdin(Stdio::null())
+            .stdout(log.try_clone()?)
+            .stderr(log)
+            .kill_on_drop(false);
+        // A separate session keeps the daemon alive when the dev terminal closes.
+        unsafe {
+            command.pre_exec(|| {
+                if libc::setsid() == -1 {
+                    return Err(std::io::Error::last_os_error());
+                }
+                Ok(())
+            });
+        }
+        let mut child = command.spawn()?;
+        let started = async {
+            for _ in 0..50 {
+                if let Some(code) = child.try_wait()? {
+                    bail!(
+                        "SERVICE_FAILED: daemon exited ({code}); see {}",
+                        log_path.display()
+                    );
+                }
+                if xrun::config::instance_running(&dir.join("daemon.lock"))?
+                    && xrun::control::state(dir)?
+                        .is_some_and(|state| Some(state.generation) != previous)
+                {
+                    return Ok(());
+                }
+                tokio::time::sleep(Duration::from_millis(100)).await;
+            }
+            bail!("DAEMON_START_TIMEOUT: see {}", log_path.display());
+        }
+        .await;
+        if started.is_err() {
+            let _ = child.kill().await;
+            let _ = child.wait().await;
+        }
+        started
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+        use std::{os::unix::fs::PermissionsExt, time::Duration};
+
+        #[tokio::test]
+        async fn dev_daemon_starts_detached_and_accepts_graceful_stop() -> Result<()> {
+            let dir = tempfile::tempdir()?;
+            let source = dir.path().join("helper.rs");
+            let helper = dir.path().join("helper");
+            std::fs::write(&source, include_str!("../tests/fixtures/dev-daemon.rs"))?;
+            let compiled = tokio::process::Command::new("rustc")
+                .arg(&source)
+                .arg("-o")
+                .arg(&helper)
+                .output()
+                .await?;
+            assert!(
+                compiled.status.success(),
+                "{}",
+                String::from_utf8_lossy(&compiled.stderr)
+            );
+            // Metadata left by a crashed daemon must not count as readiness.
+            xrun::config::atomic_private_write(
+                &dir.path().join("daemon-runtime.json"),
+                br#"{"generation":"stale","connected":false}"#,
+            )?;
+            start_dev_daemon(&helper, dir.path()).await?;
+            let pid: i32 = std::fs::read_to_string(dir.path().join("pid"))?.parse()?;
+            struct Cleanup(Option<i32>);
+            impl Drop for Cleanup {
+                fn drop(&mut self) {
+                    if let Some(pid) = self.0 {
+                        unsafe {
+                            libc::kill(pid, libc::SIGTERM);
+                        }
+                    }
+                }
+            }
+            let mut cleanup = Cleanup(Some(pid));
+            assert_eq!(unsafe { libc::getsid(pid) }, pid);
+            assert!(xrun::config::instance_running(
+                &dir.path().join("daemon.lock")
+            )?);
+            assert_ne!(
+                xrun::control::state(dir.path())?.unwrap().generation,
+                "stale"
+            );
+            assert_eq!(
+                std::fs::metadata(dir.path().join("daemon-dev.log"))?
+                    .permissions()
+                    .mode()
+                    & 0o777,
+                0o600
+            );
+            xrun::control::request_shutdown(dir.path())?;
+            tokio::time::timeout(Duration::from_secs(3), async {
+                while xrun::config::instance_running(&dir.path().join("daemon.lock"))? {
+                    tokio::time::sleep(Duration::from_millis(20)).await;
+                }
+                Ok::<_, anyhow::Error>(())
+            })
+            .await??;
+            // The fixture has exited; never signal a subsequently reused PID.
+            cleanup.0 = None;
+            let error = start_dev_daemon(std::path::Path::new("/usr/bin/false"), dir.path())
+                .await
+                .unwrap_err();
+            assert!(error.to_string().starts_with("SERVICE_FAILED:"));
+            Ok(())
+        }
+    }
 }
 
 #[cfg(target_os = "macos")]
 pub fn status() -> Result<ServiceStatus> {
-    Ok(mac::state())
+    mac::state()
 }
 #[cfg(target_os = "macos")]
-async fn start_impl(_helper: &std::path::Path) -> Result<()> {
+async fn start_impl(helper: &std::path::Path) -> Result<()> {
+    if mac::development()? {
+        return mac::start_dev_daemon(helper, &xrun::config::device_dir()?).await;
+    }
     // Explicit Start migrates the legacy CLI LaunchAgent only after it has stopped.
     mac::register_agent()?;
     // Preserve the existing registration if the App signature or approval fails.
@@ -148,7 +311,9 @@ async fn start_impl(_helper: &std::path::Path) -> Result<()> {
 #[cfg(target_os = "macos")]
 pub async fn remove() -> Result<()> {
     xrun::service::stop_daemon().await?;
-    mac::unregister_agent()?;
+    if !mac::development()? {
+        mac::unregister_agent()?;
+    }
     xrun::service::uninstall("daemon").await
 }
 #[cfg(target_os = "macos")]
@@ -192,6 +357,7 @@ pub fn status() -> Result<ServiceStatus> {
         approval_required: false,
         app_at_login: startup_key()?.get_value::<String, _>("xrun").is_ok(),
         legacy_installed: false,
+        development: false,
     })
 }
 #[cfg(windows)]
