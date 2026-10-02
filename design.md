@@ -580,7 +580,7 @@ xrun win1 kill k3m9x2
 | Windows | daemon 在用户的交互会话中运行；锁屏时返回 SCREEN_LOCKED |
 | Linux | 支持 X11 图形会话；Wayland 本版返回 SCREENSHOT_UNAVAILABLE；没有图形会话时返回 NO_DISPLAY |
 
-其他采集失败返回 SCREENSHOT_UNAVAILABLE。基础截图只包含主显示器的当前画面；显示器或窗口选择、自动缩放、裁剪和录屏不进入本版。
+图形后端不可用时返回 SCREENSHOT_UNAVAILABLE；采集或 PNG 保存失败返回 SCREENSHOT_FAILED。Windows 将临时 PNG 路径交给采集工具前关闭文件句柄，读取后自动删除。基础截图只包含主显示器的当前画面；显示器或窗口选择、自动缩放、裁剪和录屏不进入本版。
 
 ### 4.13 本机状态、设备信息与存储
 

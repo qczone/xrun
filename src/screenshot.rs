@@ -49,15 +49,25 @@ async fn platform() -> Result<Vec<u8>> {
     crate::transfer::read_file(temp.path())
 }
 #[cfg(windows)]
+fn windows_capture_path() -> Result<tempfile::TempPath> {
+    // GDI+ cannot save over a file held open for writing. TempPath closes the
+    // handle while retaining ownership so the PNG is still removed on drop.
+    Ok(tempfile::Builder::new()
+        .suffix(".png")
+        .tempfile()?
+        .into_temp_path())
+}
+#[cfg(windows)]
 async fn platform() -> Result<Vec<u8>> {
-    let temp = tempfile::Builder::new().suffix(".png").tempfile()?;
-    let script = r#"Add-Type -AssemblyName System.Windows.Forms; Add-Type -AssemblyName System.Drawing
+    let temp = windows_capture_path()?;
+    let script = r#"$ErrorActionPreference='Stop'
+Add-Type -AssemblyName System.Windows.Forms; Add-Type -AssemblyName System.Drawing
 Add-Type -TypeDefinition 'using System; using System.Runtime.InteropServices; public class DesktopCheck { [DllImport("user32.dll", SetLastError=true)] public static extern IntPtr OpenInputDesktop(uint flags, bool inherit, uint access); [DllImport("user32.dll")] public static extern bool CloseDesktop(IntPtr handle); }'
 $d=[DesktopCheck]::OpenInputDesktop(0,$false,1); if($d -eq [IntPtr]::Zero){exit 77}; [void][DesktopCheck]::CloseDesktop($d)
 $r=[Windows.Forms.Screen]::PrimaryScreen.Bounds; $b=New-Object Drawing.Bitmap $r.Width,$r.Height; $g=[Drawing.Graphics]::FromImage($b); try{$g.CopyFromScreen($r.Location,[Drawing.Point]::Empty,$r.Size);$b.Save($env:XRUN_CAPTURE_PATH,[Drawing.Imaging.ImageFormat]::Png)}finally{$g.Dispose();$b.Dispose()}"#;
     let status = tokio::process::Command::new("powershell.exe")
         .args(["-NoProfile", "-NonInteractive", "-Command", script])
-        .env("XRUN_CAPTURE_PATH", temp.path())
+        .env("XRUN_CAPTURE_PATH", &temp)
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
@@ -67,9 +77,39 @@ $r=[Windows.Forms.Screen]::PrimaryScreen.Bounds; $b=New-Object Drawing.Bitmap $r
         bail!("SCREEN_LOCKED: interactive desktop is inaccessible")
     }
     if !status.success() {
-        bail!("NO_DISPLAY: screenshot requires an interactive user session")
+        bail!("SCREENSHOT_FAILED: PowerShell could not capture or save the display")
     }
-    crate::transfer::read_file(temp.path())
+    crate::transfer::read_file(&temp).context("SCREENSHOT_FAILED: cannot read captured PNG")
+}
+
+#[cfg(all(test, windows))]
+mod tests {
+    #[test]
+    fn gdi_can_save_to_capture_path() {
+        let temp = super::windows_capture_path().unwrap();
+        // A bitmap in memory exercises the same GDI+ save operation without
+        // requiring an interactive desktop on the Windows CI runner.
+        let script = r#"$ErrorActionPreference='Stop'; Add-Type -AssemblyName System.Drawing
+$b=New-Object Drawing.Bitmap 1,1; try{$b.Save($env:XRUN_CAPTURE_PATH,[Drawing.Imaging.ImageFormat]::Png)}finally{$b.Dispose()}"#;
+        let output = std::process::Command::new("powershell.exe")
+            .args(["-NoProfile", "-NonInteractive", "-Command", script])
+            .env("XRUN_CAPTURE_PATH", &temp)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "GDI+ save failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let bytes = crate::transfer::read_file(&temp).unwrap();
+        let reader = png::Decoder::new(std::io::Cursor::new(bytes))
+            .read_info()
+            .unwrap();
+        assert_eq!((reader.info().width, reader.info().height), (1, 1));
+        let path = temp.to_path_buf();
+        drop(temp);
+        assert!(!path.exists(), "capture file was not cleaned up");
+    }
 }
 #[cfg(target_os = "linux")]
 async fn platform() -> Result<Vec<u8>> {
