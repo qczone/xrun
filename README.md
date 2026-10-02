@@ -12,11 +12,11 @@ cargo build --locked --release
 
 将 `target/release/xrun`（Windows 为 `xrun.exe`）放到固定目录并加入 PATH，再安装服务。CLI、Server 和 daemon 的完整发布版本必须一致。
 
-GitHub Actions 的 `Package` 工作流可手动构建三个平台的 CLI 压缩包，以及 macOS Apple Silicon App 和 Windows x86_64 用户级安装包；macOS 签名、公证需要配置工作流列出的凭据。
+GitHub Actions 的 `Package` 工作流可手动构建三个平台的 CLI 压缩包，以及 macOS Apple Silicon DMG 和 Windows x86_64 用户级 NSIS 安装包；macOS App 和 DMG 的签名、公证需要配置工作流列出的凭据。
 
 ## 桌面 App
 
-macOS 13 及以上将 `xrun.app` 放入 `/Applications`，Windows 运行安装包。打开 App 后可以粘贴邀请链接加入部署、查看连接状态、控制后台服务，以及允许其他设备访问本机。已有 CLI 身份和配置会直接复用。
+macOS 13 及以上打开 DMG，将 `xrun.app` 拖入“应用程序”，再从 `/Applications` 启动；Windows 运行安装程序，安装到当前用户的目录。打开 App 后可以粘贴邀请链接加入部署、查看连接状态、控制后台服务，以及允许其他设备访问本机。已有 CLI 身份和配置会直接复用。
 
 App 分为本机状态、设备、任务与日志、设置四个页面。「任务与日志」展示在本机执行的任务，可以按状态筛选，查看来源设备、命令、工作目录、耗时、退出结果和 stdout/stderr；运行中的输出每 3 秒刷新，界面显示最近的输出。文件与截图页展示 push、pull 和 screenshot 的已有操作记录。App 只读本机 daemon 数据库，服务停止或网络断开后仍可查询，不会查询其他设备上执行的任务。
 
@@ -38,18 +38,23 @@ macOS App 通过 SMAppService 注册包内 LaunchAgent，系统登录项会关�
 bun install --cwd desktop --frozen-lockfile
 ```
 
-然后在对应的平台执行打包命令：
+然后在对应的平台执行同一条打包命令，自动生成本机的安装包：
 
-| 平台 | 命令 | 默认产物位置（相对项目根目录） |
+```bash
+bun run --cwd desktop build
+```
+
+| 平台 | 安装包 | 默认产物位置（相对项目根目录） |
 | --- | --- | --- |
-| macOS | `bun run --cwd desktop build --bundles app` | `target/release/bundle/macos/xrun.app` |
-| Windows | `bun run --cwd desktop build --bundles nsis` | `target/release/bundle/nsis/` 下的安装程序 |
+| macOS | DMG，拖入“应用程序”安装 | `target/release/bundle/dmg/` 下的 `.dmg` |
+| Windows | 当前用户的 NSIS 安装程序 | `target/release/bundle/nsis/` 下的安装 `.exe` |
+
+macOS 构建同时保留 `target/release/bundle/macos/xrun.app`，用于签名检查和调试；发布时分发 DMG。
 
 本机调试时添加 `--debug`，产物改为 `target/debug/bundle/`：
 
 ```bash
-bun run --cwd desktop build --debug --bundles app  # macOS
-# Windows 使用 --bundles nsis
+bun run --cwd desktop build --debug
 ```
 
 开发和检查同样可以在项目根目录运行：
@@ -62,7 +67,7 @@ bun run --cwd desktop build:ui  # 只构建前端
 
 macOS 开发模式可在界面中启动和停止后台 daemon，无需先打包 App；它复用本机身份与配置，退出开发界面后仍会运行，不设置登录启动。daemon 的运行日志写入 `~/.xrun/daemon-dev.log`。App 的登录启动需要使用打包后的 `xrun.app`。
 
-桌面入口为 `desktop/scripts/desktop.ts`，先编译配套 daemon，再调用 Tauri；打包时自动构建前端，两者完整版本必须一致。默认构建目录是项目根目录的 `target/`；如果设置了 `CARGO_TARGET_DIR`，构建缓存和产物会使用指定目录。前端源代码在 `desktop/src/`，构建输出在 `desktop/dist/`。macOS 本地包默认对整个 App 和内嵌程序做 ad-hoc 签名，打包后校验签名；正式发布需要 Developer ID 签名和公证，可通过 `APPLE_SIGNING_IDENTITY` 指定签名身份。Windows 安装包目前未签名。
+桌面入口为 `desktop/scripts/desktop.ts`，先编译配套 daemon，再调用 Tauri；打包时自动构建前端，两者完整版本必须一致。平台配置 `tauri.macos.conf.json` 和 `tauri.windows.conf.json` 分别指定 DMG 和 NSIS。默认构建目录是项目根目录的 `target/`；如果设置了 `CARGO_TARGET_DIR`，构建缓存和产物会使用指定目录。前端源代码在 `desktop/src/`，构建输出在 `desktop/dist/`。macOS 本地包默认对整个 App 和内嵌程序做 ad-hoc 签名，打包后校验签名；正式发布需要 Developer ID 签名和公证，可通过 `APPLE_SIGNING_IDENTITY` 指定签名身份，GitHub Actions 会对包内 App 和最终 DMG 分别公证并附加公证票据。Windows 安装包目前未签名。
 
 ## 部署和加入
 

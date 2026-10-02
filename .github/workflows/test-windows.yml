@@ -59,7 +59,7 @@ jobs:
           $PSNativeCommandUseErrorActionPreference = $true
           bun install --frozen-lockfile
           bun run check
-          bun run build --debug --bundles nsis
+          bun run build --debug
       - name: Check desktop code and bundled helper
         shell: pwsh
         run: |

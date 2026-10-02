@@ -48,12 +48,12 @@ jobs:
           path: ~/.bun/install/cache
           key: xrun-${{ runner.os }}-${{ runner.arch }}-bun-${{ hashFiles('desktop/bun.lock', 'desktop/package.json') }}
           restore-keys: xrun-${{ runner.os }}-${{ runner.arch }}-bun-
-      - name: Build desktop App
+      - name: Build desktop DMG
         working-directory: desktop
         run: |
           bun install --frozen-lockfile
           bun run check
-          bun run build --debug --bundles app
+          bun run build --debug
       - name: Check desktop code and bundled helper
         run: |
           cargo clippy --locked -p xrun-desktop --all-targets -- -D warnings
