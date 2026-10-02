@@ -132,8 +132,9 @@ pub fn status() -> Result<ServiceStatus> {
 #[cfg(target_os = "macos")]
 async fn start_impl(_helper: &std::path::Path) -> Result<()> {
     // Explicit Start migrates the legacy CLI LaunchAgent only after it has stopped.
-    xrun::service::uninstall("daemon").await?;
     mac::register_agent()?;
+    // Preserve the existing registration if the App signature or approval fails.
+    xrun::service::uninstall("daemon").await?;
     let domain = format!("gui/{}/{}", unsafe { libc::getuid() }, mac::LABEL);
     let out = tokio::process::Command::new("launchctl")
         .args(["kickstart", &domain])

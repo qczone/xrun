@@ -29,7 +29,7 @@ xrun 集中做三件事：
 | 本版包含 | 本版不做 |
 | --- | --- |
 | Linux Server；macOS、Windows、Linux CLI 和 daemon | macOS、Windows Server |
-| macOS 菜单栏 App、Windows 托盘 App：状态、加入、服务控制和权限 | Linux 桌面 App、图形化执行与文件管理、自动更新 |
+| macOS 菜单栏 App、Windows 托盘 App：状态、加入、服务控制、权限、本机任务与日志 | Linux 桌面 App、图形化执行与文件管理、自动更新 |
 | `up/join`、基本地址探测、用户级自启动、纯内网部署 | 全面的网卡识别、防火墙诊断和系统睡眠检测 |
 | 邀请、来源白名单、撤销、同一设备的证书更新 | 多用户、组织、复杂 RBAC、私钥丢失后的身份恢复、运行中切换 Server 或设备身份 |
 | 命令与脚本执行、有界 stdin、流式输出、后台任务、等待、取消 | PTY、端口转发、自动调度 |
@@ -96,6 +96,8 @@ AI Coding Agent / 开发者
 桌面 App 使用独立的 Tauri 2 crate，直接调用核心库中的加入、状态查询和授权操作；CLI、Server 和 daemon 仍可单独构建。首期使用本地静态界面，不加载远端网页，也不提供前端 Shell 或文件系统访问接口。身份私钥、证书和邀请令牌不会作为状态 DTO 传到前端；邀请输入只用于当前加入请求，不持久化到 WebView。
 
 App 与 daemon 是两个进程。关闭窗口、隐藏图标或退出 App 不影响 daemon；单实例机制和 macOS reopen 事件负责恢复图标与窗口。执行和传输仍由独立 daemon 完成。
+
+App 以只读连接读取本机 `daemon.db` 中已有的任务、输出和文件操作记录，使用游标分页，后台服务停止和网络断开时仍可查看。任务详情校验数据库 ID，重建数据库后旧任务引用不能读取新库中的同名任务。日志以序号增量读取、分别解码 stdout/stderr 的 UTF-8 字节并按纯文本展示，预览保留最近的输出，界面内存有上限；输出截断、过期和结果丢失分别提示。不增加 daemon RPC 或第二份任务状态，不向其他设备开放本机全量记录。执行环境和权限的本地修改使用同一文件锁，保存时保留其他配置。
 
 macOS 包内 LaunchAgent 使用 `BundleProgram` 指向配套 CLI，通过 SMAppService 注册，系统将后台服务关联到 xrun.app。Windows 配套 helper 使用 GUI subsystem，登录计划任务以当前用户的普通权限运行；App 登录启动单独配置。服务管理显式传入 helper 路径，避免误注册桌面程序自身。已有 CLI 服务只在停止后、用户点击启动时迁移。
 

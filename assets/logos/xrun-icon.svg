@@ -1,0 +1,24 @@
+<?xml version="1.0" ?>
+<svg xmlns="http://www.w3.org/2000/svg" width="200" height="200" viewBox="0 0 200 200" fill="none" role="img" aria-label="xrun X icon">
+  <defs>
+    <linearGradient id="xrun-icon-o" x1="40" y1="30" x2="160" y2="170" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#3EE0FF"/>
+      <stop offset="1" stop-color="#2F6BFF"/>
+    </linearGradient>
+    <linearGradient id="xrun-icon-b" x1="160" y1="30" x2="40" y2="170" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#B8F55A"/>
+      <stop offset="1" stop-color="#1FCB6B"/>
+    </linearGradient>
+    <filter id="xrun-icon-s" x="-40%" y="-40%" width="180%" height="180%" color-interpolation-filters="sRGB">
+      <feGaussianBlur stdDeviation="5"/>
+    </filter>
+    <clipPath id="xrun-icon-B">
+      <path d="M123.69 30L156.76 30A6 6 0 0 1 161.84 39.19L81.39 167.19A6 6 0 0 1 76.31 170L43.24 170A6 6 0 0 1 38.16 160.81L118.61 32.81A6 6 0 0 1 123.69 30Z"/>
+    </clipPath>
+  </defs>
+  <path d="M123.69 30L156.76 30A6 6 0 0 1 161.84 39.19L81.39 167.19A6 6 0 0 1 76.31 170L43.24 170A6 6 0 0 1 38.16 160.81L118.61 32.81A6 6 0 0 1 123.69 30Z" fill="url(#xrun-icon-b)"/>
+  <g clip-path="url(#xrun-icon-B)">
+    <path d="M35.38 35L82.62 35L170.62 175L123.38 175Z" fill="#04140C" opacity=".55" filter="url(#xrun-icon-s)"/>
+  </g>
+  <path d="M43.24 30L76.31 30A6 6 0 0 1 81.39 32.81L161.84 160.81A6 6 0 0 1 156.76 170L123.69 170A6 6 0 0 1 118.61 167.19L38.16 39.19A6 6 0 0 1 43.24 30Z" fill="url(#xrun-icon-o)"/>
+</svg>

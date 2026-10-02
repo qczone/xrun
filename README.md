@@ -18,6 +18,10 @@ GitHub Actions 的 `Package` 工作流可手动构建三个平台的 CLI 压缩�
 
 macOS 13 及以上将 `xrun.app` 放入 `/Applications`，Windows 运行安装包。打开 App 后可以粘贴邀请链接加入部署、查看连接状态、控制后台服务，以及允许其他设备访问本机。已有 CLI 身份和配置会直接复用。
 
+App 分为本机状态、设备、任务与日志、设置四个页面。「任务与日志」展示在本机执行的任务，可以按状态筛选，查看来源设备、命令、工作目录、耗时、退出结果和 stdout/stderr；运行中的输出每 3 秒刷新，界面显示最近的输出。文件与截图页展示 push、pull 和 screenshot 的已有操作记录。App 只读本机 daemon 数据库，服务停止或网络断开后仍可查询，不会查询其他设备上执行的任务。
+
+设置中可以选择默认工作目录、修改任务并发上限和工具搜索路径 PATH；保存后对新任务生效，无需重启。其他环境变量和已有权限保留。
+
 已加入时，启动 App 默认显示菜单栏或系统托盘图标；点击图标打开管理窗口。关闭窗口会留在托盘。“隐藏图标”同时隐藏窗口，重新打开 App 会恢复图标和窗口。App 只有一个实例，重新打开不会启动第二个 daemon。
 
 “退出 App”只退出界面。后台服务独立运行，随用户登录启动；“停止服务”正常结束 daemon 和本机运行中的任务，保留任务结果，服务会在下次登录时再启动。“移除后台服务”取消服务的登录启动并保留本机数据。“登录时打开 App”单独控制托盘界面的登录启动。
@@ -28,16 +32,27 @@ macOS App 通过 SMAppService 注册包内 LaunchAgent，系统登录项会关�
 
 本地构建桌面版需要 Rust、Node.js 24，以及 macOS Xcode 命令行工具或 Windows MSVC / WebView2：
 
+在项目根目录安装打包依赖：
+
 ```bash
-cd desktop
-npm ci
-npm run build
-# 调试包，不做发布签名
-npm run build -- --debug --bundles app  # macOS
-npm run build -- --debug --bundles nsis # Windows
+npm --prefix desktop ci
 ```
 
-产物位于 `target/release/bundle/`。构建脚本先编译配套 daemon，再打包 App，两者完整版本必须一致。发布 macOS App 需要 Developer ID 签名和公证；Windows 安装包目前未签名。
+然后在对应的平台执行打包命令：
+
+| 平台 | 命令 | 默认产物位置（相对项目根目录） |
+| --- | --- | --- |
+| macOS | `npm --prefix desktop run build -- --bundles app` | `target/release/bundle/macos/xrun.app` |
+| Windows | `npm --prefix desktop run build -- --bundles nsis` | `target/release/bundle/nsis/` 下的安装程序 |
+
+本机调试时添加 `--debug`，产物改为 `target/debug/bundle/`：
+
+```bash
+npm --prefix desktop run build -- --debug --bundles app  # macOS
+# Windows 使用 --bundles nsis
+```
+
+打包入口为 `desktop/scripts/build.mjs`，先编译配套 daemon，再打包 App，两者完整版本必须一致。默认构建目录是项目根目录的 `target/`；如果设置了 `CARGO_TARGET_DIR`，构建缓存和产物会使用指定目录。macOS 本地包默认对整个 App 和内嵌程序做 ad-hoc 签名，打包后校验签名；正式发布需要 Developer ID 签名和公证，可通过 `APPLE_SIGNING_IDENTITY` 指定签名身份。Windows 安装包目前未签名。
 
 ## 部署和加入
 

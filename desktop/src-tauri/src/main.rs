@@ -2,13 +2,14 @@
 
 mod platform;
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::sync::Mutex;
 use tauri::{
     Manager, State,
     menu::{Menu, MenuItem, PredefinedMenuItem},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
 };
+use tauri_plugin_dialog::DialogExt;
 
 #[derive(Default)]
 struct Desktop {
@@ -22,6 +23,86 @@ struct Status {
     service: platform::ServiceStatus,
     allow_from: Vec<String>,
     error: Option<String>,
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ExecutionSettings {
+    default_cwd: Option<std::path::PathBuf>,
+    max_concurrent_jobs: usize,
+    path: Option<String>,
+}
+
+#[derive(Serialize)]
+struct Settings {
+    execution: ExecutionSettings,
+    home_dir: std::path::PathBuf,
+    data_dir: std::path::PathBuf,
+    os: &'static str,
+}
+
+#[tauri::command]
+fn settings() -> Result<Settings, String> {
+    let result = (|| {
+        let cfg = xrun::config::DaemonConfig::load()?;
+        Ok::<_, anyhow::Error>(Settings {
+            execution: ExecutionSettings {
+                default_cwd: cfg.default_cwd,
+                max_concurrent_jobs: cfg.max_concurrent_jobs,
+                path: cfg
+                    .env
+                    .iter()
+                    .find(|(key, _)| {
+                        if cfg!(windows) {
+                            key.eq_ignore_ascii_case("PATH")
+                        } else {
+                            key.as_str() == "PATH"
+                        }
+                    })
+                    .map(|(_, value)| value.clone()),
+            },
+            home_dir: xrun::config::home_dir()?,
+            data_dir: xrun::config::device_dir()?,
+            os: std::env::consts::OS,
+        })
+    })();
+    result.map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn save_settings(
+    app: tauri::AppHandle,
+    state: State<'_, Desktop>,
+    execution: ExecutionSettings,
+) -> Result<(), String> {
+    let _guard = state.action.lock().await;
+    let result = (|| {
+        xrun::config::Identity::load()?;
+        xrun::config::update_execution(
+            execution.default_cwd,
+            execution.max_concurrent_jobs,
+            execution.path,
+        )
+    })();
+    record(&app, result)
+}
+
+#[tauri::command]
+async fn choose_directory(app: tauri::AppHandle) -> Result<Option<String>, String> {
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    app.dialog()
+        .file()
+        .set_title("选择默认工作目录")
+        .pick_folder(move |path| {
+            let _ = tx.send(path);
+        });
+    let path = rx.await.map_err(|e| e.to_string())?;
+    path.map(|p| {
+        p.into_path()
+            .map(|p| p.to_string_lossy().into_owned())
+            .map_err(|e| e.to_string())
+    })
+    .transpose()
 }
 
 fn local_status(app: &tauri::AppHandle) -> anyhow::Result<Status> {
@@ -67,6 +148,37 @@ fn status(app: tauri::AppHandle) -> Result<Status, String> {
 #[tauri::command]
 async fn devices() -> Result<xrun::client::Status, String> {
     xrun::client::status().await.map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn task_history(
+    before: Option<i64>,
+    filter: String,
+) -> Result<xrun::history::TaskPage, String> {
+    tauri::async_runtime::spawn_blocking(move || xrun::history::tasks(before, &filter))
+        .await
+        .map_err(|e| e.to_string())?
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn task_output(
+    db_id: String,
+    job: String,
+    after: Option<u64>,
+) -> Result<xrun::history::TaskOutput, String> {
+    tauri::async_runtime::spawn_blocking(move || xrun::history::output(&db_id, &job, after))
+        .await
+        .map_err(|e| e.to_string())?
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn file_history(before: Option<i64>) -> Result<xrun::history::FilePage, String> {
+    tauri::async_runtime::spawn_blocking(move || xrun::history::files(before))
+        .await
+        .map_err(|e| e.to_string())?
+        .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -234,17 +346,24 @@ fn main() {
     let background = std::env::args().any(|arg| arg == "--background");
     tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, _, _| present(app)))
+        .plugin(tauri_plugin_dialog::init())
         .manage(Desktop::default())
         .invoke_handler(tauri::generate_handler![
             status,
             devices,
+            task_history,
+            task_output,
+            file_history,
             join,
             start,
             stop,
             remove_service,
             autostart,
             permission,
-            hide_icon
+            hide_icon,
+            settings,
+            save_settings,
+            choose_directory
         ])
         .setup(move |app| {
             #[cfg(target_os = "macos")]

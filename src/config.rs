@@ -86,13 +86,17 @@ impl DaemonConfig {
         } else {
             Self::default()
         };
-        if !(1..=64).contains(&value.max_concurrent_jobs) {
+        value.validate()?;
+        Ok(value)
+    }
+    fn validate(&self) -> Result<()> {
+        if !(1..=64).contains(&self.max_concurrent_jobs) {
             bail!("INVALID_CONFIG: max_concurrent_jobs must be 1..64")
         }
-        if value.default_cwd.as_ref().is_some_and(|p| !p.is_absolute()) {
+        if self.default_cwd.as_ref().is_some_and(|p| !p.is_absolute()) {
             bail!("INVALID_CONFIG: default_cwd must be absolute")
         }
-        if value
+        if self
             .env
             .iter()
             .any(|(k, v)| k.is_empty() || k.contains(['=', '\0']) || v.contains('\0'))
@@ -102,7 +106,7 @@ impl DaemonConfig {
         #[cfg(windows)]
         {
             let mut keys = std::collections::HashSet::new();
-            if value
+            if self
                 .env
                 .keys()
                 .any(|k| !keys.insert(k.to_ascii_lowercase()))
@@ -110,9 +114,10 @@ impl DaemonConfig {
                 bail!("INVALID_CONFIG: duplicate environment key")
             }
         }
-        Ok(value)
+        Ok(())
     }
     pub fn save(&self) -> Result<()> {
+        self.validate()?;
         write(&device_dir()?.join("daemon.toml"), self)
     }
 }
@@ -159,19 +164,59 @@ pub fn write<T: Serialize>(path: &Path, value: &T) -> Result<()> {
 }
 
 pub fn update_permission(device_id: &str, allow: bool) -> Result<()> {
+    update_daemon_config(&device_dir()?, |cfg| {
+        cfg.allow_from.retain(|id| id != device_id);
+        if allow {
+            cfg.allow_from.push(device_id.to_string());
+        }
+        Ok(())
+    })
+}
+
+pub fn update_execution(
+    default_cwd: Option<PathBuf>,
+    max_concurrent_jobs: usize,
+    path: Option<String>,
+) -> Result<()> {
+    if let Some(cwd) = &default_cwd
+        && !cwd.is_dir()
+    {
+        bail!("INVALID_CWD: working directory must exist")
+    }
+    update_daemon_config(&device_dir()?, |cfg| {
+        cfg.default_cwd = default_cwd;
+        cfg.max_concurrent_jobs = max_concurrent_jobs;
+        cfg.env.remove("PATH");
+        #[cfg(windows)]
+        cfg.env.retain(|key, _| !key.eq_ignore_ascii_case("PATH"));
+        if let Some(path) = path {
+            cfg.env.insert("PATH".into(), path);
+        }
+        Ok(())
+    })
+}
+
+fn update_daemon_config(
+    dir: &Path,
+    update: impl FnOnce(&mut DaemonConfig) -> Result<()>,
+) -> Result<()> {
     let lock = std::fs::OpenOptions::new()
         .read(true)
         .write(true)
         .create(true)
         .truncate(false)
-        .open(device_dir()?.join("permissions.lock"))?;
+        .open(dir.join("permissions.lock"))?;
     lock.lock()?;
-    let mut cfg = DaemonConfig::load()?;
-    cfg.allow_from.retain(|id| id != device_id);
-    if allow {
-        cfg.allow_from.push(device_id.to_string());
-    }
-    cfg.save()
+    let path = dir.join("daemon.toml");
+    let mut cfg = if path.exists() {
+        read::<DaemonConfig>(&path)?
+    } else {
+        DaemonConfig::default()
+    };
+    cfg.validate()?;
+    update(&mut cfg)?;
+    cfg.validate()?;
+    write(&path, &cfg)
 }
 pub fn sync_parent(_path: &Path) -> Result<()> {
     #[cfg(unix)]
@@ -276,4 +321,51 @@ pub(crate) fn private_acl(path: &Path, directory: bool) -> Result<()> {
         return Err(std::io::Error::from_raw_os_error(status as i32).into());
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn settings_and_permissions_do_not_overwrite_each_other() -> Result<()> {
+        let dir = tempfile::tempdir()?;
+        let cfg = DaemonConfig {
+            allow_from: vec!["source-a".into()],
+            env: BTreeMap::from([("OTHER_SETTING".into(), "preserve-me".into())]),
+            ..DaemonConfig::default()
+        };
+        write(&dir.path().join("daemon.toml"), &cfg)?;
+        std::thread::scope(|scope| -> Result<()> {
+            let permission = scope.spawn(|| {
+                update_daemon_config(dir.path(), |cfg| {
+                    cfg.allow_from.push("source-b".into());
+                    Ok(())
+                })
+            });
+            let settings = scope.spawn(|| {
+                update_daemon_config(dir.path(), |cfg| {
+                    cfg.max_concurrent_jobs = 8;
+                    Ok(())
+                })
+            });
+            permission.join().unwrap()?;
+            settings.join().unwrap()?;
+            Ok(())
+        })?;
+        let cfg: DaemonConfig = read(&dir.path().join("daemon.toml"))?;
+        assert_eq!(cfg.allow_from, ["source-a", "source-b"]);
+        assert_eq!(cfg.max_concurrent_jobs, 8);
+        assert_eq!(cfg.env["OTHER_SETTING"], "preserve-me");
+        let failed = update_daemon_config(dir.path(), |cfg| {
+            cfg.max_concurrent_jobs = 0;
+            Ok(())
+        });
+        assert!(failed.is_err());
+        assert_eq!(
+            read::<DaemonConfig>(&dir.path().join("daemon.toml"))?.max_concurrent_jobs,
+            8
+        );
+        Ok(())
+    }
 }

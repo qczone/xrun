@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { copyFileSync, mkdirSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -23,3 +23,7 @@ const binaries = resolve(desktop, "src-tauri/binaries");
 mkdirSync(binaries, { recursive: true });
 copyFileSync(resolve(env.CARGO_TARGET_DIR, debug ? "debug" : "release", `xrun${extension}`), resolve(binaries, `xrun-${target}${extension}`));
 run(process.execPath, [resolve(desktop, "node_modules/@tauri-apps/cli/tauri.js"), "build", ...args, "--", "--locked"], desktop);
+if (process.platform === "darwin" && !args.includes("--no-bundle")) {
+  const app = resolve(env.CARGO_TARGET_DIR, debug ? "debug" : "release", "bundle/macos/xrun.app");
+  if (existsSync(app)) run("codesign", ["--verify", "--deep", "--strict", "--verbose=2", app]);
+}
