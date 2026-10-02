@@ -1016,7 +1016,9 @@ fn resolve_program(program: &str, cwd: &Path, env: &BTreeMap<String, String>) ->
                         continue;
                     }
                 }
-                return Ok(std::fs::canonicalize(path)?);
+                // Keep the invoked name/path: rustup and other command shims
+                // dispatch on argv[0]. Let the OS follow executable symlinks.
+                return Ok(path);
             }
         }
         bail!("PROGRAM_NOT_FOUND: {program}")

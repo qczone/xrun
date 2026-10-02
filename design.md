@@ -438,10 +438,10 @@ AI 应把“执行未确认”与“已失败”区分开。xrun 不根据相同
 
 请求传递 `program` 和 `args[]`，daemon 直接创建进程，不拼接 Shell 字符串。
 
-- 绝对程序路径直接使用；带目录分隔符的相对路径按工作目录解析；只有程序名时按最终 PATH 查找。忽略空 PATH 项，相对 PATH 项按工作目录解析。
+- 绝对程序路径直接使用；带目录分隔符的相对路径按工作目录解析；只有程序名时按最终 PATH 查找。忽略空 PATH 项，相对 PATH 项按工作目录解析。保留查找到的符号链接入口，不改写为链接目标，保证按启动名称选择行为的程序正常工作。
 - Windows 按 PATHEXT 查找；找到批处理时返回 `SHELL_REQUIRED`，由调用方显式选择 `--script cmd` 或 `cmd.exe /C`。参数编码与长度检查由平台层处理。
 - 默认工作目录是用户主目录，可配置；不存在时返回 `INVALID_CWD`。路径不展开 `~` 或环境变量。
-- 环境按 daemon 启动环境、`daemon.toml [env]`、请求 `--env` 依次覆盖。凭证不通过环境变量传给任务。
+- 任务继承 daemon 的正常运行环境，但先过滤隐式构建变量：`CARGO_TARGET_DIR`、`CARGO_BUILD_TARGET`、`RUSTUP_TOOLCHAIN`、`RUST_RECURSION_COUNT`、`RUSTC`、`RUSTDOC`、`RUSTC_WRAPPER`、`RUSTC_WORKSPACE_WRAPPER`、`RUSTFLAGS`、`CARGO_ENCODED_RUSTFLAGS`。之后依次应用 `daemon.toml [env]` 和请求 `--env`，允许显式设置这些变量；`HOME`、`PATH`、`CARGO_HOME`、`RUSTUP_HOME`、代理等其他配置继续继承。此规则在所有平台、开发版和发布版中一致，不依赖服务启动方式。xrun 的身份凭证不通过环境变量传给任务。
 
 `--script` 将内容写入私有临时文件，用指定 Shell 执行，结束后删除；脚本原文不写入数据库或审计。
 

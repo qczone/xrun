@@ -5,6 +5,21 @@ use tokio::io::{AsyncRead, AsyncWrite};
 pub type Input = Box<dyn AsyncWrite + Unpin + Send>;
 pub type Output = Box<dyn AsyncRead + Unpin + Send>;
 
+// Strip implicit build-session controls on every task launch, regardless of how
+// the daemon was started. Explicit config/request overrides are applied afterward.
+const INHERITED_BUILD_ENV: &[&str] = &[
+    "CARGO_TARGET_DIR",
+    "CARGO_BUILD_TARGET",
+    "RUSTUP_TOOLCHAIN",
+    "RUST_RECURSION_COUNT",
+    "RUSTC",
+    "RUSTDOC",
+    "RUSTC_WRAPPER",
+    "RUSTC_WORKSPACE_WRAPPER",
+    "RUSTFLAGS",
+    "CARGO_ENCODED_RUSTFLAGS",
+];
+
 pub struct ManagedChild {
     pub pid: u32,
     pub stdin: Option<Input>,
@@ -90,6 +105,9 @@ pub fn spawn(
 ) -> Result<ManagedChild> {
     use std::os::unix::process::CommandExt;
     let mut cmd = tokio::process::Command::new(path);
+    for name in INHERITED_BUILD_ENV {
+        cmd.env_remove(name);
+    }
     cmd.args(args)
         .current_dir(cwd)
         .envs(env)
@@ -308,7 +326,12 @@ mod windows {
         // `cwd` is explicit for this process, so do not copy those entries
         // into the ordinary key/value environment block.
         let mut values: Vec<(String, String)> = std::env::vars()
-            .filter(|(name, _)| !name.starts_with('='))
+            .filter(|(name, _)| {
+                !name.starts_with('=')
+                    && !super::INHERITED_BUILD_ENV
+                        .iter()
+                        .any(|blocked| name.eq_ignore_ascii_case(blocked))
+            })
             .collect();
         for (k, v) in overrides {
             if let Some(existing) = values

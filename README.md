@@ -187,6 +187,8 @@ max_concurrent_jobs = 4
 PATH = "/usr/local/bin:/usr/bin:/bin"
 ```
 
+远端命令保留符号链接入口，支持 rustup 的 cargo、rustc 等按启动名称分派的工具。任务继承 daemon 的正常环境，但过滤隐式的 `CARGO_TARGET_DIR`、`CARGO_BUILD_TARGET`、`RUSTUP_TOOLCHAIN`、`RUST_RECURSION_COUNT`、`RUSTC`、`RUSTDOC`、`RUSTC_WRAPPER`、`RUSTC_WORKSPACE_WRAPPER`、`RUSTFLAGS`、`CARGO_ENCODED_RUSTFLAGS`；工具目录、PATH 和代理等配置保留。需要指定构建目录、工具链或编译参数时，写入 `[env]` 或通过 `--env` 显式传入，请求值优先。开发版和发布版采用相同规则。
+
 `xrun guide` 直接输出本 README 的使用说明。
 
 `down` 移除本机服务、保留数据；`down --purge` 经终端确认后删除本机数据。`daemon reset` 要求 daemon 已停止，明确重建任务数据库，保留设备身份。

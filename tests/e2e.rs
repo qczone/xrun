@@ -168,7 +168,41 @@ async fn execution_transfer_and_identity() -> Result<()> {
     let offline = json(cli(&source, &["runner1", "info", "--json"]).await);
     assert_eq!(offline["online"], false);
     assert_eq!(offline["device_id"], target_id);
-    let mut target_daemon = daemon(&target);
+    // Exercise the shared task process layer with a polluted daemon environment,
+    // including Windows' case-insensitive variable names.
+    let build_env = [
+        "CARGO_TARGET_DIR",
+        "CARGO_BUILD_TARGET",
+        "RUSTUP_TOOLCHAIN",
+        "RUST_RECURSION_COUNT",
+        "RUSTC",
+        "RUSTDOC",
+        "RUSTC_WRAPPER",
+        "RUSTC_WORKSPACE_WRAPPER",
+        "RUSTFLAGS",
+        "CARGO_ENCODED_RUSTFLAGS",
+    ];
+    let mut target_command = command(&target, &["daemon"]);
+    for name in build_env {
+        target_command.env(
+            if cfg!(windows) {
+                name.to_ascii_lowercase()
+            } else {
+                name.into()
+            },
+            "must-not-leak",
+        );
+    }
+    target_command
+        .env("XRUN_ENV_PRESERVED", "keep")
+        .env("CARGO_HOME", "cargo-home-kept")
+        .env("RUSTUP_HOME", "rustup-home-kept");
+    let mut target_daemon = Daemon(
+        target_command
+            .stderr(Stdio::null())
+            .stdout(Stdio::null())
+            .spawn()?,
+    );
     online(&source, "runner1").await;
     online(&target, "admin").await;
     // An ordinary invitation only registers a device, in both directions.
@@ -199,7 +233,33 @@ async fn execution_transfer_and_identity() -> Result<()> {
     let fixture = root.join("fixture.rs");
     std::fs::write(
         &fixture,
-        r#"use std::{io::{Read,Write},time::Duration};fn main(){let a:Vec<String>=std::env::args().skip(1).collect();match a[0].as_str(){"echo"=>{for s in &a[1..]{println!("<{s}>")}},"input"=>{let mut b=vec![];std::io::stdin().read_to_end(&mut b).unwrap();std::io::stdout().write_all(&b).unwrap();},"env"=>print!("{}",std::env::var("XRUN_TEST_SECRET").unwrap()),"sleep"=>std::thread::sleep(Duration::from_secs(30)),"exit"=>{eprintln!("error bytes");std::process::exit(7)},"detached"=>{let _=std::process::Command::new(std::env::current_exe().unwrap()).arg("sleep").spawn().unwrap();print!("parent done")},_=>panic!()}}"#,
+        r#"use std::{io::{Read, Write}, time::Duration};
+fn main() {
+    let a: Vec<String> = std::env::args().skip(1).collect();
+    match a[0].as_str() {
+        "echo" => { for s in &a[1..] { println!("<{s}>"); } },
+        "input" => {
+            let mut b = vec![];
+            std::io::stdin().read_to_end(&mut b).unwrap();
+            std::io::stdout().write_all(&b).unwrap();
+        },
+        "env" => print!("{}", std::env::var("XRUN_TEST_SECRET").unwrap()),
+        "env-values" => {
+            for name in &a[1..] {
+                println!("{name}={}", std::env::var(name).unwrap_or_default());
+            }
+        },
+        "argv0" => print!("{}", std::path::Path::new(&std::env::args().next().unwrap())
+            .file_name().unwrap().to_string_lossy()),
+        "sleep" => std::thread::sleep(Duration::from_secs(30)),
+        "exit" => { eprintln!("error bytes"); std::process::exit(7); },
+        "detached" => {
+            let _ = std::process::Command::new(std::env::current_exe().unwrap()).arg("sleep").spawn().unwrap();
+            print!("parent done");
+        },
+        _ => panic!(),
+    }
+}"#,
     )?;
     let runner = root.join(if cfg!(windows) {
         "fixture child.exe"
@@ -214,6 +274,93 @@ async fn execution_transfer_and_identity() -> Result<()> {
         .await?;
     assert!(status.success());
     let runner = runner.to_string_lossy();
+    let mut env_args = vec!["runner1", "--", &runner, "env-values"];
+    env_args.extend(build_env);
+    env_args.extend(["XRUN_ENV_PRESERVED", "CARGO_HOME", "RUSTUP_HOME", "PATH"]);
+    let values = ok(cli(&source, &env_args).await);
+    let values: std::collections::BTreeMap<_, _> = values
+        .lines()
+        .map(|line| line.split_once('=').unwrap())
+        .collect();
+    for name in build_env {
+        assert_eq!(values[name], "", "inherited {name} leaked into the task");
+    }
+    assert_eq!(values["XRUN_ENV_PRESERVED"], "keep");
+    assert_eq!(values["CARGO_HOME"], "cargo-home-kept");
+    assert_eq!(values["RUSTUP_HOME"], "rustup-home-kept");
+    assert!(!values["PATH"].is_empty());
+
+    // Config and per-request values intentionally restore filtered variables;
+    // a request must still override the configured value.
+    let config_path = target.join(".xrun/daemon.toml");
+    let mut task_config: xrun::config::DaemonConfig = xrun::config::read(&config_path)?;
+    task_config
+        .env
+        .insert("CARGO_TARGET_DIR".into(), "configured-target".into());
+    task_config
+        .env
+        .insert("RUSTUP_TOOLCHAIN".into(), "configured-toolchain".into());
+    xrun::config::write(&config_path, &task_config)?;
+    assert_eq!(
+        ok(cli(
+            &source,
+            &[
+                "runner1",
+                "--",
+                &runner,
+                "env-values",
+                "CARGO_TARGET_DIR",
+                "RUSTUP_TOOLCHAIN",
+            ]
+        )
+        .await),
+        "CARGO_TARGET_DIR=configured-target\nRUSTUP_TOOLCHAIN=configured-toolchain\n"
+    );
+    assert_eq!(
+        ok(cli(
+            &source,
+            &[
+                "runner1",
+                "--env",
+                "CARGO_TARGET_DIR=requested-target",
+                "--env",
+                if cfg!(windows) {
+                    "rustup_toolchain=requested-toolchain"
+                } else {
+                    "RUSTUP_TOOLCHAIN=requested-toolchain"
+                },
+                "--",
+                &runner,
+                "env-values",
+                "CARGO_TARGET_DIR",
+                "RUSTUP_TOOLCHAIN",
+            ]
+        )
+        .await),
+        "CARGO_TARGET_DIR=requested-target\nRUSTUP_TOOLCHAIN=requested-toolchain\n"
+    );
+    task_config.env.remove("CARGO_TARGET_DIR");
+    task_config.env.remove("RUSTUP_TOOLCHAIN");
+    xrun::config::write(&config_path, &task_config)?;
+
+    #[cfg(unix)]
+    {
+        let link = root.join("cargo");
+        std::os::unix::fs::symlink(runner.as_ref(), &link)?;
+        let link = link.to_string_lossy();
+        let cwd = root.to_string_lossy();
+        let path = format!("PATH={cwd}");
+        for args in [
+            vec!["runner1", "--", &link, "argv0"],
+            vec!["runner1", "--env", &path, "--", "cargo", "argv0"],
+            vec!["runner1", "-C", &cwd, "--", "./cargo", "argv0"],
+            vec![
+                "runner1", "-C", &cwd, "--env", "PATH=.", "--", "cargo", "argv0",
+            ],
+        ] {
+            assert_eq!(ok(cli(&source, &args).await), "cargo");
+        }
+    }
     assert_eq!(
         ok(cli(
             &source,
