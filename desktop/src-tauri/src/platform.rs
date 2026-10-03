@@ -57,7 +57,7 @@ mod mac {
     use objc2_foundation::NSString;
     use objc2_service_management::SMAppService;
 
-    pub const LABEL: &str = "dev.qczone.xrun.daemon";
+    pub const LABEL: &str = xrun::service::APP_DAEMON_LABEL;
 
     fn is_bundle_executable(exe: &std::path::Path) -> bool {
         let Some(macos) = exe.parent() else {
@@ -84,7 +84,7 @@ mod mac {
                 installed: false,
                 approval_required: false,
                 app_at_login: false,
-                legacy_installed: xrun::service::installed("daemon")?,
+                legacy_installed: xrun::service::cli_daemon_installed()?,
                 development: true,
             });
         }
@@ -100,7 +100,7 @@ mod mac {
             installed: matches!(agent_status, 1 | 2),
             approval_required: agent_status == 2 || unsafe { main.status() }.0 == 2,
             app_at_login: matches!(unsafe { main.status() }.0, 1 | 2),
-            legacy_installed: xrun::service::installed("daemon").unwrap_or(false),
+            legacy_installed: xrun::service::cli_daemon_installed().unwrap_or(false),
             development: false,
         })
     }

@@ -6,6 +6,9 @@ use anyhow::{Context, Result, bail};
 use std::path::PathBuf;
 use std::{path::Path, time::Duration};
 
+#[cfg(target_os = "macos")]
+pub const APP_DAEMON_LABEL: &str = "dev.qczone.xrun.daemon";
+
 async fn command(program: &str, args: &[&str]) -> Result<()> {
     let mut cmd = tokio::process::Command::new(program);
     cmd.args(args);
@@ -198,6 +201,13 @@ pub async fn start(kind: &str) -> Result<()> {
     #[cfg(target_os = "macos")]
     {
         let domain = format!("gui/{}", unsafe { libc::getuid() });
+        if kind == "daemon" && !cli_daemon_installed()? {
+            return command(
+                "/bin/launchctl",
+                &["kickstart", &format!("{domain}/{APP_DAEMON_LABEL}")],
+            )
+            .await;
+        }
         let _ = command(
             "launchctl",
             &["bootstrap", &domain, &unit_path(kind)?.to_string_lossy()],
@@ -258,14 +268,34 @@ pub async fn uninstall(kind: &str) -> Result<()> {
     Ok(())
 }
 pub fn installed(kind: &str) -> Result<bool> {
-    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    #[cfg(target_os = "linux")]
     {
         Ok(unit_path(kind)?.exists())
+    }
+    #[cfg(target_os = "macos")]
+    {
+        if unit_path(kind)?.exists() {
+            return Ok(true);
+        }
+        if kind != "daemon" {
+            return Ok(false);
+        }
+        let domain = format!("gui/{}/{APP_DAEMON_LABEL}", unsafe { libc::getuid() });
+        Ok(std::process::Command::new("/bin/launchctl")
+            .args(["print", &domain])
+            .output()?
+            .status
+            .success())
     }
     #[cfg(windows)]
     {
         Ok(kind == "daemon" && device_dir()?.join("daemon.service").exists())
     }
+}
+
+#[cfg(target_os = "macos")]
+pub fn cli_daemon_installed() -> Result<bool> {
+    Ok(unit_path("daemon")?.exists())
 }
 
 #[cfg(target_os = "linux")]
