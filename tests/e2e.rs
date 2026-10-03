@@ -808,14 +808,21 @@ fn main() {
     assert!(String::from_utf8_lossy(&refused.stderr).contains("ACCESS_PAUSED"));
     // Even a fast resume invalidates the subscription opened before the pause.
     ok(cli(&target, &["daemon", "resume"]).await);
-    assert!(
-        tokio::time::timeout(
-            Duration::from_secs(2),
-            xrun::net::receive::<Data>(&mut subscription)
-        )
-        .await?
-        .is_err()
-    );
+    // Drain in-flight logs and the optional denial response before checking
+    // transport closure. Neither a diagnostic nor a timeout proves closure.
+    tokio::time::timeout(Duration::from_secs(2), async {
+        loop {
+            match xrun::net::receive::<Data>(&mut subscription).await {
+                Ok(Data::Logs { job, .. }) if job.job_id == paused_job_id => {}
+                Ok(Data::Error { code, .. })
+                    if matches!(code.as_str(), "ACCESS_PAUSED" | "SESSION_CLOSED") => {}
+                Ok(message) => anyhow::bail!("unexpected message after pause: {message:?}"),
+                Err(_) => return Ok::<_, anyhow::Error>(()),
+            }
+        }
+    })
+    .await
+    .context("paused log subscription remained open after resume")??;
     ok(cli(&target, &["daemon", "pause"]).await);
     let local_tasks = xrun::store::TaskStore::open(&target.join(".xrun/daemon.db"), false)?;
     assert!(!local_tasks.get(paused_job_id)?.unwrap().state.terminal());
