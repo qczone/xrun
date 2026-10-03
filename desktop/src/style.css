@@ -679,6 +679,26 @@ code {
   display: block;
   margin-bottom: 8px;
 }
+.device-controls {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex-shrink: 0;
+}
+.revocation-result h2 {
+  margin: 0;
+  font-size: 17px;
+}
+.revocation-result p {
+  margin: 10px 0;
+}
+.revocation-result code {
+  overflow-wrap: anywhere;
+}
+.warning-text {
+  color: var(--danger);
+  overflow-wrap: anywhere;
+}
 .role-label {
   display: inline-block;
   margin-left: 8px;

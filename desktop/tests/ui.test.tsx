@@ -144,7 +144,7 @@ async function fixture(handlers: Record<string, Handler> = {}, joined = true) {
   };
   const page = (name: string) =>
     fireEvent.click(screen.getByRole("button", { name }));
-  return { ...view, calls, status, settings, poll, page };
+  return { ...view, calls, status, settings, devices, poll, page };
 }
 
 function task(id = "ABC123", changes: Partial<Job> = {}): Job {
@@ -609,6 +609,139 @@ test("an invitation completed after leaving its page cannot expose a secret", as
   page("设备");
   expect(screen.queryByLabelText("生成的邀请链接")).toBeNull();
   expect(document.body.textContent).not.toContain("late-secret");
+});
+
+test("membership revocation is manager-only, requires confirmation and sends the immutable ID", async () => {
+  let members!: Device[];
+  const { calls, status, devices, poll, page } = await fixture({
+    revoke: ({ device }) => {
+      members.find((entry) => entry.device_id === device)!.revoked = true;
+      return {
+        device_id: device,
+        revoked: true,
+        roster_version: 2,
+        undelivered: [],
+        relay_error: null,
+      };
+    },
+  });
+  members = devices;
+  page("设备");
+  expect(screen.queryByRole("button", { name: /^撤销 / })).toBeNull();
+  status.network!.is_manager = true;
+  await poll();
+  const name = '撤销 <img id="injected" src=x onerror=alert(1)>';
+  fireEvent.click(screen.getByRole("button", { name }));
+  await waitFor(() =>
+    expect(document.querySelector("dialog")?.open).toBe(true),
+  );
+  await act(async () => document.querySelector("dialog")!.close("cancel"));
+  expect(calls.some((call) => call.command === "revoke")).toBe(false);
+  fireEvent.click(screen.getByRole("button", { name }));
+  await waitFor(() =>
+    expect(document.querySelector("dialog")?.open).toBe(true),
+  );
+  await act(async () => document.querySelector("dialog")!.close("ok"));
+  await screen.findByText("当前其他成员均已确认收到更新。");
+  expect(calls.find((call) => call.command === "revoke")?.args).toEqual({
+    device: "unsafe-label",
+  });
+  expect(screen.queryByRole("button", { name })).toBeNull();
+  expect(
+    (
+      screen.getByLabelText(
+        '允许 <img id="injected" src=x onerror=alert(1)> 访问本机',
+      ) as HTMLInputElement
+    ).disabled,
+  ).toBe(true);
+  expect(document.getElementById("injected")).toBeNull();
+});
+
+test("revocation keeps its local result during relay failure and can retry delivery", async () => {
+  let offline = false;
+  const members: Device[] = [
+    {
+      device_id: "win-id",
+      name: "win1",
+      online: true,
+      revoked: false,
+      admin: false,
+      os: "windows",
+    },
+    {
+      device_id: "cloud-id",
+      name: "cloud1",
+      online: false,
+      revoked: false,
+      admin: false,
+      os: "linux",
+    },
+  ];
+  const { calls, status, poll, page } = await fixture({
+    devices: () =>
+      offline
+        ? {
+            devices: null,
+            server_error: { code: "CONNECT_FAILED", message: "offline" },
+          }
+        : { devices: members, server_error: null },
+    revoke: ({ device }) => {
+      members[0].revoked = true;
+      const first = !calls.some(
+        (call) => call.command === "revoke" && call !== calls.at(-1),
+      );
+      offline = first;
+      return {
+        device_id: device,
+        revoked: true,
+        roster_version: 2,
+        undelivered: first ? ["cloud-id", "unknown-id"] : [],
+        relay_error: first ? "CONNECT_FAILED: relay unavailable" : null,
+      };
+    },
+  });
+  status.network!.is_manager = true;
+  await poll();
+  page("设备");
+  fireEvent.click(screen.getByRole("button", { name: "撤销 win1" }));
+  await waitFor(() =>
+    expect(document.querySelector("dialog")?.open).toBe(true),
+  );
+  await act(async () => document.querySelector("dialog")!.close("ok"));
+  await screen.findByText("已撤销 win1");
+  const result = document.querySelector(".revocation-result")!;
+  expect(result.textContent).toContain("尚未发布到中转");
+  expect(result.textContent).toContain("cloud1");
+  expect(result.textContent).toContain("unknown-id");
+  expect(screen.queryByText("当前其他成员均已确认收到更新。")).toBeNull();
+  expect(
+    (screen.getByLabelText("允许 win1 访问本机") as HTMLInputElement).disabled,
+  ).toBe(true);
+  fireEvent.click(screen.getByRole("button", { name: "重新发布撤销记录" }));
+  await screen.findByText("当前其他成员均已确认收到更新。");
+  expect(
+    calls.filter((call) => call.command === "revoke").map((call) => call.args),
+  ).toEqual([{ device: "win-id" }, { device: "win-id" }]);
+});
+
+test("backend refusal does not falsely mark a member revoked", async () => {
+  const { status, poll, page } = await fixture({
+    revoke: () => {
+      throw "NOT_MANAGER: only the manager may revoke";
+    },
+  });
+  status.network!.is_manager = true;
+  await poll();
+  page("设备");
+  const name = '撤销 <img id="injected" src=x onerror=alert(1)>';
+  fireEvent.click(screen.getByRole("button", { name }));
+  await waitFor(() =>
+    expect(document.querySelector("dialog")?.open).toBe(true),
+  );
+  await act(async () => document.querySelector("dialog")!.close("ok"));
+  await screen.findByText("NOT_MANAGER: only the manager may revoke");
+  expect(document.querySelector(".revocation-result")).toBeNull();
+  expect(screen.getByRole("button", { name })).toBeTruthy();
 });
 
 test("all-member access requires confirmation, respects denials and preserves individual grants", async () => {

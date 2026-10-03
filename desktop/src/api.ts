@@ -125,10 +125,19 @@ export interface Invitation {
   expires_in: number;
 }
 
+export interface Revocation {
+  device_id: string;
+  revoked: boolean;
+  roster_version: number;
+  undelivered: string[];
+  relay_error: string | null;
+}
+
 export const api = {
   status: () => invoke<Status>("status"),
   settings: () => invoke<Settings>("settings"),
   invite: (allow: boolean) => invoke<Invitation>("invite", { allow }),
+  revoke: (device: string) => invoke<Revocation>("revoke", { device }),
   copyInvitation: (link: string) => invoke<void>("copy_invitation", { link }),
   devices: () =>
     invoke<{

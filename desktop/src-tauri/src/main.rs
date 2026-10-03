@@ -219,6 +219,23 @@ async fn invite(
 }
 
 #[tauri::command]
+async fn revoke(
+    app: tauri::AppHandle,
+    state: State<'_, Desktop>,
+    device: String,
+) -> Result<network::Revocation, String> {
+    let _guard = state.action.lock().await;
+    let result = async {
+        let id = xrun::config::Identity::load()?;
+        Ok(serde_json::from_value(
+            xrun::network::revoke(&id, &device).await?,
+        )?)
+    }
+    .await;
+    record(&app, result)
+}
+
+#[tauri::command]
 fn copy_invitation(app: tauri::AppHandle, link: String) -> Result<(), String> {
     let result = (|| {
         anyhow::ensure!(
@@ -441,6 +458,7 @@ fn main() {
             task_output,
             file_history,
             invite,
+            revoke,
             copy_invitation,
             create_network,
             join,

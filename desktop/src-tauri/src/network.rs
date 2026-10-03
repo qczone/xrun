@@ -18,6 +18,15 @@ pub struct Invitation {
     pub expires_in: u64,
 }
 
+#[derive(Serialize, Deserialize)]
+pub struct Revocation {
+    pub device_id: String,
+    pub revoked: bool,
+    pub roster_version: u64,
+    pub undelivered: Vec<String>,
+    pub relay_error: Option<String>,
+}
+
 pub fn local_status() -> Result<NetworkStatus> {
     let id = Identity::load()?;
     let roster = xrun::network::current(&id)?;

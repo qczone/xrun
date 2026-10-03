@@ -147,6 +147,20 @@ export function App() {
       await api.action(request);
       return true;
     })) === true;
+  const revokeDevice = (device: string) =>
+    operate(async () => {
+      const result = await api.revoke(device);
+      if (!result.revoked) throw "撤销结果未确认，请刷新后重试。";
+      setDevices((current) =>
+        current.map((entry) =>
+          entry.device_id === result.device_id
+            ? { ...entry, revoked: true, online: false }
+            : entry,
+        ),
+      );
+      await refreshDevices();
+      return result;
+    });
 
   const stop = async () => {
     if (
@@ -247,6 +261,7 @@ export function App() {
               confirm={confirm}
               notify={setToast}
               operate={operate}
+              revoke={revokeDevice}
             />
           </section>
           <section
