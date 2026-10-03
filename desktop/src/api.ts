@@ -14,6 +14,13 @@ export interface LocalStatus {
 
 export interface Status {
   local: LocalStatus;
+  network: {
+    network_id: string;
+    manager_id: string;
+    manager_name: string;
+    is_manager: boolean;
+    relay_addresses: string[];
+  } | null;
   service: {
     installed: boolean;
     approval_required: boolean;
@@ -44,6 +51,7 @@ export interface Device {
   name: string;
   online: boolean;
   revoked: boolean;
+  admin: boolean;
   os: string | null;
 }
 

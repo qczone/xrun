@@ -643,6 +643,22 @@ code {
   text-align: right;
   color: var(--muted);
 }
+.relay-addresses {
+  min-width: 0;
+  display: grid;
+  gap: 4px;
+  text-align: right;
+}
+.role-label {
+  display: inline-block;
+  margin-left: 8px;
+  padding: 1px 7px;
+  border-radius: 4px;
+  background: var(--soft);
+  color: var(--accent);
+  font-size: 13px;
+  font-weight: 500;
+}
 .notice,
 .permission-note {
   display: flex;

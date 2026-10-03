@@ -17,6 +17,7 @@ export function Overview({ status, busy, action, stop, navigate }: Props) {
   const [badge, summary] = serviceLabel(status);
   const local = status?.local;
   const service = status?.service;
+  const network = status?.network;
   useEffect(() => {
     if (local?.joined) setLink("");
   }, [local?.joined]);
@@ -80,6 +81,32 @@ export function Overview({ status, busy, action, stop, navigate }: Props) {
       {local?.joined && (
         <section className="panel">
           <div className="panel-row">
+            <span>本机角色</span>
+            <strong>
+              {network
+                ? network.is_manager
+                  ? "管理设备"
+                  : "普通设备"
+                : "网络信息不可用"}
+            </strong>
+          </div>
+          {network && (
+            <>
+              <div className="panel-row">
+                <span>管理设备</span>
+                <span>{network.manager_name}</span>
+              </div>
+              <div className="panel-row">
+                <span>中转地址</span>
+                <div className="relay-addresses">
+                  {network.relay_addresses.map((address) => (
+                    <code key={address}>{address}</code>
+                  ))}
+                </div>
+              </div>
+            </>
+          )}
+          <div className="panel-row">
             <span>设备名称</span>
             <strong>{local.name}</strong>
           </div>
@@ -116,7 +143,7 @@ export function Overview({ status, busy, action, stop, navigate }: Props) {
           <div className="section-title">
             <h2>加入已有部署</h2>
             <p>
-              在已加入的设备上运行 <code>xrun invite</code>，然后粘贴邀请链接。
+              在管理设备上运行 <code>xrun invite</code>，然后粘贴邀请链接。
             </p>
           </div>
           <form

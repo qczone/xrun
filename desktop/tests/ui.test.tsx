@@ -28,6 +28,15 @@ async function fixture(handlers: Record<string, Handler> = {}, joined = true) {
       allow_all: false,
       daemon_installed: true,
     },
+    network: joined
+      ? {
+          network_id: "net-test",
+          manager_id: "manager",
+          manager_name: "manager1",
+          is_manager: false,
+          relay_addresses: ["https://relay.example:8080"],
+        }
+      : null,
     service: {
       app_at_login: false,
       installed: true,
@@ -51,6 +60,7 @@ async function fixture(handlers: Record<string, Handler> = {}, joined = true) {
       name: '<img id="injected" src=x onerror=alert(1)>',
       online: true,
       revoked: false,
+      admin: false,
       os: "windows",
     },
     {
@@ -58,6 +68,7 @@ async function fixture(handlers: Record<string, Handler> = {}, joined = true) {
       name: "old-device",
       online: false,
       revoked: true,
+      admin: false,
       os: "linux",
     },
   ];
@@ -159,6 +170,26 @@ function task(id = "ABC123", changes: Partial<Job> = {}): Job {
     ...changes,
   };
 }
+
+test("network role and relay addresses remain visible when the relay is offline", async () => {
+  const { status, poll, page } = await fixture({
+    devices: () => ({
+      devices: null,
+      server_error: { code: "CONNECT_FAILED", message: "relay offline" },
+    }),
+  });
+  status.local.daemon_connected = false;
+  await poll();
+  expect(screen.getByText("普通设备")).toBeTruthy();
+  expect(screen.getByText("manager1")).toBeTruthy();
+  expect(screen.getByText("https://relay.example:8080")).toBeTruthy();
+  status.network!.is_manager = true;
+  status.network!.manager_name = "mac1";
+  await poll();
+  expect(screen.getByText("管理设备", { selector: "strong" })).toBeTruthy();
+  page("设备");
+  expect(screen.getByText(/管理网络成员/)).toBeTruthy();
+});
 const event = (seq: number, stream: string, bytes: string | number[]) => ({
   seq,
   stream,

@@ -20,7 +20,7 @@ export function serviceLabel(status: Status | null): [string, string] {
   if (!status) return ["检查状态", "正在读取本机状态…"];
   const { local, service } = status;
   if (!local.joined)
-    return ["尚未加入", "加入部署后，即可通过 xrun 访问已配对的设备。"];
+    return ["尚未加入", "创建或加入网络，让你的设备互相连接。"];
   if (service.approval_required)
     return ["等待授权", "需要允许 xrun 在后台运行。"];
   if (!local.daemon_running)
@@ -28,10 +28,10 @@ export function serviceLabel(status: Status | null): [string, string] {
   if (local.remote_access_paused)
     return ["访问已暂停", "远程访问已暂停；已受理的后台任务继续运行。"];
   if (local.daemon_connected === true)
-    return ["已连接", "后台服务运行中，已连接到 Server。"];
+    return ["已连接", "后台服务运行中，已连接到中转。"];
   if (local.daemon_connected === null)
     return ["运行中", "旧版后台服务正在运行，更新后可查看实时连接状态。"];
-  return ["连接中", "正在尝试连接 Server，网络恢复后会自动重连。"];
+  return ["连接中", "正在尝试连接中转，网络恢复后会自动重连。"];
 }
 
 export function taskState(job: Job): [string, string] {

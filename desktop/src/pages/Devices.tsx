@@ -30,7 +30,11 @@ export function Devices({
       <div className="page-heading">
         <div>
           <h1>设备</h1>
-          <p>管理其他设备对本机的访问权限。</p>
+          <p>
+            {status?.network?.is_manager
+              ? "管理网络成员，以及其他设备对本机的访问权限。"
+              : "管理其他设备对本机的访问权限；邀请和撤销由管理设备负责。"}
+          </p>
         </div>
         <button
           disabled={busy || loading || !status?.local.joined}
@@ -102,7 +106,10 @@ export function Devices({
                 <Icon name="monitor" />
               </div>
               <div className="device-details">
-                <div className="device-name">{device.name}</div>
+                <div className="device-name">
+                  {device.name}
+                  {device.admin && <span className="role-label">管理设备</span>}
+                </div>
                 <div className="device-info">
                   <span
                     className={`dot ${device.online && !device.revoked ? "online" : ""}`}

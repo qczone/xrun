@@ -77,7 +77,7 @@ export function App() {
         ),
       );
       setDevicesMessage(
-        "暂时没有其他设备。可以用 xrun invite 邀请新设备加入。",
+        "暂时没有其他设备。新设备需要管理设备生成的邀请链接才能加入。",
       );
     } catch (e) {
       if (request === devicesRequest.current)
@@ -236,7 +236,7 @@ export function App() {
               message={
                 status?.local.joined
                   ? devicesMessage
-                  : "先加入部署，就能在这里查看其他设备。"
+                  : "先创建或加入网络，就能在这里查看其他设备。"
               }
               refresh={refreshDevices}
               action={action}

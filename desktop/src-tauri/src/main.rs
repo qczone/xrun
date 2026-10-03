@@ -1,5 +1,6 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod network;
 mod platform;
 
 use serde::{Deserialize, Serialize};
@@ -20,6 +21,7 @@ struct Desktop {
 #[derive(Serialize)]
 struct Status {
     local: xrun::client::LocalStatus,
+    network: Option<network::NetworkStatus>,
     service: platform::ServiceStatus,
     allow_from: Vec<String>,
     deny_from: Vec<String>,
@@ -111,12 +113,25 @@ fn local_status(app: &tauri::AppHandle) -> anyhow::Result<Status> {
     let service = platform::status()?;
     local.daemon_installed = service.installed || service.legacy_installed;
     let policy = xrun::config::DaemonConfig::load()?;
+    let mut error = app.state::<Desktop>().error.lock().unwrap().clone();
+    let network = if local.joined {
+        match network::local_status() {
+            Ok(value) => Some(value),
+            Err(e) => {
+                error = Some(e.to_string());
+                None
+            }
+        }
+    } else {
+        None
+    };
     Ok(Status {
         local,
+        network,
         service,
         allow_from: policy.allow_from,
         deny_from: policy.deny_from,
-        error: app.state::<Desktop>().error.lock().unwrap().clone(),
+        error,
     })
 }
 
