@@ -34,7 +34,11 @@ async fn platform() -> Result<Vec<u8>> {
     if !unsafe { CGPreflightScreenCaptureAccess() } {
         bail!("PERMISSION_DENIED: grant Screen Recording permission to the daemon executable")
     }
-    let temp = tempfile::Builder::new().suffix(".png").tempfile()?;
+    // screencapture rejects hidden output names, even while returning exit 0.
+    let temp = tempfile::Builder::new()
+        .prefix("xrun-capture-")
+        .suffix(".png")
+        .tempfile()?;
     let status = tokio::process::Command::new("/usr/sbin/screencapture")
         .args(["-x", "-m"])
         .arg(temp.path())
@@ -47,6 +51,7 @@ async fn platform() -> Result<Vec<u8>> {
         bail!("NO_DISPLAY: screenshot requires a logged-in graphical session")
     }
     crate::transfer::read_file(temp.path())
+        .context("SCREENSHOT_FAILED: screencapture did not create a readable PNG")
 }
 #[cfg(windows)]
 fn windows_capture_path() -> Result<tempfile::TempPath> {
