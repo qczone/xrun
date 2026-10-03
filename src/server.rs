@@ -21,7 +21,10 @@ use std::{
     collections::HashMap,
     net::IpAddr,
     pin::Pin,
-    sync::Arc,
+    sync::{
+        Arc,
+        atomic::{AtomicU64, Ordering},
+    },
     task::{Context as TaskContext, Poll},
     time::{Duration, Instant},
 };
@@ -558,15 +561,36 @@ async fn relay(
     };
     let established = matches!(&target, Some(Ok(_)));
     if let Some(Ok(mut target)) = target {
-        let idle = tokio::time::sleep(Duration::from_secs(300));
-        tokio::pin!(idle);
-        loop {
+        let activity = AtomicU64::new(0);
+        let sent = AtomicU64::new(0);
+        let received = AtomicU64::new(0);
+        {
+            let (source_tx, source_rx) = (&mut source).split();
+            let (target_tx, target_rx) = (&mut target).split();
+            let idle = async {
+                loop {
+                    tokio::time::sleep(Duration::from_secs(15)).await;
+                    if started
+                        .elapsed()
+                        .as_secs()
+                        .saturating_sub(activity.load(Ordering::Relaxed))
+                        >= 300
+                    {
+                        break;
+                    }
+                }
+            };
+            // A blocked writer in one direction must not stop reads in the
+            // opposite direction (full-duplex uploads and responses).
             tokio::select! {
-                _=closed.changed()=>break,_=&mut idle=>break,
-                m=source.next()=>match m {Some(Ok(m))=>{source_bytes+=message_len(&m);idle.as_mut().reset(tokio::time::Instant::now()+Duration::from_secs(300));tokio::select!{_=closed.changed()=>break,r=tokio::time::timeout(Duration::from_secs(300),target.send(m))=>if !matches!(r,Ok(Ok(()))){break}}},_=>break},
-                m=target.next()=>match m {Some(Ok(m))=>{target_bytes+=message_len(&m);idle.as_mut().reset(tokio::time::Instant::now()+Duration::from_secs(300));tokio::select!{_=closed.changed()=>break,r=tokio::time::timeout(Duration::from_secs(300),source.send(m))=>if !matches!(r,Ok(Ok(()))){break}}},_=>break},
+                _=relay_direction(source_rx,target_tx,&started,&activity,&sent)=>{},
+                _=relay_direction(target_rx,source_tx,&started,&activity,&received)=>{},
+                _=closed.changed()=>{},
+                _=idle=>{},
             }
         }
+        source_bytes = sent.load(Ordering::Relaxed);
+        target_bytes = received.load(Ordering::Relaxed);
         let _ = tokio::time::timeout(Duration::from_secs(1), target.close()).await;
     } else {
         let error = target.and_then(|t| t.err()).unwrap_or(Data::Error {
@@ -583,6 +607,30 @@ async fn relay(
     }
     let _ = tokio::time::timeout(Duration::from_secs(1), source.close()).await;
 }
+async fn relay_direction<R, W>(
+    mut reader: R,
+    mut writer: W,
+    started: &Instant,
+    activity: &AtomicU64,
+    bytes: &AtomicU64,
+) -> Result<()>
+where
+    R: futures_util::Stream<Item = std::result::Result<Message, axum::Error>> + Unpin,
+    W: futures_util::Sink<Message, Error = axum::Error> + Unpin,
+{
+    while let Some(message) = reader.next().await {
+        let message = message?;
+        activity.store(started.elapsed().as_secs(), Ordering::Relaxed);
+        bytes.fetch_add(message_len(&message), Ordering::Relaxed);
+        let close = matches!(message, Message::Close(_));
+        tokio::time::timeout(Duration::from_secs(300), writer.send(message)).await??;
+        if close {
+            break;
+        }
+    }
+    Ok(())
+}
+
 fn message_len(message: &Message) -> u64 {
     match message {
         Message::Text(text) => text.len() as u64,

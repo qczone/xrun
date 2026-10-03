@@ -165,7 +165,7 @@ fn files_at(path: &Path, before: Option<i64>) -> Result<FilePage> {
         });
     };
     let mut stmt = db.prepare(
-        "SELECT rowid,time,data FROM audit WHERE (?1 IS NULL OR rowid<?1) ORDER BY rowid DESC LIMIT ?2",
+        "SELECT rowid,time,data FROM audit WHERE (?1 IS NULL OR rowid<?1) AND json_extract(data,'$.op') IN ('push','pull','screenshot') ORDER BY rowid DESC LIMIT ?2",
     )?;
     let mut rows = stmt.query(params![before, (PAGE_SIZE + 1) as i64])?;
     let mut entries = Vec::new();
@@ -274,7 +274,9 @@ mod tests {
             [0xff, 0, 0xe4, 0xb8, 0xad]
         );
         store.audit(serde_json::json!({"source_device_id":"source", "op":"pull", "path":"file.txt", "size":6, "result":"ok"}))?;
+        store.audit(serde_json::json!({"source_device_id":"source", "op":"forward", "port":3000, "result":"ok"}))?;
         assert_eq!(files_at(&path, None)?.entries[0].op, "pull");
+        assert_eq!(files_at(&path, None)?.entries.len(), 1);
         Ok(())
     }
 }

@@ -5,6 +5,7 @@ pub mod config;
 pub mod control;
 pub mod crypto;
 pub mod daemon;
+pub mod forwarding;
 pub mod history;
 pub mod net;
 pub mod process;

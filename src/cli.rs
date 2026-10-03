@@ -22,7 +22,7 @@ use std::{
     name = "xrun",
     version,
     about = "Run programs and transfer files on paired devices",
-    after_help = "Remote: xrun <device> [options] -- <program> [args]\n        xrun <device> start|info|jobs|wait|logs|kill|push|pull|screenshot\nUse xrun guide for examples."
+    after_help = "Remote: xrun <device> [options] -- <program> [args]\n        xrun <device> start|info|jobs|wait|logs|kill|push|pull|screenshot|forward\nUse xrun guide for examples."
 )]
 struct LocalCli {
     #[arg(long, global = true)]
@@ -178,6 +178,11 @@ enum Remote {
     },
     /// Capture the main display as PNG
     Screenshot { local: Option<PathBuf> },
+    /// Forward a local loopback port to a device's loopback port
+    Forward {
+        #[arg(value_name = "[LOCAL:]REMOTE", value_parser = parse_ports)]
+        ports: (u16, u16),
+    },
 }
 #[derive(Args)]
 struct Execute {
@@ -273,6 +278,7 @@ pub async fn run() -> Result<i32> {
             "push",
             "pull",
             "screenshot",
+            "forward",
         ];
         if args
             .get(position)
@@ -563,6 +569,16 @@ async fn permission(args: PermissionArgs, allow: bool, json: bool) -> Result<()>
     });
     Ok(())
 }
+fn parse_ports(value: &str) -> std::result::Result<(u16, u16), String> {
+    let (local, remote) = value.split_once(':').unwrap_or((value, value));
+    let local = local.parse::<u16>().map_err(|_| "invalid local port")?;
+    let remote = remote.parse::<u16>().map_err(|_| "invalid remote port")?;
+    if remote == 0 {
+        return Err("remote port must be 1..65535".into());
+    }
+    Ok((local, remote))
+}
+
 async fn detect_addresses(port: u16, no_detect: bool) -> Result<Vec<String>> {
     let mut addresses = vec![];
     #[cfg(unix)]
@@ -994,6 +1010,7 @@ async fn remote(cli: DeviceCli) -> Result<i32> {
             });
             Ok(0)
         }
+        Remote::Forward { ports } => forward_cli(id, target, ports, json).await,
         Remote::Jobs {
             id: job,
             running,
@@ -1306,6 +1323,53 @@ async fn remote(cli: DeviceCli) -> Result<i32> {
         }
     }
 }
+async fn forward_cli(id: Identity, target: &str, ports: (u16, u16), json: bool) -> Result<i32> {
+    let listener = tokio::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, ports.0))
+        .await
+        .context("FORWARD_LISTEN_FAILED: cannot bind local loopback port")?;
+    let address = listener.local_addr()?;
+    print(
+        json,
+        &serde_json::json!({"device_id":target,"local_address":address.to_string(),"remote_port":ports.1}),
+        || println!("{address} -> {target}:{} (Ctrl-C to stop)", ports.1),
+    );
+    let mut connections = tokio::task::JoinSet::new();
+    let target = target.to_owned();
+    loop {
+        tokio::select! {
+            result = listener.accept() => {
+                let (tcp, _) = result?;
+                if connections.len() >= 32 {
+                    diagnostic(json, &anyhow::anyhow!("DEVICE_BUSY: too many local forwarded connections"));
+                    continue;
+                }
+                let id = id.clone();
+                let target = target.clone();
+                connections.spawn(async move {
+                    let mut session = session(&id, &target).await?;
+                    net::send(&mut session.ws, &Data::Request { request: Request::Forward { port: ports.1 } }).await?;
+                    match tokio::time::timeout(Duration::from_secs(10), response(&mut session.ws)).await
+                        .context("FORWARD_TIMEOUT: target did not acknowledge the connection")?? {
+                        Data::ForwardReady { port } if port == ports.1 => crate::forwarding::bridge(&mut session.ws, tcp).await,
+                        _ => bail!("INVALID_MESSAGE: expected forwarding acknowledgement"),
+                    }
+                });
+            },
+            result = connections.join_next(), if !connections.is_empty() => {
+                match result {
+                    Some(Ok(Ok(()))) | None => {},
+                    Some(Ok(Err(error))) => diagnostic(json, &error),
+                    Some(Err(error)) => diagnostic(json, &anyhow::anyhow!(error)),
+                }
+            },
+            _ = tokio::signal::ctrl_c() => break,
+            _ = termination() => break,
+        }
+    }
+    connections.shutdown().await;
+    Ok(0)
+}
+
 fn network_error(error: &anyhow::Error) -> bool {
     let text = error.to_string();
     [

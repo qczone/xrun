@@ -180,6 +180,9 @@ pub enum Request {
         cwd: Option<String>,
     },
     Screenshot,
+    Forward {
+        port: u16,
+    },
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
@@ -212,6 +215,10 @@ pub enum Data {
         captured_at: Option<String>,
     },
     End,
+    ForwardReady {
+        port: u16,
+    },
+    ForwardEofAck,
     Error {
         code: String,
         message: String,
@@ -285,6 +292,7 @@ pub const RESERVED: &[&str] = &[
     "push",
     "pull",
     "screenshot",
+    "forward",
     "help",
 ];
 pub fn valid_name(name: &str) -> bool {

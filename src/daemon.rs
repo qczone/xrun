@@ -78,6 +78,7 @@ struct Runtime {
     canceled: Mutex<HashSet<String>>,
     gate: Mutex<()>,
     files: Arc<Semaphore>,
+    forwards: Arc<Semaphore>,
     stopping: AtomicBool,
     fatal: Mutex<Option<String>>,
     stop: watch::Sender<bool>,
@@ -104,7 +105,7 @@ impl Drop for FileAudit {
             "failed_or_disconnected"
         });
         if let Err(error) = self.store.audit(self.value.clone()) {
-            tracing::error!(%error,"file audit could not be saved");
+            tracing::error!(%error,"operation audit could not be saved");
         }
     }
 }
@@ -194,6 +195,7 @@ pub async fn run() -> Result<()> {
         canceled: Mutex::new(HashSet::new()),
         gate: Mutex::new(()),
         files: Arc::new(Semaphore::new(8)),
+        forwards: Arc::new(Semaphore::new(32)),
         stopping: AtomicBool::new(false),
         fatal: Mutex::new(None),
         stop,
@@ -353,6 +355,7 @@ async fn serve(rt: Arc<Runtime>, source: &str, generation: u64, ws: &mut Ws) -> 
         Request::Push { path, .. } => Some(("push", Some(path.clone()))),
         Request::Pull { path, .. } => Some(("pull", Some(path.clone()))),
         Request::Screenshot => Some(("screenshot", None)),
+        Request::Forward { port } => Some(("forward", Some(format!("localhost:{port}")))),
         _ => None,
     };
     let mut audit = file_op.map(|(op, path)| FileAudit {
@@ -361,6 +364,20 @@ async fn serve(rt: Arc<Runtime>, source: &str, generation: u64, ws: &mut Ws) -> 
         completed: false,
     });
     match request {
+        Request::Forward { port } => {
+            let _permit = rt
+                .forwards
+                .clone()
+                .try_acquire_owned()
+                .context("DEVICE_BUSY: too many forwarded connections")?;
+            let tcp = crate::forwarding::connect_loopback(port).await?;
+            rt.check_session(source, generation)?;
+            net::send(ws, &Data::ForwardReady { port }).await?;
+            crate::forwarding::bridge(ws, tcp).await?;
+            if let Some(a) = &mut audit {
+                a.completed = true;
+            }
+        }
         Request::Exec { execution } => {
             let input = net::receive_bytes(
                 ws,
