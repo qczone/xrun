@@ -113,8 +113,13 @@ impl Runtime {
         DaemonConfig::load()
     }
     fn allow(&self, source: &str) -> Result<()> {
-        if !self.config()?.allow_from.iter().any(|s| s == source) {
-            bail!("SOURCE_NOT_ALLOWED: source device is not in daemon whitelist")
+        self.config()?.check_access(source)
+    }
+    fn check_session(&self, source: &str, generation: u64) -> Result<()> {
+        let cfg = self.config()?;
+        cfg.check_access(source)?;
+        if cfg.pause_generation != generation {
+            bail!("SESSION_CLOSED: remote access was paused; open a new session")
         }
         Ok(())
     }
@@ -301,7 +306,9 @@ async fn data_session(rt: Arc<Runtime>, address: &str, sid: &str, source: &str) 
         ),
     )
     .await??;
-    rt.allow(source)?;
+    let policy = rt.config()?;
+    policy.check_access(source)?;
+    let generation = policy.pause_generation;
     net::send(
         &mut ws,
         &Data::Ready {
@@ -315,14 +322,14 @@ async fn data_session(rt: Arc<Runtime>, address: &str, sid: &str, source: &str) 
     let mut stop = rt.stop.subscribe();
     let denied = async {
         loop {
-            tokio::time::sleep(Duration::from_secs(1)).await;
-            if rt.allow(source).is_err() {
+            tokio::time::sleep(Duration::from_millis(100)).await;
+            if rt.check_session(source, generation).is_err() {
                 break;
             }
         }
     };
     let result = tokio::select! {
-        r=serve(rt.clone(),source,&mut ws)=>r,
+        r=serve(rt.clone(),source,generation,&mut ws)=>r,
         _=stop.changed()=>Err(anyhow::anyhow!("DAEMON_STOPPING: daemon shutting down")),
         // Close without claiming an operation was rejected: it may already have committed.
         _=denied=>Ok(()),
@@ -334,11 +341,11 @@ async fn data_session(rt: Arc<Runtime>, address: &str, sid: &str, source: &str) 
     let _ = tokio::time::timeout(Duration::from_secs(1), ws.close(None)).await;
     Ok(())
 }
-async fn serve(rt: Arc<Runtime>, source: &str, ws: &mut Ws) -> Result<()> {
+async fn serve(rt: Arc<Runtime>, source: &str, generation: u64, ws: &mut Ws) -> Result<()> {
     let req = tokio::time::timeout(Duration::from_secs(300), net::receive::<Data>(ws))
         .await?
         .context("INVALID_REQUEST: malformed request")?;
-    rt.allow(source)?;
+    rt.check_session(source, generation)?;
     let Data::Request { request } = req else {
         bail!("INVALID_MESSAGE: expected operation")
     };
@@ -362,6 +369,7 @@ async fn serve(rt: Arc<Runtime>, source: &str, ws: &mut Ws) -> Result<()> {
                 MAX_INPUT as u64,
             )
             .await?;
+            rt.check_session(source, generation)?;
             let job = submit(rt, source, execution, input)?;
             net::send(ws, &Data::Job { job }).await?
         }
@@ -425,6 +433,7 @@ async fn serve(rt: Arc<Runtime>, source: &str, ws: &mut Ws) -> Result<()> {
                 bail!("INVALID_REQUEST: expect conflicts with no-overwrite")
             }
             let contents = net::receive_file(ws, size, &sha256).await?;
+            rt.check_session(source, generation)?;
             if let Some(a) = &mut audit {
                 a.value["size"] = serde_json::json!(size);
             }

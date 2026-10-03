@@ -62,9 +62,9 @@ enum Local {
         allow: bool,
     },
     /// Allow a source device to control this machine
-    AllowFrom { device: String },
+    AllowFrom(PermissionArgs),
     /// Deny a source device access to this machine
-    DenyFrom { device: String },
+    DenyFrom(PermissionArgs),
     /// Revoke a device identity (admin only)
     Revoke { device: String },
     /// Show local state and the deployment's devices
@@ -93,6 +93,18 @@ enum DaemonCommand {
     Start,
     Stop,
     Reset,
+    /// Pause remote access; accepted reliable jobs continue running
+    Pause,
+    /// Resume remote access using the existing permissions
+    Resume,
+}
+#[derive(Args)]
+struct PermissionArgs {
+    #[arg(required_unless_present = "all", conflicts_with = "all")]
+    device: Option<String>,
+    /// Include current and future deployment members
+    #[arg(long)]
+    all: bool,
 }
 #[derive(Parser)]
 #[command(name = "xrun", version)]
@@ -368,8 +380,8 @@ async fn local(cli: LocalCli) -> Result<i32> {
             });
             invitation_notice(allow);
         }
-        Local::AllowFrom { device } => permission(&device, true, json).await?,
-        Local::DenyFrom { device } => permission(&device, false, json).await?,
+        Local::AllowFrom(args) => permission(args, true, json).await?,
+        Local::DenyFrom(args) => permission(args, false, json).await?,
         Local::Revoke { device } => {
             let id = identity().await?;
             let v: serde_json::Value = net::http(
@@ -443,6 +455,8 @@ async fn local(cli: LocalCli) -> Result<i32> {
             Some(DaemonCommand::Start) => service::start("daemon").await?,
             Some(DaemonCommand::Stop) => service::stop_daemon().await?,
             Some(DaemonCommand::Reset) => daemon::reset()?,
+            Some(DaemonCommand::Pause) => config::pause_remote_access(true)?,
+            Some(DaemonCommand::Resume) => config::pause_remote_access(false)?,
         },
         Local::Guide => print!("{}", include_str!("../README.md")),
     }
@@ -462,6 +476,22 @@ async fn status(json: bool) -> Result<i32> {
                 "running"
             } else {
                 "stopped"
+            }
+        );
+        println!(
+            "remote access: {}",
+            if status.local.remote_access_paused {
+                "paused"
+            } else {
+                "enabled"
+            }
+        );
+        println!(
+            "trust: {}",
+            if status.local.allow_all {
+                "all current and future members (individual denials apply)"
+            } else {
+                "individually allowed devices"
             }
         );
         if status.local.server_configured {
@@ -500,7 +530,29 @@ async fn status(json: bool) -> Result<i32> {
         0
     })
 }
-async fn permission(value: &str, allow: bool, json: bool) -> Result<()> {
+async fn permission(args: PermissionArgs, allow: bool, json: bool) -> Result<()> {
+    if args.all {
+        config::update_all_permissions(allow)?;
+        print(
+            json,
+            &serde_json::json!({"all":true,"allowed":allow}),
+            || {
+                println!(
+                    "all-member access {}; individual permissions retained",
+                    if allow {
+                        "enabled (includes future members)"
+                    } else {
+                        "disabled"
+                    }
+                );
+            },
+        );
+        return Ok(());
+    }
+    let value = args
+        .device
+        .as_deref()
+        .context("INVALID_REQUEST: device required")?;
     let result = crate::client::set_permission(value, allow).await?;
     print(json, &result, || {
         println!(

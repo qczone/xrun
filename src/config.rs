@@ -59,6 +59,16 @@ pub struct DaemonConfig {
     #[serde(default)]
     pub allow_from: Vec<String>,
     #[serde(default)]
+    pub deny_from: Vec<String>,
+    #[serde(default)]
+    pub allow_all: bool,
+    #[serde(default)]
+    pub remote_access_paused: bool,
+    // A pause invalidates existing sessions even if access is resumed before
+    // the daemon next polls the file.
+    #[serde(default)]
+    pub pause_generation: u64,
+    #[serde(default)]
     pub default_cwd: Option<PathBuf>,
     #[serde(default = "concurrency")]
     pub max_concurrent_jobs: usize,
@@ -72,6 +82,10 @@ impl Default for DaemonConfig {
     fn default() -> Self {
         Self {
             allow_from: vec![],
+            deny_from: vec![],
+            allow_all: false,
+            remote_access_paused: false,
+            pause_generation: 0,
             default_cwd: None,
             max_concurrent_jobs: 4,
             env: BTreeMap::new(),
@@ -79,6 +93,36 @@ impl Default for DaemonConfig {
     }
 }
 impl DaemonConfig {
+    pub fn check_access(&self, source: &str) -> Result<()> {
+        if self.remote_access_paused {
+            bail!("ACCESS_PAUSED: remote access is paused on this device")
+        }
+        if self.deny_from.iter().any(|id| id == source)
+            || !(self.allow_all || self.allow_from.iter().any(|id| id == source))
+        {
+            bail!("SOURCE_NOT_ALLOWED: source device is not allowed")
+        }
+        Ok(())
+    }
+    fn set_permission(&mut self, device_id: &str, allow: bool) {
+        self.allow_from.retain(|id| id != device_id);
+        self.deny_from.retain(|id| id != device_id);
+        if allow {
+            self.allow_from.push(device_id.to_string());
+        } else {
+            self.deny_from.push(device_id.to_string());
+        }
+    }
+    fn set_paused(&mut self, paused: bool) -> Result<()> {
+        if paused && !self.remote_access_paused {
+            self.pause_generation = self
+                .pause_generation
+                .checked_add(1)
+                .context("INVALID_CONFIG: pause generation exhausted")?;
+        }
+        self.remote_access_paused = paused;
+        Ok(())
+    }
     pub fn load() -> Result<Self> {
         let path = device_dir()?.join("daemon.toml");
         let value: Self = if path.exists() {
@@ -165,12 +209,22 @@ pub fn write<T: Serialize>(path: &Path, value: &T) -> Result<()> {
 
 pub fn update_permission(device_id: &str, allow: bool) -> Result<()> {
     update_daemon_config(&device_dir()?, |cfg| {
-        cfg.allow_from.retain(|id| id != device_id);
-        if allow {
-            cfg.allow_from.push(device_id.to_string());
-        }
+        cfg.set_permission(device_id, allow);
         Ok(())
     })
+}
+
+pub fn update_all_permissions(allow: bool) -> Result<()> {
+    Identity::load()?;
+    update_daemon_config(&device_dir()?, |cfg| {
+        cfg.allow_all = allow;
+        Ok(())
+    })
+}
+
+pub fn pause_remote_access(paused: bool) -> Result<()> {
+    Identity::load()?;
+    update_daemon_config(&device_dir()?, |cfg| cfg.set_paused(paused))
 }
 
 pub fn update_execution(
@@ -326,6 +380,39 @@ pub(crate) fn private_acl(path: &Path, directory: bool) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn permissions_are_explicit_and_pause_survives_reload() -> Result<()> {
+        let mut cfg: DaemonConfig = toml::from_str("allow_from = ['known']")?;
+        assert!(cfg.check_access("known").is_ok());
+        assert!(cfg.check_access("future").is_err());
+        cfg.allow_all = true;
+        assert!(cfg.check_access("future").is_ok());
+        cfg.set_permission("future", false);
+        assert!(cfg.check_access("future").is_err());
+        cfg.allow_all = false;
+        assert!(cfg.check_access("known").is_ok());
+        cfg.set_permission("future", true);
+        assert!(cfg.check_access("future").is_ok());
+        cfg.set_paused(true)?;
+        let generation = cfg.pause_generation;
+        let reloaded: DaemonConfig = toml::from_str(&toml::to_string(&cfg)?)?;
+        assert!(reloaded.remote_access_paused);
+        assert!(
+            reloaded
+                .check_access("known")
+                .unwrap_err()
+                .to_string()
+                .starts_with("ACCESS_PAUSED")
+        );
+        cfg.set_paused(true)?;
+        assert_eq!(cfg.pause_generation, generation);
+        cfg.set_paused(false)?;
+        assert!(cfg.check_access("known").is_ok());
+        cfg.set_paused(true)?;
+        assert!(cfg.pause_generation > generation);
+        Ok(())
+    }
 
     #[test]
     fn settings_and_permissions_do_not_overwrite_each_other() -> Result<()> {

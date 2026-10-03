@@ -39,6 +39,8 @@ pub struct LocalStatus {
     pub daemon_installed: bool,
     pub daemon_running: bool,
     pub daemon_connected: Option<bool>,
+    pub remote_access_paused: bool,
+    pub allow_all: bool,
     pub server_configured: bool,
     pub server_installed: bool,
     pub server_running: bool,
@@ -51,6 +53,7 @@ pub struct Status {
 }
 pub fn local_status() -> Result<LocalStatus> {
     let dir = config::device_dir()?;
+    let policy = config::DaemonConfig::load()?;
     let id = if dir.join("identity.toml").exists() {
         Some(Identity::load()?)
     } else {
@@ -76,6 +79,8 @@ pub fn local_status() -> Result<LocalStatus> {
         daemon_installed: service::installed("daemon")?,
         daemon_running,
         daemon_connected: connected,
+        remote_access_paused: policy.remote_access_paused,
+        allow_all: policy.allow_all,
         server_configured: dir.join("config.toml").exists(),
         server_installed: service::installed("server")?,
         server_running,

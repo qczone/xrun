@@ -127,6 +127,7 @@ pub fn explicit(e: &anyhow::Error) -> bool {
         "DEVICE_REVOKED",
         "VERSION_MISMATCH",
         "SOURCE_NOT_ALLOWED",
+        "ACCESS_PAUSED",
         "DEVICE_OFFLINE",
         "SESSION_LIMIT",
         "NOT_ADMIN",

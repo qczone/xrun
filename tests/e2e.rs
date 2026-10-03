@@ -223,6 +223,8 @@ async fn execution_transfer_and_identity() -> Result<()> {
     assert_eq!(error["code"], "INVALID_REQUEST");
     assert_eq!(error["message"], "cwd must be absolute");
     // An ordinary invitation only registers a device, in both directions.
+    // All-member mode includes devices registered after it was enabled.
+    ok(cli(&target, &["allow-from", "--all"]).await);
     let observer = root.join("observer");
     std::fs::create_dir_all(&observer)?;
     let registration = json(cli(&source, &["invite", "--json"]).await);
@@ -269,6 +271,7 @@ fn main() {
         "argv0" => print!("{}", std::path::Path::new(&std::env::args().next().unwrap())
             .file_name().unwrap().to_string_lossy()),
         "sleep" => std::thread::sleep(Duration::from_secs(30)),
+        "finish-later" => { std::thread::sleep(Duration::from_secs(1)); print!("completed"); },
         "exit" => { eprintln!("error bytes"); std::process::exit(7); },
         "detached" => {
             let _ = std::process::Command::new(std::env::current_exe().unwrap()).arg("sleep").spawn().unwrap();
@@ -761,6 +764,117 @@ fn main() {
         );
     }
     // Whitelist changes are read by the daemon for subsequent requests.
+    assert_eq!(
+        ok(cli(&observer, &["runner1", "--", &runner, "echo", "future"]).await),
+        "<future>\n"
+    );
+    ok(cli(&target, &["deny-from", "observer"]).await);
+    let refused = cli(&observer, &["runner1", "--", &runner, "echo"]).await;
+    assert!(String::from_utf8_lossy(&refused.stderr).contains("SOURCE_NOT_ALLOWED"));
+    ok(cli(&target, &["deny-from", "--all"]).await);
+    // Turning off all-member mode preserves the admin's individual grant.
+    assert_eq!(
+        ok(cli(&source, &["runner1", "--", &runner, "echo", "known"]).await),
+        "<known>\n"
+    );
+    assert_eq!(
+        cli(&target, &["allow-from", "observer", "--all"])
+            .await
+            .status
+            .code(),
+        Some(2)
+    );
+
+    let completed = json(
+        cli(
+            &source,
+            &["runner1", "start", "--json", "--", &runner, "finish-later"],
+        )
+        .await,
+    );
+    let completed_id = completed["job_id"].as_str().unwrap();
+    let paused_job = json(
+        cli(
+            &source,
+            &["runner1", "start", "--json", "--", &runner, "sleep"],
+        )
+        .await,
+    );
+    let paused_job_id = paused_job["job_id"].as_str().unwrap();
+    let source_identity = xrun::config::read(&source.join(".xrun/identity.toml"))?;
+    let (mut subscription, _) =
+        xrun::net::websocket(&source_identity, &format!("/devices/{target_id}/session")).await?;
+    assert!(matches!(
+        xrun::net::receive::<Data>(&mut subscription).await?,
+        Data::Ready { .. }
+    ));
+    xrun::net::send(
+        &mut subscription,
+        &Data::Request {
+            request: Request::Logs {
+                id: paused_job_id.into(),
+                after: 0,
+                follow: true,
+            },
+        },
+    )
+    .await?;
+    assert!(matches!(
+        xrun::net::receive::<Data>(&mut subscription).await?,
+        Data::Logs { .. }
+    ));
+    ok(cli(&target, &["daemon", "pause"]).await);
+    let refused = cli(&source, &["runner1", "jobs", "--json"]).await;
+    assert_eq!(refused.status.code(), Some(125));
+    assert!(String::from_utf8_lossy(&refused.stderr).contains("ACCESS_PAUSED"));
+    // Even a fast resume invalidates the subscription opened before the pause.
+    ok(cli(&target, &["daemon", "resume"]).await);
+    assert!(
+        tokio::time::timeout(
+            Duration::from_secs(2),
+            xrun::net::receive::<Data>(&mut subscription)
+        )
+        .await?
+        .is_err()
+    );
+    ok(cli(&target, &["daemon", "pause"]).await);
+    let local_tasks = xrun::store::TaskStore::open(&target.join(".xrun/daemon.db"), false)?;
+    assert!(!local_tasks.get(paused_job_id)?.unwrap().state.terminal());
+    tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            if local_tasks.get(completed_id).unwrap().unwrap().state == JobState::Exited {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+    })
+    .await?;
+    // Pause survives restarting the daemon and does not erase task history.
+    ok(cli(&target, &["daemon", "stop"]).await);
+    assert!(
+        tokio::time::timeout(Duration::from_secs(12), target_daemon.0.wait())
+            .await??
+            .success()
+    );
+    target_daemon = daemon(&target);
+    online(&source, "runner1").await;
+    assert_eq!(
+        json(cli(&target, &["status", "--json"]).await)["local"]["remote_access_paused"],
+        true
+    );
+    assert_eq!(
+        cli(&source, &["runner1", "jobs", "--json"])
+            .await
+            .status
+            .code(),
+        Some(125)
+    );
+    ok(cli(&target, &["daemon", "resume"]).await);
+    assert_eq!(
+        json(cli(&source, &["runner1", "jobs", completed_id, "--json"]).await)["state"],
+        "exited"
+    );
+    drop(local_tasks);
     ok(cli(&target, &["deny-from", &admin]).await);
     ok(cli(&target, &["join", &invite, "--no-daemon"]).await);
     let denied = cli(&source, &["runner1", "--", &runner, "echo"]).await;

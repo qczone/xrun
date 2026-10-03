@@ -25,6 +25,8 @@ export function serviceLabel(status: Status | null): [string, string] {
     return ["等待授权", "需要允许 xrun 在后台运行。"];
   if (!local.daemon_running)
     return ["已停止", "后台服务已停止，其他设备暂时无法访问本机。"];
+  if (local.remote_access_paused)
+    return ["访问已暂停", "远程访问已暂停；已受理的后台任务继续运行。"];
   if (local.daemon_connected === true)
     return ["已连接", "后台服务运行中，已连接到 Server。"];
   if (local.daemon_connected === null)

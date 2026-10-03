@@ -40,6 +40,50 @@ export function Devices({
           刷新
         </button>
       </div>
+      {status?.local.remote_access_paused && (
+        <div className="notice">
+          <Icon name="shield" />
+          <p>远程访问已暂停，以下授权暂不生效；恢复后沿用这些设置。</p>
+        </div>
+      )}
+      <section className="panel padded">
+        <div className="panel-row">
+          <div>
+            <strong>允许所有设备</strong>
+            <p className="field-help">
+              包括以后通过邀请加入的设备；单独拒绝的设备除外。关闭后保留单独授权。
+            </p>
+          </div>
+          <label className="switch">
+            <input
+              type="checkbox"
+              aria-label="允许所有设备访问本机"
+              disabled={busy || !status?.local.joined}
+              checked={!!status?.local.allow_all}
+              onChange={async (event) => {
+                const allow = event.target.checked;
+                if (
+                  allow &&
+                  !(await confirm(
+                    "允许所有设备访问本机？",
+                    "当前和以后加入的设备都可以用你的用户权限执行命令、传文件和截图。获得邀请的人加入后也会获得访问权；单独拒绝仍然生效。",
+                  ))
+                )
+                  return;
+                if (
+                  await action({ command: "all_permissions", args: { allow } })
+                )
+                  notify(
+                    allow
+                      ? "已允许当前和未来设备"
+                      : "已关闭全体授权，保留单独权限",
+                  );
+              }}
+            />
+            <span className="switch-track" />
+          </label>
+        </div>
+      </section>
       <div className="permission-note">
         <Icon name="shield" />
         <p>
@@ -81,7 +125,9 @@ export function Devices({
                   aria-label={`允许 ${device.name} 访问本机`}
                   checked={
                     !device.revoked &&
-                    !!status?.allow_from.includes(device.device_id)
+                    !status?.deny_from.includes(device.device_id) &&
+                    (!!status?.local.allow_all ||
+                      !!status?.allow_from.includes(device.device_id))
                   }
                   onChange={async (event) => {
                     const allow = event.target.checked;
@@ -99,7 +145,7 @@ export function Devices({
                         args: { device: device.device_id, allow },
                       })
                     )
-                      notify(allow ? "已允许访问本机" : "已取消访问权限");
+                      notify(allow ? "已允许访问本机" : "已拒绝访问本机");
                   }}
                 />
                 <span className="switch-track" />

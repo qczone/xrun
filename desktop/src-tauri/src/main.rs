@@ -22,6 +22,7 @@ struct Status {
     local: xrun::client::LocalStatus,
     service: platform::ServiceStatus,
     allow_from: Vec<String>,
+    deny_from: Vec<String>,
     error: Option<String>,
 }
 
@@ -109,10 +110,12 @@ fn local_status(app: &tauri::AppHandle) -> anyhow::Result<Status> {
     let mut local = xrun::client::local_status()?;
     let service = platform::status()?;
     local.daemon_installed = service.installed || service.legacy_installed;
+    let policy = xrun::config::DaemonConfig::load()?;
     Ok(Status {
         local,
         service,
-        allow_from: xrun::config::DaemonConfig::load()?.allow_from,
+        allow_from: policy.allow_from,
+        deny_from: policy.deny_from,
         error: app.state::<Desktop>().error.lock().unwrap().clone(),
     })
 }
@@ -235,6 +238,24 @@ async fn permission(
             .await
             .map(|_| ()),
     )
+}
+#[tauri::command]
+async fn all_permissions(
+    app: tauri::AppHandle,
+    state: State<'_, Desktop>,
+    allow: bool,
+) -> Result<(), String> {
+    let _guard = state.action.lock().await;
+    record(&app, xrun::config::update_all_permissions(allow))
+}
+#[tauri::command]
+async fn pause_access(
+    app: tauri::AppHandle,
+    state: State<'_, Desktop>,
+    paused: bool,
+) -> Result<(), String> {
+    let _guard = state.action.lock().await;
+    record(&app, xrun::config::pause_remote_access(paused))
 }
 #[tauri::command]
 fn hide_icon(app: tauri::AppHandle) -> Result<(), String> {
@@ -360,6 +381,8 @@ fn main() {
             remove_service,
             autostart,
             permission,
+            all_permissions,
+            pause_access,
             hide_icon,
             settings,
             save_settings,
@@ -376,6 +399,7 @@ fn main() {
                         Ok(s) if !s.local.joined => "xrun · 尚未加入",
                         Ok(s) if s.service.approval_required => "xrun · 需要系统授权",
                         Ok(s) if !s.local.daemon_running => "xrun · 服务已停止",
+                        Ok(s) if s.local.remote_access_paused => "xrun · 远程访问已暂停",
                         Ok(s) if s.local.daemon_connected == Some(true) => "xrun · 已连接",
                         Ok(s) if s.local.daemon_connected.is_none() => "xrun · 旧版服务运行中",
                         Ok(_) => "xrun · 连接中…",

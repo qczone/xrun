@@ -24,6 +24,8 @@ async function fixture(handlers: Record<string, Handler> = {}, joined = true) {
       version: "0.0.1-beta.1",
       daemon_running: true,
       daemon_connected: true,
+      remote_access_paused: false,
+      allow_all: false,
       daemon_installed: true,
     },
     service: {
@@ -34,6 +36,7 @@ async function fixture(handlers: Record<string, Handler> = {}, joined = true) {
       development: false,
     },
     allow_from: [],
+    deny_from: [],
     error: null,
   };
   const settings: Settings = {
@@ -93,6 +96,13 @@ async function fixture(handlers: Record<string, Handler> = {}, joined = true) {
         return null;
       case "permission":
         status.allow_from = args.allow ? [args.device as string] : [];
+        status.deny_from = args.allow ? [] : [args.device as string];
+        return null;
+      case "all_permissions":
+        status.local.allow_all = args.allow as boolean;
+        return null;
+      case "pause_access":
+        status.local.remote_access_paused = args.paused as boolean;
         return null;
       case "autostart":
         status.service.app_at_login = args.enabled as boolean;
@@ -395,6 +405,58 @@ test("joining passes the link only to join and clears it from the form", async (
     name: "mac2",
   });
   expect(document.body.textContent).not.toContain("test-secret");
+});
+
+test("all-member access requires confirmation, respects denials and preserves individual grants", async () => {
+  const { page, calls, status, poll } = await fixture();
+  page("设备");
+  fireEvent.click(screen.getByLabelText("允许所有设备访问本机"));
+  await waitFor(() =>
+    expect(document.querySelector("dialog")?.open).toBe(true),
+  );
+  expect(document.querySelector("dialog")?.textContent).toContain("以后加入");
+  await act(async () => document.querySelector("dialog")!.close("cancel"));
+  expect(calls.some((call) => call.command === "all_permissions")).toBe(false);
+  fireEvent.click(screen.getByLabelText("允许所有设备访问本机"));
+  await waitFor(() =>
+    expect(document.querySelector("dialog")?.open).toBe(true),
+  );
+  await act(async () => document.querySelector("dialog")!.close("ok"));
+  await waitFor(() => expect(status.local.allow_all).toBe(true));
+  const individual = screen.getByLabelText(
+    '允许 <img id="injected" src=x onerror=alert(1)> 访问本机',
+  ) as HTMLInputElement;
+  expect(individual.checked).toBe(true);
+  fireEvent.click(individual);
+  await waitFor(() => expect(individual.checked).toBe(false));
+  status.allow_from = ["unsafe-label"];
+  status.deny_from = [];
+  await poll();
+  fireEvent.click(screen.getByLabelText("允许所有设备访问本机"));
+  await waitFor(() => expect(status.local.allow_all).toBe(false));
+  expect(individual.checked).toBe(true);
+});
+
+test("pause and resume keep permissions and expose the paused state", async () => {
+  const { page, calls, status } = await fixture();
+  fireEvent.click(screen.getByRole("button", { name: "暂停远程访问" }));
+  await screen.findByRole("button", { name: "恢复远程访问" });
+  expect(status.local.remote_access_paused).toBe(true);
+  page("设备");
+  expect(screen.getByText(/远程访问已暂停，以下授权暂不生效/)).toBeTruthy();
+  page("本机状态");
+  fireEvent.click(screen.getByRole("button", { name: "恢复远程访问" }));
+  await waitFor(() => expect(status.local.remote_access_paused).toBe(false));
+  expect(
+    calls
+      .filter((call) => call.command === "pause_access")
+      .map((call) => call.args),
+  ).toEqual([{ paused: true }, { paused: false }]);
+  expect(
+    calls.some((call) =>
+      ["permission", "all_permissions"].includes(call.command),
+    ),
+  ).toBe(false);
 });
 
 test("history pages and filters retain server cursors and stop polling while hidden", async () => {

@@ -54,6 +54,17 @@ export function Overview({ status, busy, action, stop, navigate }: Props) {
             >
               停止服务
             </button>
+            <button
+              disabled={busy}
+              onClick={() =>
+                void action({
+                  command: "pause_access",
+                  args: { paused: !local.remote_access_paused },
+                })
+              }
+            >
+              {local.remote_access_paused ? "恢复远程访问" : "暂停远程访问"}
+            </button>
           </div>
         )}
       </article>

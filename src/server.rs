@@ -414,7 +414,7 @@ async fn control_loop(app: Arc<App>, id: String, mut ws: WebSocket) {
                     Some(Ok(Message::Pong(_)))=>{last=Instant::now();let _=app.store.seen(&id);},
                     Some(Ok(Message::Ping(b)))=>{last=Instant::now();if ws.send(Message::Pong(b)).await.is_err(){break}},
                     Some(Ok(Message::Text(text)))=>{last=Instant::now();match serde_json::from_str::<Control>(&text){
-                        Ok(Control::SessionReject{session_id,code})=>{let mut c=app.connections.lock().await;if let Some(s)=c.sessions.get_mut(&session_id)&& s.target==id&&s.generation==generation&& let Some(sender)=s.target_tx.take(){let _=sender.send(Err(Data::Error{code:code.split(':').next().unwrap_or("SOURCE_NOT_ALLOWED").into(),message:code}));}},
+                        Ok(Control::SessionReject{session_id,code})=>{let mut c=app.connections.lock().await;if let Some(s)=c.sessions.get_mut(&session_id)&& s.target==id&&s.generation==generation&& let Some(sender)=s.target_tx.take(){let _=sender.send(Err(Data::error(&anyhow::anyhow!(code))));}},
                         Ok(Control::GrantAck{device_id})=>{let _=app.store.audit("grant_ack",serde_json::json!({"target":id,"source":device_id}));},_=>break
                     }},_=>break
                 }}

@@ -7,6 +7,8 @@ export interface LocalStatus {
   version: string;
   daemon_running: boolean;
   daemon_connected: boolean | null;
+  remote_access_paused: boolean;
+  allow_all: boolean;
   daemon_installed: boolean;
 }
 
@@ -20,6 +22,7 @@ export interface Status {
     development: boolean;
   };
   allow_from: string[];
+  deny_from: string[];
   error: string | null;
 }
 
@@ -99,6 +102,8 @@ export type ActionRequest =
   | { command: "join"; args: { link: string; name: string } }
   | { command: "autostart"; args: { enabled: boolean } }
   | { command: "permission"; args: { device: string; allow: boolean } }
+  | { command: "all_permissions"; args: { allow: boolean } }
+  | { command: "pause_access"; args: { paused: boolean } }
   | { command: "save_settings"; args: { execution: ExecutionSettings } };
 export type Action = (request: ActionRequest) => Promise<boolean>;
 export type Confirm = (title: string, message: string) => Promise<boolean>;
