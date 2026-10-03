@@ -38,6 +38,14 @@ pub struct Identity {
     pub cert_pem: String,
     pub key_pem: String,
     pub registration: Registration,
+    #[serde(default)]
+    pub network: Option<NetworkIdentity>,
+}
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct NetworkIdentity {
+    pub network_id: String,
+    pub manager_id: String,
 }
 impl Identity {
     pub fn load() -> Result<Self> {
@@ -250,7 +258,7 @@ pub fn update_execution(
     })
 }
 
-fn update_daemon_config(
+pub(crate) fn update_daemon_config(
     dir: &Path,
     update: impl FnOnce(&mut DaemonConfig) -> Result<()>,
 ) -> Result<()> {

@@ -1,13 +1,11 @@
 use crate::{
-    config::{self, Identity, PendingIdentity, ServerConfig},
-    crypto, daemon, net,
+    config::{self, Identity, ServerConfig},
+    daemon, net,
     protocol::*,
     service,
 };
 use anyhow::{Context, Result, bail};
-use base64::{Engine, engine::general_purpose::STANDARD};
 use serde::Serialize;
-use std::time::Duration;
 
 #[derive(Debug, Serialize)]
 pub struct Permission {
@@ -108,7 +106,7 @@ pub async fn status() -> Result<Status> {
         server_error: error,
     })
 }
-fn user_name() -> String {
+pub(crate) fn user_name() -> String {
     let host = std::env::var("HOSTNAME")
         .or_else(|_| std::env::var("COMPUTERNAME"))
         .unwrap_or_else(|_| std::env::consts::OS.into());
@@ -152,37 +150,6 @@ pub async fn set_permission(value: &str, allow: bool) -> Result<Permission> {
         allowed: allow,
     })
 }
-fn parse_link(link: &str) -> Result<(Vec<String>, String, String)> {
-    let rest = link
-        .strip_prefix("xrun://")
-        .context("INVALID_LINK: expected xrun://")?;
-    let (rest, token) = rest
-        .split_once('#')
-        .context("INVALID_LINK: missing token")?;
-    let (addresses, pin) = rest
-        .split_once('/')
-        .context("INVALID_LINK: missing CA pin")?;
-    if pin.len() != 52
-        || !pin
-            .bytes()
-            .all(|b| b.is_ascii_lowercase() || matches!(b, b'2'..=b'7'))
-        || token.len() != 26
-        || !token
-            .bytes()
-            .all(|b| b.is_ascii_lowercase() || matches!(b, b'2'..=b'7'))
-    {
-        bail!("INVALID_LINK: invalid CA pin or invitation token")
-    }
-    let mut urls = vec![];
-    for address in addresses.split(',') {
-        validate_address(address)?;
-        urls.push(format!("https://{address}"))
-    }
-    if urls.is_empty() {
-        bail!("INVALID_LINK: missing addresses")
-    }
-    Ok((urls, pin.into(), token.into()))
-}
 pub(crate) fn validate_address(address: &str) -> Result<()> {
     let (_, port) = address
         .rsplit_once(':')
@@ -204,120 +171,8 @@ pub(crate) fn validate_address(address: &str) -> Result<()> {
     Ok(())
 }
 pub(crate) async fn join_identity(link: &str, name: Option<String>) -> Result<Identity> {
-    let (addresses, pin, token) = parse_link(link)?;
-    let attempts = net::ordered_addresses(&addresses, &pin);
-    let dir = config::device_dir()?;
-    let pending_path = dir.join("pending.toml");
-    let existing = if dir.join("identity.toml").exists() {
-        Some(Identity::load()?)
-    } else {
-        None
-    };
-    if existing
-        .as_ref()
-        .is_some_and(|id| crypto::ca_spki_pin(&id.ca_pem).ok().as_deref() != Some(&pin))
-    {
-        bail!("DEPLOYMENT_MISMATCH: already joined to another deployment")
-    }
-    let pending: PendingIdentity = if let Some(id) = &existing {
-        PendingIdentity {
-            key_pem: id.key_pem.clone(),
-            ca_pem: id.ca_pem.clone(),
-            pin: pin.clone(),
-        }
-    } else if pending_path.exists() {
-        let value: PendingIdentity = config::read(&pending_path)?;
-        if value.pin != pin {
-            bail!("DEPLOYMENT_MISMATCH: pending pairing belongs to another deployment")
-        }
-        value
-    } else {
-        let mut ca = None;
-        let mut error = None;
-        for address in &attempts {
-            match tokio::time::timeout(Duration::from_secs(5), crypto::discover_ca(address, &pin))
-                .await
-            {
-                Ok(Ok(value)) => {
-                    ca = Some(value);
-                    break;
-                }
-                Ok(Err(e)) => error = Some(e),
-                Err(_) => error = Some(anyhow::anyhow!("CONNECT_TIMEOUT: {address}")),
-            }
-        }
-        let ca_pem = ca.ok_or_else(|| {
-            error.unwrap_or_else(|| anyhow::anyhow!("CONNECT_FAILED: no reachable address"))
-        })?;
-        let (key_pem, _) = crypto::new_device_request()?;
-        let value = PendingIdentity {
-            key_pem,
-            ca_pem,
-            pin: pin.clone(),
-        };
-        config::write(&pending_path, &value)?;
-        value
-    };
     let name = name
-        .or_else(|| existing.as_ref().map(|i| i.name.clone()))
+        .or_else(|| Identity::load().ok().map(|id| id.name))
         .unwrap_or_else(user_name);
-    if !valid_name(&name) {
-        bail!("INVALID_NAME: use [a-z][a-z0-9-]{{0,31}} and avoid command names")
-    }
-    let client = crypto::http_client(&pending.ca_pem, None)?;
-    let csr = crypto::renew_device_request(&pending.key_pem)?;
-    let body = PairRequest {
-        token,
-        name,
-        csr_base64: STANDARD.encode(csr),
-    };
-    let mut error = None;
-    for address in &attempts {
-        match tokio::time::timeout(
-            Duration::from_secs(5),
-            client
-                .post(format!("{address}/pair"))
-                .header("x-xrun-version", VERSION)
-                .json(&body)
-                .send(),
-        )
-        .await
-        {
-            Ok(Ok(r)) => {
-                if !r.status().is_success() {
-                    let text = r.text().await?;
-                    if let Ok(Data::Error { code, message }) = serde_json::from_str(&text) {
-                        bail!("{code}: {message}")
-                    }
-                    bail!("PAIR_FAILED: {text}")
-                };
-                let pair: PairResponse = r.json().await?;
-                let id = Identity {
-                    device_id: pair.device_id,
-                    name: pair.name,
-                    addresses: addresses.clone(),
-                    ca_pem: pending.ca_pem.clone(),
-                    cert_pem: pair.cert_pem,
-                    key_pem: pending.key_pem.clone(),
-                    registration: pair.registration,
-                };
-                if existing
-                    .as_ref()
-                    .is_some_and(|old| old.device_id != id.device_id)
-                {
-                    bail!("IDENTITY_MISMATCH: server changed existing identity")
-                };
-                id.save()?;
-                net::remember(&id, address);
-                if pending_path.exists() {
-                    std::fs::remove_file(&pending_path)?;
-                    config::sync_parent(&pending_path)?
-                }
-                return Ok(id);
-            }
-            Ok(Err(e)) => error = Some(e.into()),
-            Err(_) => error = Some(anyhow::anyhow!("CONNECT_TIMEOUT: {address}")),
-        }
-    }
-    Err(error.unwrap_or_else(|| anyhow::anyhow!("CONNECT_FAILED: pairing unavailable")))
+    crate::network::join(link, name).await
 }

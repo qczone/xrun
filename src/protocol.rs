@@ -30,43 +30,10 @@ pub struct Registration {
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct PairRequest {
+    pub version: String,
     pub token: String,
     pub name: String,
     pub csr_base64: String,
-}
-#[derive(Debug, Serialize, Deserialize)]
-pub struct PairResponse {
-    pub device_id: String,
-    pub name: String,
-    pub cert_pem: String,
-    pub registration: Registration,
-}
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
-pub enum Control {
-    Hello {
-        version: String,
-        os: String,
-        arch: String,
-        hostname: Option<String>,
-        execution_user: Option<String>,
-        default_cwd: Option<String>,
-    },
-    HelloAck,
-    SessionRequest {
-        session_id: String,
-        source_device_id: String,
-    },
-    SessionReject {
-        session_id: String,
-        code: String,
-    },
-    Grant {
-        device_id: String,
-    },
-    GrantAck {
-        device_id: String,
-    },
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -306,6 +273,7 @@ pub const RESERVED: &[&str] = &[
     "recent",
     "down",
     "server",
+    "relay",
     "daemon",
     "guide",
     "start",

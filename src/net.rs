@@ -7,19 +7,21 @@ use anyhow::{Context, Result, bail};
 use futures_util::{SinkExt, StreamExt};
 use serde::{Serialize, de::DeserializeOwned};
 use sha2::{Digest, Sha256};
-use std::{sync::Arc, time::Duration};
+use std::sync::Arc;
 use tokio::{
-    io::{AsyncReadExt, AsyncWrite, AsyncWriteExt},
+    io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt},
     net::TcpStream,
-    time::timeout,
 };
 use tokio_tungstenite::{
-    Connector, MaybeTlsStream, WebSocketStream, client_async_tls_with_config,
+    WebSocketStream, client_async_with_config,
     tungstenite::{
         Message, client::IntoClientRequest, http::HeaderValue, protocol::WebSocketConfig,
     },
 };
-pub type Ws = WebSocketStream<MaybeTlsStream<TcpStream>>;
+pub trait Transport: AsyncRead + AsyncWrite + Unpin + Send {}
+impl<T: AsyncRead + AsyncWrite + Unpin + Send> Transport for T {}
+pub type Io = Box<dyn Transport>;
+pub type Ws = WebSocketStream<Io>;
 pub async fn tcp(url: &url::Url) -> Result<TcpStream> {
     let host = url.host_str().context("missing host")?;
     let port = url.port_or_known_default().context("missing port")?;
@@ -80,9 +82,11 @@ pub async fn websocket_at(address: &str, path: &str, tls: Arc<rustls::ClientConf
     let config = WebSocketConfig::default()
         .max_message_size(Some(MAX_MESSAGE))
         .max_frame_size(Some(MAX_MESSAGE));
-    let result =
-        client_async_tls_with_config(request, tcp, Some(config), Some(Connector::Rustls(tls)))
-            .await;
+    let host = url.host_str().context("missing host")?.to_owned();
+    let tls = tokio_rustls::TlsConnector::from(tls)
+        .connect(rustls::pki_types::ServerName::try_from(host)?, tcp)
+        .await?;
+    let result = client_async_with_config(request, Box::new(tls) as Io, Some(config)).await;
     match result {
         Ok((ws, _)) => Ok(ws),
         Err(tokio_tungstenite::tungstenite::Error::Http(r)) => {
@@ -97,29 +101,11 @@ pub async fn websocket_at(address: &str, path: &str, tls: Arc<rustls::ClientConf
     }
 }
 pub async fn websocket(id: &Identity, path: &str) -> Result<(Ws, String)> {
-    let tls = crypto::client_tls_config(id)?;
-    let mut error = None;
-    for address in ordered(id) {
-        match timeout(
-            Duration::from_secs(5),
-            websocket_at(&address, path, tls.clone()),
-        )
-        .await
-        {
-            Ok(Ok(ws)) => {
-                remember(id, &address);
-                return Ok((ws, address));
-            }
-            Ok(Err(e)) => {
-                if explicit(&e) {
-                    return Err(e);
-                }
-                error = Some(e)
-            }
-            Err(_) => error = Some(anyhow::anyhow!("CONNECT_TIMEOUT: {address}")),
-        }
-    }
-    Err(error.unwrap_or_else(|| anyhow::anyhow!("CONNECT_FAILED: no configured address")))
+    let target = path
+        .strip_prefix("/devices/")
+        .and_then(|p| p.strip_suffix("/session"))
+        .context("INVALID_REQUEST: expected a device session")?;
+    crate::network::session(id, target).await
 }
 pub fn explicit(e: &anyhow::Error) -> bool {
     let s = e.to_string();
@@ -130,8 +116,14 @@ pub fn explicit(e: &anyhow::Error) -> bool {
         "ACCESS_PAUSED",
         "DEVICE_OFFLINE",
         "SESSION_LIMIT",
-        "NOT_ADMIN",
+        "NOT_MANAGER",
+        "MIGRATION_REQUIRED",
+        "IDENTITY_MISMATCH",
         "UNKNOWN_DEVICE",
+        "INVALID_TOKEN",
+        "INVALID_NAME",
+        "NAME_TAKEN",
+        "MEMBER_LIMIT",
     ]
     .iter()
     .any(|c| s.starts_with(c))
@@ -142,32 +134,7 @@ pub async fn http<T: DeserializeOwned>(
     path: &str,
     body: Option<serde_json::Value>,
 ) -> Result<T> {
-    let client = crypto::http_client(&id.ca_pem, Some(id))?;
-    let mut error = None;
-    for address in ordered(id) {
-        let mut r = client
-            .request(method.clone(), format!("{address}{path}"))
-            .header("x-xrun-version", VERSION);
-        if let Some(body) = &body {
-            r = r.json(body)
-        }
-        match timeout(Duration::from_secs(5), r.send()).await {
-            Ok(Ok(response)) => {
-                remember(id, &address);
-                if !response.status().is_success() {
-                    let message = response.text().await?;
-                    if let Ok(Data::Error { code, message }) = serde_json::from_str(&message) {
-                        bail!("{code}: {message}")
-                    }
-                    bail!("HTTP_ERROR: {message}")
-                }
-                return Ok(response.json().await?);
-            }
-            Ok(Err(e)) => error = Some(e.into()),
-            Err(_) => error = Some(anyhow::anyhow!("CONNECT_TIMEOUT: {address}")),
-        }
-    }
-    Err(error.unwrap_or_else(|| anyhow::anyhow!("CONNECT_FAILED: no configured address")))
+    crate::network::http(id, method, path, body).await
 }
 pub async fn send<T: Serialize>(ws: &mut Ws, value: &T) -> Result<()> {
     let bytes = serde_json::to_string(value)?;
@@ -264,44 +231,5 @@ async fn receive_body<W: AsyncWrite + Unpin>(
     Ok(())
 }
 pub async fn renew_identity(id: &mut Identity) -> Result<()> {
-    if !crypto::certificate_expiring(&id.cert_pem, 365)? {
-        return Ok(());
-    }
-    let client = crypto::http_client(&id.ca_pem, None)?;
-    let csr = crypto::renew_device_request(&id.key_pem)?;
-    use base64::{Engine, engine::general_purpose::STANDARD};
-    let body = PairRequest {
-        token: String::new(),
-        name: id.name.clone(),
-        csr_base64: STANDARD.encode(csr),
-    };
-    let mut error = None;
-    for address in ordered(id) {
-        match timeout(
-            Duration::from_secs(5),
-            client
-                .post(format!("{address}/pair"))
-                .header("x-xrun-version", VERSION)
-                .json(&body)
-                .send(),
-        )
-        .await
-        {
-            Ok(Ok(r)) => {
-                if !r.status().is_success() {
-                    bail!("RENEW_FAILED: {}", r.text().await?)
-                }
-                let pair: PairResponse = r.json().await?;
-                if pair.device_id != id.device_id {
-                    bail!("IDENTITY_MISMATCH: renewal returned a different device")
-                };
-                id.cert_pem = pair.cert_pem;
-                id.save()?;
-                return Ok(());
-            }
-            Ok(Err(e)) => error = Some(e.into()),
-            Err(_) => error = Some(anyhow::anyhow!("CONNECT_TIMEOUT: {address}")),
-        }
-    }
-    Err(error.unwrap_or_else(|| anyhow::anyhow!("CONNECT_FAILED: renewal unavailable")))
+    crate::network::renew(id).await
 }

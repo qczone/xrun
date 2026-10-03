@@ -1,7 +1,11 @@
 use crate::{
     config::{self, DaemonConfig, Identity},
+    membership::RosterCache,
     net::{self, Ws},
+    network,
     protocol::*,
+    relay::{ReceiptAck, RelayMessage},
+    secure,
     store::TaskStore,
 };
 use anyhow::{Context, Result, bail};
@@ -73,10 +77,13 @@ pub fn reset() -> Result<()> {
 struct Runtime {
     control: Arc<crate::control::Control>,
     id: Identity,
+    members: RosterCache,
+    network_id: String,
     store: Arc<TaskStore>,
     running: Mutex<HashMap<String, u32>>,
     canceled: Mutex<HashSet<String>>,
     gate: Mutex<()>,
+    sessions: Arc<Semaphore>,
     files: Arc<Semaphore>,
     forwards: Arc<Semaphore>,
     streams: AtomicUsize,
@@ -129,10 +136,19 @@ impl Runtime {
     fn config(&self) -> Result<DaemonConfig> {
         DaemonConfig::load()
     }
+    fn membership(&self, source: &str) -> Result<()> {
+        let roster = self.members.load(&self.network_id)?;
+        if roster.member(&self.id.device_id)?.revoked || roster.member(source)?.revoked {
+            bail!("DEVICE_REVOKED: session member has been revoked")
+        }
+        Ok(())
+    }
     fn allow(&self, source: &str) -> Result<()> {
+        self.membership(source)?;
         self.config()?.check_access(source)
     }
     fn check_session(&self, source: &str, generation: u64) -> Result<()> {
+        self.membership(source)?;
         let cfg = self.config()?;
         cfg.check_access(source)?;
         if cfg.pause_generation != generation {
@@ -175,6 +191,9 @@ pub async fn run() -> Result<()> {
     if !dir.join("daemon.initialized").exists() {
         bail!("DAEMON_NOT_INITIALIZED: run daemon install")
     }
+    let network_id = network::authority(&id)?.network_id.clone();
+    network::current(&id)?;
+    let members = network::cache()?;
     let store = Arc::new(TaskStore::open(&dir.join("daemon.db"), false)?);
     store.prune()?;
     for mut job in store.all()? {
@@ -206,10 +225,13 @@ pub async fn run() -> Result<()> {
     let rt = Arc::new(Runtime {
         control: control.clone(),
         id,
+        members,
+        network_id,
         store,
         running: Mutex::new(HashMap::new()),
         canceled: Mutex::new(HashSet::new()),
         gate: Mutex::new(()),
+        sessions: Arc::new(Semaphore::new(32)),
         files: Arc::new(Semaphore::new(8)),
         forwards: Arc::new(Semaphore::new(32)),
         streams: AtomicUsize::new(0),
@@ -256,10 +278,7 @@ async fn control_reconnect(rt: Arc<Runtime>) -> Result<()> {
         }
         if let Err(e) = result {
             tracing::warn!(error=%e,"daemon disconnected");
-            if e.to_string().starts_with("DEVICE_REVOKED")
-                || e.to_string().starts_with("VERSION_MISMATCH")
-                || e.to_string().starts_with("IDENTITY_CHANGED")
-            {
+            if e.to_string().starts_with("IDENTITY_CHANGED") {
                 return Err(e);
             }
         }
@@ -270,14 +289,27 @@ async fn control_reconnect(rt: Arc<Runtime>) -> Result<()> {
 }
 async fn control_once(rt: Arc<Runtime>) -> Result<()> {
     let mut current = Identity::load()?;
-    if current.device_id != rt.id.device_id {
+    if current.device_id != rt.id.device_id || current.network != rt.id.network {
         bail!("IDENTITY_CHANGED: restart daemon after replacing its identity");
     }
+    // A relay error cannot terminate reliable jobs. Only signed membership
+    // records can revoke identities, and existing jobs retain their semantics.
+    if network::authority(&current)?.manager_id == current.device_id {
+        // Recover publication after a successful local membership transaction
+        // whose relay request failed. The authority never comes from the relay.
+        let manager = network::manager(&current)?;
+        let roster = manager.roster()?;
+        network::observe(&current, &roster)?;
+        if let Err(error) = network::publish(&roster).await {
+            tracing::warn!(%error,"signed roster publication unavailable");
+        }
+    }
+    let _ = network::refresh(&current).await;
     net::renew_identity(&mut current).await?;
-    let (mut ws, address) = net::websocket(&current, "/daemon").await?;
+    let (mut ws, address) = network::control(&current).await?;
     net::send(
         &mut ws,
-        &Control::Hello {
+        &RelayMessage::Hello {
             version: VERSION.into(),
             os: std::env::consts::OS.into(),
             arch: std::env::consts::ARCH.into(),
@@ -291,71 +323,122 @@ async fn control_once(rt: Arc<Runtime>) -> Result<()> {
         },
     )
     .await?;
-    match net::receive::<Control>(&mut ws).await? {
-        Control::HelloAck => {}
-        _ => bail!("INVALID_MESSAGE: expected hello acknowledgement"),
+    if !matches!(network::receive(&mut ws).await?, RelayMessage::HelloAck) {
+        bail!("INVALID_MESSAGE: expected hello acknowledgement")
     }
+    acknowledge_roster(&current, &mut ws).await?;
     rt.control.connected(true)?;
     let mut ping = tokio::time::interval(Duration::from_secs(15));
     let mut last = tokio::time::Instant::now();
     loop {
         tokio::select! {
-            _=ping.tick()=>{if last.elapsed()>Duration::from_secs(45){bail!("CONTROL_TIMEOUT: relay stopped responding")}ws.send(Message::Ping(vec![].into())).await?;rt.store.prune()?;},
-            message=ws.next()=>{match message.context("CONNECTION_CLOSED: control disconnected")?? {
-                Message::Pong(_)=>last=tokio::time::Instant::now(),Message::Ping(b)=>{last=tokio::time::Instant::now();ws.send(Message::Pong(b)).await?},
-                Message::Text(text)=>{last=tokio::time::Instant::now();match serde_json::from_str::<Control>(&text)?{
-                    Control::SessionRequest{session_id,source_device_id}=>{
-                        if let Err(e)=rt.allow(&source_device_id){net::send(&mut ws,&Control::SessionReject{session_id,code:e.to_string()}).await?;continue}
-                        let rt=rt.clone();let address=address.clone();tokio::spawn(async move{let result=data_session(rt,&address,&session_id,&source_device_id).await;if let Err(e)=result{tracing::debug!(error=%e,"data session ended")}});
+            _=ping.tick()=>{
+                if last.elapsed()>Duration::from_secs(45){bail!("CONTROL_TIMEOUT: relay stopped responding")}
+                ws.send(Message::Ping(vec![].into())).await?;
+                rt.store.prune()?;
+            },
+            message=ws.next()=>{
+                match message.context("CONNECTION_CLOSED: control disconnected")?? {
+                    Message::Pong(_)=>last=tokio::time::Instant::now(),
+                    Message::Ping(b)=>{last=tokio::time::Instant::now();ws.send(Message::Pong(b)).await?},
+                    Message::Text(text)=>{
+                        last=tokio::time::Instant::now();
+                        match serde_json::from_str::<RelayMessage>(&text)? {
+                            RelayMessage::Incoming{session_id,..}=>{
+                                // source_hint is routing metadata, never an identity or grant.
+                                let Ok(permit)=rt.sessions.clone().try_acquire_owned() else {
+                                    net::send(&mut ws,&RelayMessage::Reject{session_id,
+                                        error:Box::new(Data::error(&anyhow::anyhow!("DEVICE_BUSY: encrypted session limit reached")))}).await?;
+                                    continue;
+                                };
+                                let rt=rt.clone();let address=address.clone();
+                                tokio::spawn(async move{
+                                    let _permit=permit;
+                                    if let Err(error)=data_session(rt,&address,&session_id).await {
+                                        tracing::debug!(%error,"encrypted data session ended");
+                                    }
+                                });
+                            },
+                            RelayMessage::RosterUpdate{roster}=>{
+                                network::observe(&current,&roster)?;
+                                acknowledge_roster(&current,&mut ws).await?;
+                                if !roster.roster.relay_addresses.contains(&address) {
+                                    bail!("RELAY_CHANGED: reconnect using the signed relay addresses")
+                                }
+                            },
+                            RelayMessage::Error{code,message}=>bail!("{code}: {message}"),
+                            _=>bail!("INVALID_MESSAGE: unexpected control message"),
+                        }
                     },
-                    Control::Grant{device_id}=>{config::update_permission(&device_id,true)?;net::send(&mut ws,&Control::GrantAck{device_id}).await?},
-                    _=>bail!("INVALID_MESSAGE: unexpected control message"),
-                }},_=>bail!("CONNECTION_CLOSED: control disconnected")
-            }}
+                    _=>bail!("CONNECTION_CLOSED: control disconnected")
+                }
+            }
         }
     }
 }
-async fn data_session(rt: Arc<Runtime>, address: &str, sid: &str, source: &str) -> Result<()> {
-    let mut ws = tokio::time::timeout(
-        Duration::from_secs(10),
-        net::websocket_at(
-            address,
-            &format!("/daemon/sessions/{sid}"),
-            crate::crypto::client_tls_config(&Identity::load()?)?,
-        ),
-    )
-    .await??;
-    let policy = rt.config()?;
-    policy.check_access(source)?;
-    let generation = policy.pause_generation;
+async fn acknowledge_roster(id: &Identity, ws: &mut Ws) -> Result<()> {
+    let roster = network::current(id)?;
     net::send(
-        &mut ws,
-        &Data::Ready {
-            version: VERSION.into(),
-            device_id: rt.id.device_id.clone(),
-            db_id: rt.store.db_id.clone(),
-            default_cwd: rt.cwd()?.to_string_lossy().into(),
+        ws,
+        &RelayMessage::RosterAck {
+            ack: ReceiptAck::create(id, &roster)?,
         },
     )
-    .await?;
-    let mut stop = rt.stop.subscribe();
-    let denied = async {
-        loop {
-            tokio::time::sleep(Duration::from_millis(100)).await;
-            if rt.check_session(source, generation).is_err() {
-                break;
+    .await
+}
+async fn data_session(rt: Arc<Runtime>, address: &str, sid: &str) -> Result<()> {
+    let id = Identity::load()?;
+    let (mut ws, certificate) = tokio::time::timeout(Duration::from_secs(10), async {
+        let outer = network::attach(&id, address, sid).await?;
+        secure::server(outer, &id).await
+    })
+    .await??;
+    let result = if let Some(certificate) = certificate {
+        async {
+            let (_, source) = tokio::time::timeout(
+                Duration::from_secs(10),
+                secure::exchange_server(&mut ws, &rt.members, &rt.network_id, &certificate),
+            )
+            .await??;
+            rt.allow(&source)?;
+            let generation = rt.config()?.pause_generation;
+            net::send(
+                &mut ws,
+                &Data::Ready {
+                    version: VERSION.into(),
+                    device_id: rt.id.device_id.clone(),
+                    db_id: rt.store.db_id.clone(),
+                    default_cwd: rt.cwd()?.to_string_lossy().into(),
+                },
+            )
+            .await?;
+            let mut stop = rt.stop.subscribe();
+            let denied = async {
+                loop {
+                    tokio::time::sleep(Duration::from_millis(100)).await;
+                    if rt.check_session(&source, generation).is_err() {
+                        break;
+                    }
+                }
+            };
+            tokio::select! {
+                r=serve(rt.clone(),&source,generation,&mut ws)=>r,
+                _=stop.changed()=>Err(anyhow::anyhow!("DAEMON_STOPPING: daemon shutting down")),
+                _=denied=>Ok(()),
             }
         }
+        .await
+    } else {
+        // Pairing is the only anonymous inner-TLS operation and is processed
+        // by the local manager, never by the relay or an ordinary member.
+        network::serve_pair(&id, &mut ws).await
     };
-    let result = tokio::select! {
-        r=serve(rt.clone(),source,generation,&mut ws)=>r,
-        _=stop.changed()=>Err(anyhow::anyhow!("DAEMON_STOPPING: daemon shutting down")),
-        // Close without claiming an operation was rejected: it may already have committed.
-        _=denied=>Ok(()),
-    };
-    if let Err(e) = result {
-        let _ = tokio::time::timeout(Duration::from_secs(1), net::send(&mut ws, &Data::error(&e)))
-            .await;
+    if let Err(error) = result {
+        let _ = tokio::time::timeout(
+            Duration::from_secs(1),
+            net::send(&mut ws, &Data::error(&error)),
+        )
+        .await;
     }
     let _ = tokio::time::timeout(Duration::from_secs(1), ws.close(None)).await;
     Ok(())

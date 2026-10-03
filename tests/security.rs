@@ -1,89 +1,7 @@
 use anyhow::Result;
 use std::{sync::Arc, time::Duration};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use xrun::{
-    config::ServerConfig,
-    crypto,
-    store::{Invitation, ServerStore},
-};
-
-#[test]
-fn revoked_inviters_cannot_leave_working_invitations() -> Result<()> {
-    let temp = tempfile::tempdir()?;
-    let store = ServerStore::open(&temp.path().join("server.db"))?;
-    let bootstrap = store.invite(&Invitation {
-        inviter_id: None,
-        allow: false,
-        admin: true,
-    })?;
-    let (admin, _) = store.register(&bootstrap, "admin", "admin-key")?;
-    let invitation = Invitation {
-        inviter_id: Some(admin.device.device_id.clone()),
-        allow: false,
-        admin: false,
-    };
-    let token = store.invite(&invitation)?;
-    let (inviter, _) = store.register(&token, "inviter", "inviter-key")?;
-    let invitation = Invitation {
-        inviter_id: Some(inviter.device.device_id.clone()),
-        allow: true,
-        admin: false,
-    };
-    let unused = store.invite(&invitation)?;
-    let used = store.invite(&invitation)?;
-    let (joined, _) = store.register(&used, "joined", "joined-key")?;
-    store.revoke("inviter")?;
-    assert!(
-        store
-            .register(&unused, "newcomer", "new-key")
-            .err()
-            .unwrap()
-            .to_string()
-            .contains("INVALID_TOKEN")
-    );
-    assert!(
-        store
-            .invite(&invitation)
-            .unwrap_err()
-            .to_string()
-            .contains("DEVICE_REVOKED")
-    );
-    // Previously joined devices retain their identity; revocation is not recursive.
-    assert_eq!(
-        store
-            .register("", "joined", "joined-key")?
-            .0
-            .device
-            .device_id,
-        joined.device.device_id
-    );
-    assert!(
-        store
-            .revoke("admin")
-            .err()
-            .unwrap()
-            .to_string()
-            .contains("ADMIN_PROTECTED")
-    );
-    // Registration also rejects legacy tokens that weren't removed on revocation.
-    let legacy = store.invite(&Invitation {
-        inviter_id: Some(admin.device.device_id.clone()),
-        allow: false,
-        admin: false,
-    })?;
-    let mut revoked = admin;
-    revoked.device.revoked = true;
-    store.save(&revoked)?;
-    assert!(
-        store
-            .register(&legacy, "legacy", "legacy-key")
-            .err()
-            .unwrap()
-            .to_string()
-            .contains("INVALID_TOKEN")
-    );
-    Ok(())
-}
+use xrun::{config::ServerConfig, crypto};
 
 #[test]
 fn local_download_replaces_regular_files() -> Result<()> {
@@ -229,10 +147,10 @@ async fn anonymous_connection_limits_and_http_deadlines() -> Result<()> {
     let mut idle = anonymous_tls(port, tls.clone()).await?;
     let mut headers = anonymous_tls(port, tls.clone()).await?;
     headers
-        .write_all(b"POST /pair HTTP/1.1\r\nHost: localhost\r\n")
+        .write_all(b"POST /networks/unknown/roster HTTP/1.1\r\nHost: localhost\r\n")
         .await?;
     let mut body = anonymous_tls(port, tls.clone()).await?;
-    body.write_all(format!("POST /pair HTTP/1.1\r\nHost: localhost\r\nContent-Type: application/json\r\nX-Xrun-Version: {}\r\nContent-Length: 2000\r\n\r\n{{", xrun::protocol::VERSION).as_bytes()).await?;
+    body.write_all(format!("POST /networks/unknown/roster HTTP/1.1\r\nHost: localhost\r\nContent-Type: application/json\r\nX-Xrun-Version: {}\r\nContent-Length: 2000\r\n\r\n{{", xrun::protocol::VERSION).as_bytes()).await?;
     let closed = async {
         let mut bytes = Vec::new();
         let _ = idle.read_to_end(&mut bytes).await;
@@ -247,7 +165,7 @@ async fn anonymous_connection_limits_and_http_deadlines() -> Result<()> {
     healthy
         .write_all(
             format!(
-                "GET /devices HTTP/1.1\r\nHost: localhost\r\nX-Xrun-Version: {}\r\n\r\n",
+                "GET /networks/unknown/roster HTTP/1.1\r\nHost: localhost\r\nX-Xrun-Version: {}\r\n\r\n",
                 xrun::protocol::VERSION
             )
             .as_bytes(),
@@ -255,7 +173,7 @@ async fn anonymous_connection_limits_and_http_deadlines() -> Result<()> {
         .await?;
     let mut response = Vec::new();
     tokio::time::timeout(Duration::from_secs(2), healthy.read_to_end(&mut response)).await??;
-    assert!(String::from_utf8_lossy(&response).contains("UNAUTHENTICATED"));
+    assert!(String::from_utf8_lossy(&response).contains("UNKNOWN_NETWORK"));
     Ok(())
 }
 
@@ -334,12 +252,12 @@ async fn accept_errors_do_not_stop_server() -> Result<()> {
     let response = tokio::time::timeout(
         Duration::from_secs(5),
         client
-            .get(format!("https://127.0.0.1:{port}/devices"))
+            .get(format!("https://127.0.0.1:{port}/networks/unknown/roster"))
             .header("x-xrun-version", xrun::protocol::VERSION)
             .send(),
     )
     .await??;
-    assert!(response.text().await?.contains("UNAUTHENTICATED"));
+    assert!(response.text().await?.contains("UNKNOWN_NETWORK"));
     child.start_kill()?;
     child.wait().await?;
     let logs = logs.await?;

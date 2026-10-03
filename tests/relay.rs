@@ -1,87 +1,54 @@
+mod common;
 use anyhow::{Context, Result};
-use base64::{Engine, engine::general_purpose::STANDARD};
 use futures_util::{SinkExt, StreamExt};
 use std::time::Duration;
 use tokio_tungstenite::tungstenite::Message;
 use xrun::{
-    config::{Identity, ServerConfig},
-    crypto, net,
-    protocol::*,
-    store::{Invitation, ServerStore},
+    config::{Identity, NetworkIdentity, ServerConfig},
+    crypto,
+    membership::{Manager, SignedRoster},
+    net,
+    protocol::{Registration, VERSION},
+    relay::{Proof, RelayMessage},
 };
 
-async fn register(
-    cfg: &ServerConfig,
-    keys: &crypto::ServerKeys,
-    store: &ServerStore,
-    name: &str,
-) -> Result<Identity> {
-    let token = store.invite(&Invitation {
-        inviter_id: None,
-        allow: false,
-        admin: false,
-    })?;
-    let (key_pem, csr) = crypto::new_device_request()?;
-    let client = crypto::http_client(&keys.ca_pem, None)?;
-    let body = PairRequest {
-        token,
-        name: name.into(),
-        csr_base64: STANDARD.encode(csr),
-    };
-    // The release check runs before consuming a pairing token.
-    let wrong = client
-        .post(format!("{}/pair", cfg.urls()[0]))
-        .header("x-xrun-version", "incompatible")
-        .json(&body)
-        .send()
-        .await?;
-    assert!(!wrong.status().is_success());
-    assert!(wrong.text().await?.contains("VERSION_MISMATCH"));
-    let response = client
-        .post(format!("{}/pair", cfg.urls()[0]))
-        .header("x-xrun-version", VERSION)
-        .json(&body)
-        .send()
-        .await?;
-    assert!(response.status().is_success());
-    let response: PairResponse = response.json().await?;
-    let renewal = client
-        .post(format!("{}/pair", cfg.urls()[0]))
-        .header("x-xrun-version", VERSION)
-        .json(&PairRequest {
-            token: String::new(),
-            name: name.into(),
-            csr_base64: STANDARD.encode(crypto::renew_device_request(&key_pem)?),
-        })
-        .send()
-        .await?;
-    assert!(renewal.status().is_success());
-    assert_eq!(
-        renewal.json::<PairResponse>().await?.device_id,
-        response.device_id
-    );
+struct Relay(tokio::task::JoinHandle<Result<()>>);
+impl Drop for Relay {
+    fn drop(&mut self) {
+        self.0.abort();
+    }
+}
+fn identity(manager: &Manager, name: &str) -> Result<Identity> {
+    let token = manager.invite(false)?;
+    let (key, csr) = crypto::new_device_request()?;
+    let pair = manager.pair(&token, name, &csr)?;
     Ok(Identity {
-        device_id: response.device_id,
-        name: response.name,
-        addresses: cfg.urls(),
-        ca_pem: keys.ca_pem.clone(),
-        cert_pem: response.cert_pem,
-        key_pem,
-        registration: response.registration,
+        device_id: pair.member.device_id,
+        name: pair.member.name,
+        key_pem: key,
+        cert_pem: pair.cert_pem,
+        addresses: pair.roster.roster.relay_addresses.clone(),
+        ca_pem: pair.roster.ca_pem,
+        registration: Registration {
+            inviter_id: Some(pair.roster.roster.manager_id.clone()),
+            allow_inviter: false,
+        },
+        network: Some(NetworkIdentity {
+            network_id: pair.roster.roster.network_id,
+            manager_id: pair.roster.roster.manager_id,
+        }),
     })
 }
-async fn socket(id: &Identity, path: &str) -> Result<(net::Ws, String)> {
-    let address = id.addresses[0].clone();
-    Ok((
-        net::websocket_at(&address, path, crypto::client_tls_config(id)?).await?,
-        address,
-    ))
-}
-async fn control(id: &Identity) -> Result<net::Ws> {
-    let (mut ws, _) = socket(id, "/daemon").await?;
+async fn control(id: &Identity, roster: &SignedRoster) -> Result<net::Ws> {
+    let mut ws = common::relay_socket(
+        id,
+        roster,
+        &format!("/networks/{}/control", roster.roster.network_id),
+    )
+    .await?;
     net::send(
         &mut ws,
-        &Control::Hello {
+        &RelayMessage::Hello {
             version: VERSION.into(),
             os: "test".into(),
             arch: "test".into(),
@@ -92,136 +59,232 @@ async fn control(id: &Identity) -> Result<net::Ws> {
     )
     .await?;
     assert!(matches!(
-        net::receive::<Control>(&mut ws).await?,
-        Control::HelloAck
+        net::receive(&mut ws).await?,
+        RelayMessage::HelloAck
     ));
     Ok(ws)
 }
-async fn source(id: &Identity, target: &Identity) -> Result<net::Ws> {
-    Ok(
-        socket(id, &format!("/devices/{}/session", target.device_id))
-            .await?
-            .0,
+async fn source(id: &Identity, target: &Identity, roster: &SignedRoster) -> Result<net::Ws> {
+    common::relay_socket(
+        id,
+        roster,
+        &format!(
+            "/networks/{}/connect/{}",
+            roster.roster.network_id, target.device_id
+        ),
     )
+    .await
 }
-async fn session_id(control: &mut net::Ws, source: &Identity) -> Result<String> {
-    let Control::SessionRequest {
-        session_id,
-        source_device_id,
-    } = net::receive::<Control>(control).await?
-    else {
-        anyhow::bail!("expected session request")
+async fn incoming(ws: &mut net::Ws) -> Result<String> {
+    let RelayMessage::Incoming { session_id, .. } = net::receive(ws).await? else {
+        anyhow::bail!("missing incoming session")
     };
-    assert_eq!(source_device_id, source.device_id);
     Ok(session_id)
+}
+async fn attach(id: &Identity, roster: &SignedRoster, sid: &str) -> Result<net::Ws> {
+    let mut ws = common::relay_socket(
+        id,
+        roster,
+        &format!("/networks/{}/attach/{sid}", roster.roster.network_id),
+    )
+    .await?;
+    match net::receive(&mut ws).await? {
+        RelayMessage::Connected => Ok(ws),
+        RelayMessage::Error { code, message } => anyhow::bail!("{code}: {message}"),
+        _ => anyhow::bail!("invalid attach result"),
+    }
 }
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn relay_authentication_binding_and_limits() -> Result<()> {
-    let temp = tempfile::tempdir()?;
-    let port = std::net::TcpListener::bind("127.0.0.1:0")?
-        .local_addr()?
-        .port();
-    let cfg = ServerConfig {
-        port,
-        addresses: vec![format!("127.0.0.1:{port}")],
-        manual: true,
-        no_detect: true,
-        data_dir: temp.path().join("server"),
-    };
-    let keys = crypto::load_or_create_server(&cfg)?;
-    let store = ServerStore::open(&cfg.data_dir.join("server.db"))?;
-    let server = tokio::spawn(xrun::server::run(cfg.clone()));
-    tokio::time::timeout(Duration::from_secs(5), async {
-        while tokio::net::TcpStream::connect(("127.0.0.1", port))
-            .await
-            .is_err()
-        {
-            assert!(!server.is_finished(), "test Server exited during startup");
-            tokio::time::sleep(Duration::from_millis(20)).await;
-        }
-    })
-    .await?;
-    assert!(
-        crypto::discover_ca(&cfg.urls()[0], &"a".repeat(52))
-            .await
-            .is_err()
-    );
-    let a = register(&cfg, &keys, &store, "target1").await?;
-    let b = register(&cfg, &keys, &store, "source1").await?;
-    let c = register(&cfg, &keys, &store, "other1").await?;
-    let mut ctl = control(&a).await?;
-    let mut cli = source(&b, &a).await?;
-    let sid = session_id(&mut ctl, &b).await?;
-    let path = format!("/daemon/sessions/{sid}");
-    let wrong = socket(&c, &path).await;
-    assert!(wrong.is_err());
-    let mut data = socket(&a, &path).await?.0;
-    assert!(socket(&a, &path).await.is_err());
-    let raw = "{\"opaque\":\"unchanged\",\"secret\":123}";
-    data.send(Message::Text(raw.into())).await?;
-    let message = tokio::time::timeout(Duration::from_secs(2), cli.next())
-        .await?
-        .context("source closed")??;
-    assert_eq!(message, Message::Text(raw.into()));
-    // Replacing control invalidates all sessions of its previous generation.
-    let mut new_control = control(&a).await?;
-    let closed = tokio::time::timeout(Duration::from_secs(2), cli.next()).await?;
-    assert!(closed.is_none() || matches!(closed, Some(Ok(Message::Close(_))) | Some(Err(_))));
-    drop(data);
-    drop(cli);
-    drop(ctl);
-    // A source disconnect makes the outstanding target connection unusable.
-    let mut early = source(&b, &a).await?;
-    let sid = session_id(&mut new_control, &b).await?;
-    early.close(None).await?;
-    drop(early);
-    tokio::time::sleep(Duration::from_millis(100)).await;
-    assert!(
-        socket(&a, &format!("/daemon/sessions/{sid}"))
-            .await
-            .is_err()
-    );
-    let mut pending = vec![];
-    for _ in 0..16 {
-        pending.push(source(&b, &a).await?);
-        session_id(&mut new_control, &b).await?;
-    }
-    let limit = source(&b, &a).await;
-    assert!(limit.is_err());
-    assert!(limit.err().unwrap().to_string().contains("SESSION_LIMIT"));
-    drop(pending);
-    tokio::time::sleep(Duration::from_millis(100)).await;
-    // Revocation is checked by registered key, not an exclusive leaf fingerprint.
-    let mut revoked = store.get(&c.device_id)?.unwrap();
-    revoked.device.revoked = true;
-    store.save(&revoked)?;
-    let response = crypto::http_client(&c.ca_pem, Some(&c))?
-        .get(format!("{}/devices", cfg.urls()[0]))
-        .header("x-xrun-version", VERSION)
-        .send()
+    tokio::time::timeout(Duration::from_secs(25), async {
+        let temp = tempfile::tempdir()?;
+        let port = std::net::TcpListener::bind("127.0.0.1:0")?
+            .local_addr()?
+            .port();
+        let cfg = ServerConfig {
+            port,
+            addresses: vec![format!("127.0.0.1:{port}")],
+            manual: true,
+            no_detect: true,
+            data_dir: temp.path().join("relay"),
+        };
+        let link = xrun::relay::enrollment(&cfg)?;
+        let keys = crypto::load_or_create_server(&cfg)?;
+        let (manager, _, _, _) = Manager::create(
+            &temp.path().join("manager"),
+            "manager1",
+            cfg.urls(),
+            keys.ca_pem.clone(),
+        )?;
+        let a = identity(&manager, "target1")?;
+        let b = identity(&manager, "source1")?;
+        let c = identity(&manager, "other1")?;
+        let roster = manager.roster()?;
+        let server = Relay(tokio::spawn(xrun::relay::run(cfg.clone())));
+        tokio::time::timeout(Duration::from_secs(5), async {
+            while tokio::net::TcpStream::connect(("127.0.0.1", port))
+                .await
+                .is_err()
+            {
+                assert!(!server.0.is_finished());
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+        })
         .await?;
-    assert!(response.text().await?.contains("DEVICE_REVOKED"));
-    // Public pairing has a bounded per-IP rate without blocking authenticated reads.
-    let client = crypto::http_client(&keys.ca_pem, None)?;
-    let mut limited = false;
-    for _ in 0..61 {
+        assert!(
+            crypto::discover_ca(&cfg.urls()[0], &"a".repeat(52))
+                .await
+                .is_err()
+        );
+        let client = crypto::http_client(&keys.ca_pem, None)?;
+        let publish_path = format!(
+            "{}/networks/{}/roster",
+            cfg.urls()[0],
+            roster.roster.network_id
+        );
+        // Unknown networks require local operator admission. The relay never
+        // receives the manager's member invitation token or network private key.
         let response = client
-            .post(format!("{}/pair", cfg.urls()[0]))
+            .post(&publish_path)
             .header("x-xrun-version", VERSION)
-            .json(&PairRequest {
-                token: String::new(),
-                name: "rate1".into(),
-                csr_base64: "!".into(),
-            })
+            .json(&roster)
             .send()
             .await?;
-        if response.status() == reqwest::StatusCode::TOO_MANY_REQUESTS {
-            assert!(response.text().await?.contains("RATE_LIMITED"));
-            limited = true;
-            break;
+        assert!(!response.status().is_success());
+        let response = client
+            .post(&publish_path)
+            .header("x-xrun-version", VERSION)
+            .header("x-xrun-enrollment", link.split_once('#').unwrap().1)
+            .json(&roster)
+            .send()
+            .await?;
+        assert!(response.status().is_success(), "{}", response.text().await?);
+        // Proofs are bound to this connection's random challenge and exact path.
+        let path = format!("/networks/{}/status", roster.roster.network_id);
+        let tls = crypto::anonymous_tls_config(&keys.ca_pem)?;
+        let mut first = net::websocket_at(&cfg.urls()[0], &path, tls.clone()).await?;
+        let RelayMessage::Challenge { nonce } = net::receive(&mut first).await? else {
+            unreachable!()
+        };
+        let proof = Proof::create(&b, &roster.roster.network_id, &path, &nonce)?;
+        let mut second = net::websocket_at(&cfg.urls()[0], &path, tls.clone()).await?;
+        assert!(matches!(
+            net::receive(&mut second).await?,
+            RelayMessage::Challenge { .. }
+        ));
+        net::send(
+            &mut second,
+            &RelayMessage::Authenticate {
+                proof: proof.clone(),
+            },
+        )
+        .await?;
+        assert!(matches!(
+            net::receive(&mut second).await?,
+            RelayMessage::Error { .. }
+        ));
+        net::send(&mut first, &RelayMessage::Authenticate { proof }).await?;
+        assert!(matches!(
+            net::receive(&mut first).await?,
+            RelayMessage::Accepted { .. }
+        ));
+        assert!(matches!(
+            net::receive(&mut first).await?,
+            RelayMessage::Status { .. }
+        ));
+        drop(first);
+        drop(second);
+        let mut ctl = control(&a, &roster).await?;
+        let mut cli = source(&b, &a, &roster).await?;
+        let sid = incoming(&mut ctl).await?;
+        assert!(attach(&c, &roster, &sid).await.is_err());
+        let mut data = attach(&a, &roster, &sid).await?;
+        assert!(matches!(
+            net::receive(&mut cli).await?,
+            RelayMessage::Connected
+        ));
+        assert!(attach(&a, &roster, &sid).await.is_err());
+        let ciphertext = vec![23, 3, 3, 0, 6, 0, 255, 128, 17, 1, 2];
+        data.send(Message::Binary(ciphertext.clone().into()))
+            .await?;
+        loop {
+            let message = tokio::time::timeout(Duration::from_secs(2), cli.next())
+                .await?
+                .context("source closed")??;
+            if let Message::Binary(bytes) = message {
+                assert_eq!(bytes.as_ref(), ciphertext.as_slice());
+                break;
+            }
         }
-    }
-    assert!(limited, "pairing rate limit did not apply");
-    server.abort();
-    Ok(())
+        // Replacing control invalidates the previous generation's tunnels.
+        let mut new_control = control(&a, &roster).await?;
+        let closed = tokio::time::timeout(Duration::from_secs(2), cli.next()).await?;
+        assert!(closed.is_none() || matches!(closed, Some(Ok(Message::Close(_))) | Some(Err(_))));
+        drop(data);
+        drop(cli);
+        drop(ctl);
+        let mut early = source(&b, &a, &roster).await?;
+        let sid = incoming(&mut new_control).await?;
+        early.close(None).await?;
+        drop(early);
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        assert!(attach(&a, &roster, &sid).await.is_err());
+        let mut pending = vec![];
+        for _ in 0..16 {
+            pending.push(source(&b, &a, &roster).await?);
+            incoming(&mut new_control).await?;
+        }
+        let mut limit = source(&b, &a, &roster).await?;
+        let RelayMessage::Error { code, .. } = net::receive(&mut limit).await? else {
+            anyhow::bail!("missing limit error")
+        };
+        assert_eq!(code, "SESSION_LIMIT");
+        drop(pending);
+        drop(limit);
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        let revoked = manager.revoke(&c.device_id)?;
+        assert!(
+            client
+                .post(&publish_path)
+                .header("x-xrun-version", VERSION)
+                .json(&revoked)
+                .send()
+                .await?
+                .status()
+                .is_success()
+        );
+        assert!(
+            common::relay_socket(&c, &revoked, &path)
+                .await
+                .err()
+                .unwrap()
+                .to_string()
+                .contains("DEVICE_REVOKED")
+        );
+        // A signed older roster cannot roll back the relay's persisted cache.
+        let old = client
+            .post(&publish_path)
+            .header("x-xrun-version", VERSION)
+            .json(&roster)
+            .send()
+            .await?;
+        assert!(!old.status().is_success());
+        assert!(old.text().await?.contains("ROSTER_ROLLBACK"));
+        let mut limited = false;
+        for _ in 0..61 {
+            let response = client
+                .post(&publish_path)
+                .header("x-xrun-version", VERSION)
+                .json(&revoked)
+                .send()
+                .await?;
+            if response.status() == reqwest::StatusCode::TOO_MANY_REQUESTS {
+                limited = true;
+                break;
+            }
+        }
+        assert!(limited, "publication rate limit did not apply");
+        Ok::<_, anyhow::Error>(())
+    })
+    .await?
 }

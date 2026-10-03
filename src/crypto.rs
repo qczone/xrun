@@ -107,7 +107,6 @@ fn expiry(pem: &str) -> Result<OffsetDateTime> {
 }
 pub struct ServerKeys {
     pub ca_pem: String,
-    pub ca_key_pem: String,
     pub tls_config: Arc<rustls::ServerConfig>,
 }
 pub fn load_or_create_server(config: &ServerConfig) -> Result<ServerKeys> {
@@ -173,18 +172,8 @@ pub fn load_or_create_server(config: &ServerConfig) -> Result<ServerKeys> {
         )?;
     Ok(ServerKeys {
         ca_pem,
-        ca_key_pem,
         tls_config: Arc::new(tls),
     })
-}
-pub fn issue_device_certificate(ca: &str, key: &str, csr: &[u8], id: &str) -> Result<String> {
-    let key = KeyPair::from_pem(key)?;
-    let issuer = Issuer::from_ca_cert_pem(ca, &key)?;
-    let mut req = CertificateSigningRequestParams::from_der(&csr.into())?;
-    req.params = params(id, 3650);
-    req.params.not_after = req.params.not_after.min(expiry(ca)?);
-    req.params.extended_key_usages = vec![ExtendedKeyUsagePurpose::ClientAuth];
-    Ok(req.signed_by(&issuer)?.pem())
 }
 pub fn new_device_request() -> Result<(String, Vec<u8>)> {
     let key = KeyPair::generate()?;
@@ -204,6 +193,15 @@ pub fn client_tls_config(id: &Identity) -> Result<Arc<rustls::ClientConfig>> {
         rustls::ClientConfig::builder()
             .with_root_certificates(roots)
             .with_client_auth_cert(vec![cert_der(&id.cert_pem)?], private_key(&id.key_pem)?)?,
+    ))
+}
+pub fn anonymous_tls_config(ca: &str) -> Result<Arc<rustls::ClientConfig>> {
+    let mut roots = rustls::RootCertStore::empty();
+    roots.add(cert_der(ca)?)?;
+    Ok(Arc::new(
+        rustls::ClientConfig::builder()
+            .with_root_certificates(roots)
+            .with_no_client_auth(),
     ))
 }
 pub fn http_client(ca: &str, id: Option<&Identity>) -> Result<reqwest::Client> {
@@ -295,6 +293,18 @@ impl ServerCertVerifier for PinVerifier {
 pub async fn discover_ca(address: &str, pin: &str) -> Result<String> {
     let url = url::Url::parse(address)?;
     let host = url.host_str().context("missing host")?;
+    let (config, ca) = pinned_client_config(pin);
+    let tcp = crate::net::tcp(&url).await?;
+    let tls = tokio_rustls::TlsConnector::from(config)
+        .connect(ServerName::try_from(host.to_string())?, tcp)
+        .await?;
+    drop(tls);
+
+    ca.lock().unwrap().clone().context("server omitted CA")
+}
+pub(crate) fn pinned_client_config(
+    pin: &str,
+) -> (Arc<rustls::ClientConfig>, Arc<Mutex<Option<String>>>) {
     let ca = Arc::new(Mutex::new(None));
     let verifier = PinVerifier {
         pin: pin.into(),
@@ -304,13 +314,35 @@ pub async fn discover_ca(address: &str, pin: &str) -> Result<String> {
         .dangerous()
         .with_custom_certificate_verifier(Arc::new(verifier))
         .with_no_client_auth();
-    let tcp = crate::net::tcp(&url).await?;
-    let tls = tokio_rustls::TlsConnector::from(Arc::new(config))
-        .connect(ServerName::try_from(host.to_string())?, tcp)
-        .await?;
-    drop(tls);
-
-    ca.lock().unwrap().clone().context("server omitted CA")
+    (Arc::new(config), ca)
+}
+pub(crate) fn peer_server_config(id: &Identity) -> Result<Arc<rustls::ServerConfig>> {
+    let mut roots = rustls::RootCertStore::empty();
+    roots.add(cert_der(&id.ca_pem)?)?;
+    let verifier = rustls::server::WebPkiClientVerifier::builder(Arc::new(roots))
+        .allow_unauthenticated()
+        .build()?;
+    Ok(Arc::new(
+        rustls::ServerConfig::builder()
+            .with_client_cert_verifier(verifier)
+            .with_single_cert(
+                vec![cert_der(&id.cert_pem)?, cert_der(&id.ca_pem)?],
+                private_key(&id.key_pem)?,
+            )?,
+    ))
+}
+pub(crate) fn verify_member_certificate(cert: &str, root: &str, device: &str) -> Result<()> {
+    let mut roots = rustls::RootCertStore::empty();
+    roots.add(cert_der(root)?)?;
+    let verifier = rustls::client::WebPkiServerVerifier::builder(Arc::new(roots)).build()?;
+    verifier.verify_server_cert(
+        &cert_der(cert)?,
+        &[],
+        &ServerName::try_from(crate::membership::device_name(device)?)?,
+        &[],
+        UnixTime::now(),
+    )?;
+    Ok(())
 }
 
 #[cfg(test)]

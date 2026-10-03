@@ -7,11 +7,7 @@ use std::{
     time::Duration,
 };
 use tokio::process::{Child, Command};
-use xrun::{
-    config::{Identity, ServerConfig},
-    crypto,
-    store::{Invitation, ServerStore},
-};
+use xrun::config::{Identity, ServerConfig};
 
 pub struct Lab {
     pub root: tempfile::TempDir,
@@ -20,11 +16,13 @@ pub struct Lab {
     pub source_identity: Identity,
     pub target_identity: Identity,
     pub daemon: Child,
+    pub source_daemon: Child,
     server: tokio::task::JoinHandle<Result<()>>,
 }
 impl Drop for Lab {
     fn drop(&mut self) {
         let _ = self.daemon.start_kill();
+        let _ = self.source_daemon.start_kill();
         self.server.abort();
     }
 }
@@ -72,18 +70,8 @@ impl Lab {
             no_detect: true,
             data_dir: root.path().join("server"),
         };
-        let keys = crypto::load_or_create_server(&cfg)?;
-        let store = ServerStore::open(&cfg.data_dir.join("server.db"))?;
-        let token = store.invite(&Invitation {
-            inviter_id: None,
-            allow: false,
-            admin: true,
-        })?;
-        let link = format!(
-            "xrun://127.0.0.1:{port}/{}#{token}",
-            crypto::ca_spki_pin(&keys.ca_pem)?
-        );
-        let server = tokio::spawn(xrun::server::run(cfg));
+        let link = xrun::relay::enrollment(&cfg)?;
+        let server = tokio::spawn(xrun::relay::run(cfg));
         tokio::time::timeout(Duration::from_secs(5), async {
             while tokio::net::TcpStream::connect(("127.0.0.1", port))
                 .await
@@ -96,9 +84,22 @@ impl Lab {
         .await?;
         ok(cli(
             &source,
-            &["join", &link, "--name", "source1", "--no-daemon"],
+            &["up", "--relay", &link, "--name", "source1", "--no-daemon"],
         )
         .await);
+        let source_daemon = command(&source, &["daemon"])
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()?;
+        tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                if json(cli(&source, &["source1", "info", "--json"]).await)["online"] == true {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+        })
+        .await?;
         let invite = json(cli(&source, &["invite", "--allow", "--json"]).await);
         ok(cli(
             &target,
@@ -124,6 +125,7 @@ impl Lab {
             source_identity,
             target_identity,
             daemon,
+            source_daemon,
             server,
         };
         tokio::time::timeout(Duration::from_secs(5), async {
@@ -137,4 +139,55 @@ impl Lab {
         .await?;
         Ok(lab)
     }
+}
+
+pub async fn relay_socket(
+    id: &Identity,
+    roster: &xrun::membership::SignedRoster,
+    path: &str,
+) -> Result<xrun::net::Ws> {
+    use xrun::{
+        crypto, net,
+        relay::{Proof, RelayMessage},
+    };
+    let mut ws = net::websocket_at(
+        &roster.roster.relay_addresses[0],
+        path,
+        crypto::anonymous_tls_config(&roster.roster.relay_ca_pem)?,
+    )
+    .await?;
+    let RelayMessage::Challenge { nonce } = net::receive(&mut ws).await? else {
+        anyhow::bail!("missing relay challenge")
+    };
+    net::send(
+        &mut ws,
+        &RelayMessage::Authenticate {
+            proof: Proof::create(id, &roster.roster.network_id, path, &nonce)?,
+        },
+    )
+    .await?;
+    match net::receive(&mut ws).await? {
+        RelayMessage::Accepted { .. } => Ok(ws),
+        RelayMessage::Error { code, message } => anyhow::bail!("{code}: {message}"),
+        _ => anyhow::bail!("unexpected relay authentication result"),
+    }
+}
+pub async fn peer_session(home: &Path, id: &Identity, target: &str) -> Result<xrun::net::Ws> {
+    use xrun::{membership::RosterCache, net, relay::RelayMessage, secure};
+    let cache = RosterCache::open(&home.join(".xrun/roster.db"))?;
+    let network = &id.network.as_ref().context("network identity")?.network_id;
+    let roster = cache.load(network)?;
+    let mut outer = relay_socket(
+        id,
+        &roster,
+        &format!("/networks/{network}/connect/{target}"),
+    )
+    .await?;
+    assert!(matches!(
+        net::receive(&mut outer).await?,
+        RelayMessage::Connected
+    ));
+    let (mut ws, cert) = secure::client(outer, id, target).await?;
+    secure::exchange_client(&mut ws, &cache, network, &cert, target).await?;
+    Ok(ws)
 }

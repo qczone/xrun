@@ -32,6 +32,7 @@ libc = "0.2.189"
 png = "0.18"
 rcgen = { version = "0.14.10", features = ["x509-parser"] }
 reqwest = { version = "0.13.5", default-features = false, features = ["json", "rustls"] }
+ring = "0.17.14"
 rusqlite = { version = "0.40.2", features = ["bundled"] }
 rustls = "0.23.45"
 rustls-pemfile = "2.2.0"

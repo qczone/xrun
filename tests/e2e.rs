@@ -1,13 +1,9 @@
+mod common;
 use anyhow::{Context, Result};
 use serde_json::Value;
 use std::{path::Path, process::Stdio, time::Duration};
 use tokio::process::{Child, Command};
-use xrun::{
-    config::ServerConfig,
-    crypto,
-    protocol::*,
-    store::{Invitation, ServerStore},
-};
+use xrun::{config::ServerConfig, protocol::*};
 
 struct Daemon(Child);
 impl Drop for Daemon {
@@ -104,18 +100,8 @@ async fn execution_transfer_and_identity() -> Result<()> {
         no_detect: true,
         data_dir: root.join("server"),
     };
-    let keys = crypto::load_or_create_server(&cfg)?;
-    let store = ServerStore::open(&cfg.data_dir.join("server.db"))?;
-    let token = store.invite(&Invitation {
-        inviter_id: None,
-        allow: false,
-        admin: true,
-    })?;
-    let link = format!(
-        "xrun://127.0.0.1:{port}/{}#{token}",
-        crypto::ca_spki_pin(&keys.ca_pem)?
-    );
-    let server = tokio::spawn(xrun::server::run(cfg.clone()));
+    let link = xrun::relay::enrollment(&cfg)?;
+    let server = tokio::spawn(xrun::relay::run(cfg.clone()));
     tokio::time::timeout(Duration::from_secs(5), async {
         while tokio::net::TcpStream::connect(("127.0.0.1", port))
             .await
@@ -126,7 +112,11 @@ async fn execution_transfer_and_identity() -> Result<()> {
         }
     })
     .await?;
-    ok(cli(&source, &["join", &link, "--name", "admin", "--no-daemon"]).await);
+    ok(cli(
+        &source,
+        &["up", "--relay", &link, "--name", "admin", "--no-daemon"],
+    )
+    .await);
     let admin = json(cli(&source, &["status", "--json"]).await)["local"]["device_id"]
         .as_str()
         .unwrap()
@@ -802,8 +792,7 @@ fn main() {
     );
     let paused_job_id = paused_job["job_id"].as_str().unwrap();
     let source_identity = xrun::config::read(&source.join(".xrun/identity.toml"))?;
-    let (mut subscription, _) =
-        xrun::net::websocket(&source_identity, &format!("/devices/{target_id}/session")).await?;
+    let mut subscription = common::peer_session(&source, &source_identity, &target_id).await?;
     assert!(matches!(
         xrun::net::receive::<Data>(&mut subscription).await?,
         Data::Ready { .. }
@@ -982,7 +971,7 @@ fn main() {
     );
     assert_eq!(dedup_lost["job_id"], crash_id);
     // Server must have no task/log tables or execution secrets.
-    let db = rusqlite::Connection::open(cfg.data_dir.join("server.db"))?;
+    let db = rusqlite::Connection::open(cfg.data_dir.join("relay.db"))?;
     let forbidden:i64=db.query_row("SELECT count(*) FROM sqlite_master WHERE type='table' AND name IN ('jobs','logs','submissions')",[],|r|r.get(0))?;
     assert_eq!(forbidden, 0);
     let task_db = rusqlite::Connection::open(target.join(".xrun/daemon.db"))?;
@@ -1029,23 +1018,10 @@ fn main() {
     // Revoked identities retain distinct errors and cannot renew using their key.
     let not_admin = cli(&target, &["revoke", "admin"]).await;
     assert_eq!(not_admin.status.code(), Some(125));
-    let orphan = json(cli(&target, &["invite", "--allow", "--json"]).await);
+    let denied_invite = cli(&target, &["invite", "--json"]).await;
+    assert_eq!(denied_invite.status.code(), Some(125));
+    assert!(String::from_utf8_lossy(&denied_invite.stderr).contains("NOT_MANAGER"));
     ok(cli(&source, &["revoke", "runner1"]).await);
-    let newcomer = root.join("newcomer");
-    std::fs::create_dir_all(&newcomer)?;
-    let refused = cli(
-        &newcomer,
-        &[
-            "join",
-            orphan["link"].as_str().unwrap(),
-            "--name",
-            "newcomer",
-            "--no-daemon",
-        ],
-    )
-    .await;
-    assert_eq!(refused.status.code(), Some(125));
-    assert!(String::from_utf8_lossy(&refused.stderr).contains("INVALID_TOKEN"));
     let revoked = cli(&source, &["runner1", "jobs", id]).await;
     assert_eq!(revoked.status.code(), Some(125));
     assert!(String::from_utf8_lossy(&revoked.stderr).contains("DEVICE_REVOKED"));
@@ -1066,71 +1042,54 @@ fn main() {
 
 #[cfg(target_os = "linux")]
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn linux_foreground_deployment_and_admin_recovery() -> Result<()> {
-    use tokio::io::{AsyncBufReadExt, BufReader};
+async fn linux_relay_service_configuration_and_foreground_shutdown() -> Result<()> {
     let temp = tempfile::tempdir()?;
     let home = temp.path();
     let port = std::net::TcpListener::bind("127.0.0.1:0")?
         .local_addr()?
-        .port()
-        .to_string();
-    let address = format!("127.0.0.1:{port}");
-    let mut old_id = None;
-    let mut ca = None;
-    for generation in 0..3 {
-        if generation == 2 {
-            std::fs::remove_file(home.join(".xrun/identity.toml"))?;
+        .port();
+    let cfg = ServerConfig {
+        port,
+        addresses: vec![format!("127.0.0.1:{port}")],
+        manual: true,
+        no_detect: true,
+        data_dir: home.join(".xrun/server"),
+    };
+    std::fs::create_dir_all(home.join(".xrun"))?;
+    xrun::config::write(&home.join(".xrun/config.toml"), &cfg)?;
+    let link = xrun::relay::enrollment(&cfg)?;
+    let mut child = command(home, &["relay", "run"])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()?;
+    tokio::time::timeout(Duration::from_secs(5), async {
+        while tokio::net::TcpStream::connect(("127.0.0.1", port))
+            .await
+            .is_err()
+        {
+            assert!(child.try_wait().unwrap().is_none());
+            tokio::time::sleep(Duration::from_millis(20)).await;
         }
-        let args = if generation == 0 {
-            vec![
-                "up",
-                "--port",
-                &port,
-                "--addr",
-                &address,
-                "--no-service",
-                "--no-daemon",
-                "--json",
-            ]
-        } else {
-            vec!["up", "--no-service", "--no-daemon", "--json"]
-        };
-        let mut child = command(home, &args)
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()?;
-        let mut output = BufReader::new(child.stdout.take().unwrap());
-        let mut line = String::new();
-        tokio::time::timeout(Duration::from_secs(15), output.read_line(&mut line)).await??;
-        assert!(!line.is_empty(), "up exited before deployment output");
-        let value: Value = serde_json::from_str(&line)?;
-        assert_eq!(value["allow"], false);
-        let id = value["device_id"].as_str().unwrap().to_string();
-        assert_eq!(value["addresses"], serde_json::json!([address]));
-        if generation == 1 {
-            assert_eq!(old_id.as_deref(), Some(id.as_str()))
-        }
-        if generation == 2 {
-            assert_ne!(old_id.as_deref(), Some(id.as_str()))
-        }
-        old_id = Some(id);
-        let current_ca = std::fs::read(home.join(".xrun/server/ca.pem"))?;
-        if let Some(previous) = &ca {
-            assert_eq!(&current_ca, previous)
-        }
-        ca = Some(current_ca);
-        let status = json(cli(home, &["status", "--json"]).await);
-        assert_eq!(status["local"]["device_id"], value["device_id"]);
-        let changed = cli(home, &["up", "--port", "1", "--no-service", "--no-daemon"]).await;
-        assert_eq!(changed.status.code(), Some(125));
-        unsafe {
-            libc::kill(child.id().unwrap() as i32, libc::SIGTERM);
-        }
-        assert!(
-            tokio::time::timeout(Duration::from_secs(5), child.wait())
-                .await??
-                .success()
-        );
+    })
+    .await?;
+    ok(cli(home, &["up", "--relay", &link, "--no-daemon", "--json"]).await);
+    let id: xrun::config::Identity = xrun::config::read(&home.join(".xrun/identity.toml"))?;
+    // Re-running up retains the manager identity and signing authority.
+    ok(cli(home, &["up", "--relay", &link, "--no-daemon", "--json"]).await);
+    let same: xrun::config::Identity = xrun::config::read(&home.join(".xrun/identity.toml"))?;
+    assert_eq!(id.device_id, same.device_id);
+    assert_eq!(id.ca_pem, same.ca_pem);
+    unsafe {
+        libc::kill(child.id().unwrap() as i32, libc::SIGTERM);
     }
+    assert!(
+        tokio::time::timeout(Duration::from_secs(5), child.wait())
+            .await??
+            .success()
+    );
+    // Missing manager identity must not silently recreate an authority.
+    std::fs::remove_file(home.join(".xrun/identity.toml"))?;
+    let rejected = cli(home, &["up", "--relay", &link, "--no-daemon"]).await;
+    assert_eq!(rejected.status.code(), Some(125));
     Ok(())
 }

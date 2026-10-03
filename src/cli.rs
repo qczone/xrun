@@ -1,10 +1,10 @@
 use crate::{
-    config::{self, Identity, PendingIdentity, ServerConfig},
+    config::{self, Identity, ServerConfig},
     crypto, daemon,
     net::{self, Ws},
     protocol::*,
     service,
-    store::{Invitation, ServerStore, Submission, SubmissionStore},
+    store::{Submission, SubmissionStore},
 };
 use anyhow::{Context, Result, bail};
 use base64::{Engine, engine::general_purpose::STANDARD};
@@ -32,21 +32,23 @@ struct LocalCli {
 }
 #[derive(Subcommand)]
 enum Local {
-    /// Deploy the Server on Linux and install local services
+    /// Create an end-to-end network; this device becomes its manager
     Up {
+        /// Deployment link printed by xrun relay install or relay invite
         #[arg(long)]
-        port: Option<u16>,
-        #[arg(long,action=clap::ArgAction::Append,value_delimiter=',')]
-        addr: Vec<String>,
+        relay: String,
         #[arg(long)]
-        no_detect: bool,
-        #[arg(long)]
-        no_service: bool,
+        name: Option<String>,
         #[arg(long)]
         no_daemon: bool,
         /// Grant mutual access to the joining device
         #[arg(long)]
         allow: bool,
+    },
+    /// Install or run the Linux ciphertext relay
+    Relay {
+        #[command(subcommand)]
+        operation: RelayCommand,
     },
     /// Join a deployment using an invitation link
     Join {
@@ -65,7 +67,7 @@ enum Local {
     AllowFrom(PermissionArgs),
     /// Deny a source device access to this machine
     DenyFrom(PermissionArgs),
-    /// Revoke a device identity (admin only)
+    /// Revoke a device identity (manager only)
     Revoke { device: String },
     /// Show local state and the deployment's devices
     Status,
@@ -76,7 +78,8 @@ enum Local {
         #[arg(long)]
         purge: bool,
     },
-    /// Run the Server in the foreground (Linux only)
+    /// Internal service entry point for the Linux relay
+    #[command(hide = true)]
     Server,
     /// Run the daemon or manage its service and task database
     Daemon {
@@ -85,6 +88,21 @@ enum Local {
     },
     /// Print the README usage instructions
     Guide,
+}
+#[derive(Subcommand)]
+enum RelayCommand {
+    Install {
+        #[arg(long)]
+        port: Option<u16>,
+        #[arg(long,action=clap::ArgAction::Append,value_delimiter=',')]
+        addr: Vec<String>,
+        #[arg(long)]
+        no_detect: bool,
+    },
+    Run,
+    /// Admit one network; deployment link expires in ten minutes
+    Invite,
+    Uninstall,
 }
 #[derive(Subcommand)]
 enum DaemonCommand {
@@ -328,13 +346,32 @@ async fn local(cli: LocalCli) -> Result<i32> {
     let json = cli.json;
     match cli.command {
         Local::Up {
-            port,
-            addr,
-            no_detect,
-            no_service,
+            relay,
+            name,
             no_daemon,
             allow,
-        } => up(port, addr, no_detect, no_service, no_daemon, allow, json).await?,
+        } => up(&relay, name, no_daemon, allow, json).await?,
+        Local::Relay { operation } => match operation {
+            RelayCommand::Install {
+                port,
+                addr,
+                no_detect,
+            } => relay_install(port, addr, no_detect, json).await?,
+            RelayCommand::Run => run_relay().await?,
+            RelayCommand::Invite => {
+                require_linux()?;
+                let link = crate::relay::enrollment(&ServerConfig::load()?)?;
+                print(
+                    json,
+                    &serde_json::json!({"link":link,"expires_in":600}),
+                    || println!("{link}"),
+                );
+            }
+            RelayCommand::Uninstall => {
+                require_linux()?;
+                service::uninstall("server").await?;
+            }
+        },
         Local::Join {
             link,
             name,
@@ -351,26 +388,6 @@ async fn local(cli: LocalCli) -> Result<i32> {
                 &serde_json::json!({"device_id":id.device_id,"name":id.name}),
                 || println!("{} ({})", id.name, id.device_id),
             );
-            if id.registration.allow_inviter
-                && let Some(inviter) = &id.registration.inviter_id
-            {
-                let info = net::http::<Device>(
-                    &id,
-                    reqwest::Method::GET,
-                    &format!("/devices/{inviter}"),
-                    None,
-                )
-                .await;
-                if info.as_ref().is_ok_and(|device| !device.online) {
-                    diagnostic(
-                        json,
-                        &anyhow::anyhow!(
-                            "INVITER_OFFLINE: on the inviting device, run xrun allow-from {} if not already allowed",
-                            id.device_id
-                        ),
-                    );
-                }
-            }
         }
         Local::Invite { allow } => {
             let id = identity().await?;
@@ -400,7 +417,29 @@ async fn local(cli: LocalCli) -> Result<i32> {
                 Some(serde_json::json!({"device":device})),
             )
             .await?;
-            print(json, &v, || println!("revoked {}", v["device_id"]));
+            print(json, &v, || {
+                println!(
+                    "revoked {} (roster {})",
+                    v["device_id"], v["roster_version"]
+                );
+                if let Some(devices) = v["undelivered"].as_array()
+                    && !devices.is_empty()
+                {
+                    eprintln!(
+                        "[xrun] not confirmed by: {}",
+                        devices
+                            .iter()
+                            .filter_map(|d| d.as_str())
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    );
+                }
+                if let Some(error) = v["relay_error"].as_str() {
+                    eprintln!(
+                        "[xrun] signed revocation saved locally; relay publication failed: {error}"
+                    );
+                }
+            });
         }
         Local::Status => {
             return status(json).await;
@@ -445,15 +484,7 @@ async fn local(cli: LocalCli) -> Result<i32> {
                 std::fs::remove_dir_all(config::device_dir()?)?;
             }
         }
-        Local::Server => {
-            require_linux()?;
-            let mut cfg = ServerConfig::load()?;
-            if !cfg.manual {
-                cfg.addresses = detect_addresses(cfg.port, cfg.no_detect).await?;
-                cfg.save()?;
-            }
-            server_foreground(cfg).await?
-        }
+        Local::Server => run_relay().await?,
         Local::Daemon { operation } => match operation {
             None => daemon::run().await?,
             Some(DaemonCommand::Install) => {
@@ -629,51 +660,40 @@ async fn detect_addresses(port: u16, no_detect: bool) -> Result<Vec<String>> {
     }
     Ok(addresses)
 }
-fn deployment_urls(cfg: &ServerConfig) -> Vec<String> {
-    let mut urls = vec![format!("https://127.0.0.1:{}", cfg.port)];
-    for url in cfg.urls() {
-        if !urls.contains(&url) {
-            urls.push(url)
-        }
+async fn run_relay() -> Result<()> {
+    require_linux()?;
+    let mut cfg = ServerConfig::load()?;
+    if !cfg.manual {
+        cfg.addresses = detect_addresses(cfg.port, cfg.no_detect).await?;
+        cfg.save()?;
     }
-    urls
+    tokio::select! {result=crate::relay::run(cfg)=>result,_=daemon::shutdown_signal()=>Ok(())}
 }
-async fn server_foreground(cfg: ServerConfig) -> Result<()> {
-    tokio::select! {r=crate::server::run(cfg)=>r,_=daemon::shutdown_signal()=>Ok(())}
-}
-async fn up(
+async fn relay_install(
     port: Option<u16>,
     addresses: Vec<String>,
     no_detect: bool,
-    no_service: bool,
-    no_daemon: bool,
-    allow: bool,
     json: bool,
 ) -> Result<()> {
     require_linux()?;
     let dir = config::device_dir()?;
-    let old_addresses = ServerConfig::load().ok().map(|c| c.addresses);
-    let mut cfg = if dir.join("config.toml").exists() {
-        let cfg = ServerConfig::load()?;
-        if port.is_some_and(|p| p != cfg.port) {
-            bail!("PORT_IMMUTABLE: existing deployment uses {}", cfg.port)
-        }
-        cfg
-    } else {
-        ServerConfig {
-            port: port.unwrap_or(9528),
-            addresses: vec![],
-            manual: false,
-            no_detect,
-            data_dir: dir.join("server"),
-        }
-    };
+    let before = ServerConfig::load().ok();
+    let mut cfg = before.clone().unwrap_or(ServerConfig {
+        port: port.unwrap_or(9528),
+        addresses: vec![],
+        manual: false,
+        no_detect,
+        data_dir: dir.join("server"),
+    });
+    if let Some(port) = port {
+        cfg.port = port;
+    }
     if cfg.port == 0 {
         bail!("INVALID_PORT: port must be 1..65535")
     }
     if !addresses.is_empty() {
-        for a in &addresses {
-            crate::client::validate_address(a)?
+        for address in &addresses {
+            crate::client::validate_address(address)?;
         }
         cfg.addresses = addresses;
         cfg.manual = true;
@@ -682,111 +702,50 @@ async fn up(
         cfg.addresses = detect_addresses(cfg.port, cfg.no_detect).await?;
     }
     cfg.save()?;
-    let keys = crypto::load_or_create_server(&cfg)?;
-    let store = ServerStore::open(&cfg.data_dir.join("server.db"))?;
-    let current = if dir.join("identity.toml").exists() {
-        Some(Identity::load()?)
-    } else {
-        None
-    };
-    if current.as_ref().is_some_and(|i| i.ca_pem != keys.ca_pem) {
-        bail!("DEPLOYMENT_MISMATCH: local identity belongs to another CA")
+    let link = crate::relay::enrollment(&cfg)?;
+    service::install("server").await?;
+    if before.is_some_and(|old| old.port != cfg.port || old.addresses != cfg.addresses) {
+        service::restart("server").await?;
     }
-    let new_identity = current.is_none();
-    if !no_service {
-        service::install("server").await?;
-        if old_addresses.as_ref().is_some_and(|a| a != &cfg.addresses) {
-            service::restart("server").await?;
-        }
-    }
-    let mut running = if no_service {
-        let cfg = cfg.clone();
-        Some(tokio::spawn(crate::server::run(cfg)))
-    } else {
-        None
-    };
-    let id = if let Some(mut id) = current {
-        id.addresses = deployment_urls(&cfg);
-        id.save()?;
-        id
-    } else {
-        let pending_key = if dir.join("pending.toml").exists() {
-            let p: PendingIdentity = config::read(&dir.join("pending.toml"))?;
-            Some(crypto::csr_key(&crypto::renew_device_request(&p.key_pem)?)?)
-        } else {
-            None
-        };
-        store.recover_admin(pending_key.as_deref())?;
-        let token = store.invite(&Invitation {
-            inviter_id: None,
-            allow: false,
-            admin: true,
-        })?;
-        let link = format!(
-            "xrun://127.0.0.1:{}/{}#{token}",
-            cfg.port,
-            crypto::ca_spki_pin(&keys.ca_pem)?
-        );
-        let mut result = None;
-        for _ in 0..50 {
-            match crate::client::join_identity(&link, Some("admin".into())).await {
-                Ok(mut id) => {
-                    id.addresses = deployment_urls(&cfg);
-                    id.save()?;
-                    result = Some(id);
-                    break;
-                }
-                Err(e) => {
-                    if running.as_ref().is_some_and(|r| r.is_finished()) {
-                        bail!("SERVER_FAILED: server exited during bootstrap")
-                    };
-                    if !e.to_string().starts_with("CONNECT") {
-                        return Err(e);
-                    }
-                    tokio::time::sleep(Duration::from_millis(100)).await;
-                }
-            }
-        }
-        result.context("SERVER_UNAVAILABLE: bootstrap timed out")?
-    };
-    daemon::init()?;
-    if !no_daemon && !no_service {
-        service::install("daemon").await?;
-        if new_identity {
-            service::restart("daemon").await?;
-        }
-    }
-    let invitation = store.invite(&Invitation {
-        inviter_id: Some(id.device_id.clone()),
-        allow,
-        admin: false,
-    })?;
-    let link = format!(
-        "xrun://{}/{}#{invitation}",
-        cfg.addresses.join(","),
-        crypto::ca_spki_pin(&keys.ca_pem)?
-    );
     print(
         json,
-        &serde_json::json!({"device_id":id.device_id,"link":link,"addresses":cfg.addresses,"allow":allow}),
+        &serde_json::json!({"link":link,"addresses":cfg.addresses,"expires_in":600}),
         || {
-            println!("server: {}", cfg.addresses.join(", "));
-            println!("xrun join '{link}'");
+            println!("relay: {}", cfg.addresses.join(", "));
+            println!("xrun up --relay '{link}'");
+        },
+    );
+    eprintln!(
+        "[xrun] deployment link admits one network for 10 minutes; allow inbound TCP {}",
+        cfg.port
+    );
+    Ok(())
+}
+async fn up(
+    relay: &str,
+    name: Option<String>,
+    no_daemon: bool,
+    allow: bool,
+    json: bool,
+) -> Result<()> {
+    let id = crate::network::create(relay, name).await?;
+    daemon::init()?;
+    if !no_daemon {
+        service::install("daemon").await?;
+    }
+    let invitation = crate::network::invite(&id, allow).await?;
+    print(
+        json,
+        &serde_json::json!({"device_id":id.device_id,"network_id":crate::network::authority(&id)?.network_id,"link":invitation["link"],"addresses":id.addresses,"allow":allow}),
+        || {
+            println!("manager: {} ({})", id.name, id.device_id);
+            println!(
+                "xrun join '{}'",
+                invitation["link"].as_str().unwrap_or_default()
+            );
         },
     );
     invitation_notice(allow);
-    eprintln!(
-        "[xrun] allow inbound TCP {} in your firewall or cloud security group",
-        cfg.port
-    );
-    if let Some(mut server) = running.take() {
-        if no_daemon {
-            tokio::select! {r=&mut server=>r??,_=daemon::shutdown_signal()=>{}}
-        } else {
-            tokio::select! {r=&mut server=>r??,r=daemon::run()=>r?}
-        }
-        server.abort();
-    }
     Ok(())
 }
 fn invitation_notice(allow: bool) {
