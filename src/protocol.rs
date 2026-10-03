@@ -245,6 +245,11 @@ impl Data {
         } else {
             "EXECUTION_ERROR".to_string()
         };
+        let message = message
+            .strip_prefix(&format!("{code}:"))
+            .map(str::trim_start)
+            .unwrap_or(&message)
+            .to_string();
         Self::Error { code, message }
     }
 }

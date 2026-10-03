@@ -205,6 +205,23 @@ async fn execution_transfer_and_identity() -> Result<()> {
     );
     online(&source, "runner1").await;
     online(&target, "admin").await;
+    // A daemon rejection should print its code once, and keep the JSON message
+    // separate from the code even after the CLI formats the remote error.
+    let invalid_cwd = cli(&source, &["runner1", "-C", "github/xrun", "--", "unused"]).await;
+    assert_eq!(invalid_cwd.status.code(), Some(125));
+    assert_eq!(
+        String::from_utf8_lossy(&invalid_cwd.stderr).trim(),
+        "[xrun] INVALID_REQUEST: cwd must be absolute"
+    );
+    let invalid_cwd = cli(
+        &source,
+        &["runner1", "--json", "-C", "github/xrun", "--", "unused"],
+    )
+    .await;
+    assert_eq!(invalid_cwd.status.code(), Some(125));
+    let error: Value = serde_json::from_slice(&invalid_cwd.stderr)?;
+    assert_eq!(error["code"], "INVALID_REQUEST");
+    assert_eq!(error["message"], "cwd must be absolute");
     // An ordinary invitation only registers a device, in both directions.
     let observer = root.join("observer");
     std::fs::create_dir_all(&observer)?;
