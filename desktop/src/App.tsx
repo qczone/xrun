@@ -4,6 +4,7 @@ import {
   type Action,
   type Confirm,
   type Device,
+  type Operation,
   type Status,
 } from "./api";
 import { Icon, IconDefinitions, type IconName } from "./components/Icon";
@@ -126,15 +127,13 @@ export function App() {
     });
   };
 
-  const action: Action = async (request) => {
-    if (busyRef.current) return false;
+  const operate: Operation = async (operation) => {
+    if (busyRef.current) return undefined;
     busyRef.current = true;
     setBusy(true);
     setError(null);
-    let success = false;
     try {
-      await api.action(request);
-      success = true;
+      return await operation();
     } catch (e) {
       setError(String(e));
     } finally {
@@ -142,8 +141,12 @@ export function App() {
       busyRef.current = false;
       setBusy(false);
     }
-    return success;
   };
+  const action: Action = async (request) =>
+    (await operate(async () => {
+      await api.action(request);
+      return true;
+    })) === true;
 
   const stop = async () => {
     if (
@@ -229,6 +232,7 @@ export function App() {
             hidden={page !== "devices"}
           >
             <Devices
+              active={page === "devices"}
               status={status}
               devices={others}
               busy={busy}
@@ -242,6 +246,7 @@ export function App() {
               action={action}
               confirm={confirm}
               notify={setToast}
+              operate={operate}
             />
           </section>
           <section

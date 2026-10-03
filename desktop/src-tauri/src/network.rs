@@ -1,5 +1,5 @@
 use anyhow::Result;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use xrun::config::Identity;
 
 #[derive(Serialize)]
@@ -9,6 +9,13 @@ pub struct NetworkStatus {
     pub manager_name: String,
     pub is_manager: bool,
     pub relay_addresses: Vec<String>,
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct Invitation {
+    pub link: String,
+    pub allow: bool,
+    pub expires_in: u64,
 }
 
 pub fn local_status() -> Result<NetworkStatus> {

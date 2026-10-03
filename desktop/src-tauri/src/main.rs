@@ -10,6 +10,7 @@ use tauri::{
     menu::{Menu, MenuItem, PredefinedMenuItem},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
 };
+use tauri_plugin_clipboard_manager::ClipboardExt;
 use tauri_plugin_dialog::DialogExt;
 
 #[derive(Default)]
@@ -146,15 +147,16 @@ fn present(app: &tauri::AppHandle) {
     }
 }
 
-fn record(app: &tauri::AppHandle, result: anyhow::Result<()>) -> Result<(), String> {
-    let error = result.err().map(|e| e.to_string());
+fn record<T>(app: &tauri::AppHandle, result: anyhow::Result<T>) -> Result<T, String> {
+    let result = result.map_err(|e| e.to_string());
+    let error = result.as_ref().err().cloned();
     *app.state::<Desktop>().error.lock().unwrap() = error.clone();
     match error {
         Some(e) => {
             present(app);
             Err(e)
         }
-        None => Ok(()),
+        None => result,
     }
 }
 
@@ -197,6 +199,36 @@ async fn file_history(before: Option<i64>) -> Result<xrun::history::FilePage, St
         .await
         .map_err(|e| e.to_string())?
         .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn invite(
+    app: tauri::AppHandle,
+    state: State<'_, Desktop>,
+    allow: bool,
+) -> Result<network::Invitation, String> {
+    let _guard = state.action.lock().await;
+    let result = async {
+        let id = xrun::config::Identity::load()?;
+        Ok(serde_json::from_value(
+            xrun::network::invite(&id, allow).await?,
+        )?)
+    }
+    .await;
+    record(&app, result)
+}
+
+#[tauri::command]
+fn copy_invitation(app: tauri::AppHandle, link: String) -> Result<(), String> {
+    let result = (|| {
+        anyhow::ensure!(
+            link.starts_with("xrun://") && link.len() <= 4096,
+            "INVALID_LINK: expected a member invitation"
+        );
+        app.clipboard().write_text(link)?;
+        Ok(())
+    })();
+    record(&app, result)
 }
 
 #[tauri::command]
@@ -400,6 +432,7 @@ fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, _, _| present(app)))
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_clipboard_manager::init())
         .manage(Desktop::default())
         .invoke_handler(tauri::generate_handler![
             status,
@@ -407,6 +440,8 @@ fn main() {
             task_history,
             task_output,
             file_history,
+            invite,
+            copy_invitation,
             create_network,
             join,
             start,

@@ -115,10 +115,21 @@ export type ActionRequest =
   | { command: "save_settings"; args: { execution: ExecutionSettings } };
 export type Action = (request: ActionRequest) => Promise<boolean>;
 export type Confirm = (title: string, message: string) => Promise<boolean>;
+export type Operation = <T>(
+  operation: () => Promise<T>,
+) => Promise<T | undefined>;
+
+export interface Invitation {
+  link: string;
+  allow: boolean;
+  expires_in: number;
+}
 
 export const api = {
   status: () => invoke<Status>("status"),
   settings: () => invoke<Settings>("settings"),
+  invite: (allow: boolean) => invoke<Invitation>("invite", { allow }),
+  copyInvitation: (link: string) => invoke<void>("copy_invitation", { link }),
   devices: () =>
     invoke<{
       devices: Device[] | null;

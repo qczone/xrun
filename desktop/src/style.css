@@ -659,6 +659,26 @@ code {
   background: var(--soft);
   border-color: var(--accent);
 }
+.invitation-option {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  font-size: 14px;
+}
+.invitation-option input {
+  accent-color: var(--accent);
+  width: 16px;
+  height: 16px;
+}
+.invitation-result {
+  margin-top: 20px;
+  padding-top: 20px;
+  border-top: 1px solid var(--border);
+}
+.invitation-result label {
+  display: block;
+  margin-bottom: 8px;
+}
 .role-label {
   display: inline-block;
   margin-left: 8px;

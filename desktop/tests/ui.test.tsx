@@ -529,6 +529,88 @@ test("creation can retry after an identity was saved but publication failed", as
   ).toHaveLength(2);
 });
 
+test("only managers generate invitations, default registration has no grant and links copy only on request", async () => {
+  const { calls, status, poll, page } = await fixture({
+    invite: ({ allow }) => ({
+      link: "xrun://invite-secret",
+      allow,
+      expires_in: 600,
+    }),
+  });
+  page("设备");
+  expect(screen.queryByRole("button", { name: "生成邀请链接" })).toBeNull();
+  status.network!.is_manager = true;
+  await poll();
+  const option = screen.getByLabelText(
+    "允许新设备与本机互相访问",
+  ) as HTMLInputElement;
+  expect(option.checked).toBe(false);
+  fireEvent.click(screen.getByRole("button", { name: "生成邀请链接" }));
+  await screen.findByLabelText("生成的邀请链接");
+  expect(calls.find((call) => call.command === "invite")?.args).toEqual({
+    allow: false,
+  });
+  expect(calls.some((call) => call.command === "copy_invitation")).toBe(false);
+  fireEvent.click(screen.getByRole("button", { name: "复制链接" }));
+  await screen.findByText("邀请链接已复制");
+  expect(
+    calls.find((call) => call.command === "copy_invitation")?.args,
+  ).toEqual({ link: "xrun://invite-secret" });
+  page("本机状态");
+  expect(screen.queryByLabelText("生成的邀请链接")).toBeNull();
+  page("设备");
+  expect(screen.queryByLabelText("生成的邀请链接")).toBeNull();
+});
+
+test("mutual invitation grants require confirmation and expired links are cleared", async () => {
+  const { calls, status, poll, page } = await fixture({
+    invite: ({ allow }) => ({
+      link: "xrun://short-lived",
+      allow,
+      expires_in: 0,
+    }),
+  });
+  status.network!.is_manager = true;
+  await poll();
+  page("设备");
+  fireEvent.click(screen.getByLabelText("允许新设备与本机互相访问"));
+  fireEvent.click(screen.getByRole("button", { name: "生成邀请链接" }));
+  await waitFor(() =>
+    expect(document.querySelector("dialog")?.open).toBe(true),
+  );
+  await act(async () => document.querySelector("dialog")!.close("cancel"));
+  expect(calls.some((call) => call.command === "invite")).toBe(false);
+  fireEvent.click(screen.getByRole("button", { name: "生成邀请链接" }));
+  await waitFor(() =>
+    expect(document.querySelector("dialog")?.open).toBe(true),
+  );
+  await act(async () => document.querySelector("dialog")!.close("ok"));
+  await screen.findByText("链接已过期，请重新生成。");
+  expect(screen.queryByLabelText("生成的邀请链接")).toBeNull();
+  expect(calls.find((call) => call.command === "invite")?.args).toEqual({
+    allow: true,
+  });
+});
+
+test("an invitation completed after leaving its page cannot expose a secret", async () => {
+  let complete!: (value: unknown) => void;
+  const pending = new Promise((resolve) => {
+    complete = resolve;
+  });
+  const { status, poll, page } = await fixture({ invite: () => pending });
+  status.network!.is_manager = true;
+  await poll();
+  page("设备");
+  fireEvent.click(screen.getByRole("button", { name: "生成邀请链接" }));
+  page("本机状态");
+  await act(async () =>
+    complete({ link: "xrun://late-secret", allow: false, expires_in: 600 }),
+  );
+  page("设备");
+  expect(screen.queryByLabelText("生成的邀请链接")).toBeNull();
+  expect(document.body.textContent).not.toContain("late-secret");
+});
+
 test("all-member access requires confirmation, respects denials and preserves individual grants", async () => {
   const { page, calls, status, poll } = await fixture();
   page("设备");

@@ -1,8 +1,10 @@
-import type { Action, Confirm, Device, Status } from "../api";
+import type { Action, Confirm, Device, Operation, Status } from "../api";
 import { Icon } from "../components/Icon";
+import { InvitePanel } from "../components/InvitePanel";
 import { osName } from "../format";
 
 interface Props {
+  active: boolean;
   status: Status | null;
   devices: Device[];
   busy: boolean;
@@ -12,9 +14,11 @@ interface Props {
   action: Action;
   confirm: Confirm;
   notify: (message: string) => void;
+  operate: Operation;
 }
 
 export function Devices({
+  active,
   status,
   devices,
   busy,
@@ -24,6 +28,7 @@ export function Devices({
   action,
   confirm,
   notify,
+  operate,
 }: Props) {
   return (
     <>
@@ -44,6 +49,14 @@ export function Devices({
           刷新
         </button>
       </div>
+      <InvitePanel
+        active={active}
+        status={status}
+        busy={busy}
+        operate={operate}
+        confirm={confirm}
+        notify={notify}
+      />
       {status?.local.remote_access_paused && (
         <div className="notice">
           <Icon name="shield" />
