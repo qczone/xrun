@@ -82,6 +82,23 @@ pub struct Execution {
     pub input_size: u64,
     pub input_sha256: String,
 }
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct StreamExecution {
+    pub program: String,
+    pub args: Vec<String>,
+    pub cwd: String,
+    pub env: BTreeMap<String, String>,
+    pub timeout: u64,
+}
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct StreamResult {
+    pub exit_code: Option<i64>,
+    pub signal: Option<i32>,
+    pub timed_out: bool,
+    pub duration_ms: u64,
+}
 impl Execution {
     pub fn hash(&self) -> String {
         let mut value = serde_json::to_value(self).expect("serializable execution");
@@ -183,6 +200,9 @@ pub enum Request {
     Forward {
         port: u16,
     },
+    StreamExec {
+        execution: StreamExecution,
+    },
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
@@ -219,6 +239,11 @@ pub enum Data {
         port: u16,
     },
     ForwardEofAck,
+    StreamReady,
+    StreamExit {
+        result: StreamResult,
+    },
+    StreamExitAck,
     Error {
         code: String,
         message: String,

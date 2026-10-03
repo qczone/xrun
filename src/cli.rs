@@ -195,6 +195,9 @@ struct Execute {
     /// Forward stdin bytes (maximum 1 MiB)
     #[arg(long, conflicts_with = "script")]
     stdin: bool,
+    /// Stream stdin/output for a connection-bound process (no saved job)
+    #[arg(short = 'i', long = "interactive", conflicts_with_all = ["stdin", "request_id", "script"])]
+    interactive: bool,
     /// Read a UTF-8 script from stdin: sh, bash, zsh, powershell, pwsh or cmd
     #[arg(long)]
     script: Option<String>,
@@ -924,6 +927,12 @@ fn save_download(
 }
 async fn remote(cli: DeviceCli) -> Result<i32> {
     let json = cli.json;
+    if matches!(&cli.command, Remote::Start(e) if e.interactive)
+        || (json && matches!(&cli.command, Remote::Run(e) | Remote::Start(e) if e.interactive))
+    {
+        eprintln!("[xrun] -i cannot be combined with start or --json");
+        return Ok(2);
+    }
     if let Remote::Jobs {
         id: Some(_),
         running,
@@ -977,6 +986,49 @@ async fn remote(cli: DeviceCli) -> Result<i32> {
     let target_name = target.name.clone();
     let target = &target.device_id;
     match cli.command {
+        Remote::Run(e) if e.interactive => {
+            let mut s = session(&id, target).await?;
+            let execution = StreamExecution {
+                program: e
+                    .command
+                    .first()
+                    .context("INVALID_REQUEST: program required")?
+                    .clone(),
+                args: e.command.into_iter().skip(1).collect(),
+                cwd: e.cwd.unwrap_or(s.cwd),
+                env: e.env.into_iter().collect(),
+                timeout: e.timeout.unwrap_or(1800),
+            };
+            net::send(
+                &mut s.ws,
+                &Data::Request {
+                    request: Request::StreamExec { execution },
+                },
+            )
+            .await?;
+            if !matches!(response(&mut s.ws).await?, Data::StreamReady) {
+                bail!("INVALID_MESSAGE: expected stream acknowledgement")
+            }
+            let result = tokio::select! {
+                result = crate::streaming::client(&mut s.ws) => result?,
+                _ = tokio::signal::ctrl_c() => return Ok(130),
+                _ = termination() => return Ok(125),
+            };
+            Ok(if result.timed_out {
+                124
+            } else if let Some(signal) = result.signal {
+                128 + signal
+            } else {
+                match result.exit_code {
+                    Some(code) if (0..=255).contains(&code) => code as i32,
+                    Some(code) => {
+                        eprintln!("[xrun] remote exit code {code}");
+                        1
+                    }
+                    None => 125,
+                }
+            })
+        }
         Remote::Run(e) => {
             Box::pin(execute_cli(
                 &id,

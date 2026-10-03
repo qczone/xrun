@@ -14,4 +14,5 @@ pub mod screenshot;
 pub mod server;
 pub mod service;
 pub mod store;
+pub mod streaming;
 pub mod transfer;

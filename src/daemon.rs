@@ -11,7 +11,7 @@ use std::{
     path::{Path, PathBuf},
     sync::{
         Arc, Mutex,
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicBool, AtomicUsize, Ordering},
     },
     time::Duration,
 };
@@ -79,6 +79,7 @@ struct Runtime {
     gate: Mutex<()>,
     files: Arc<Semaphore>,
     forwards: Arc<Semaphore>,
+    streams: AtomicUsize,
     stopping: AtomicBool,
     fatal: Mutex<Option<String>>,
     stop: watch::Sender<bool>,
@@ -92,13 +93,28 @@ impl Drop for RunningJob {
         self.rt.running.lock().unwrap().remove(&self.id);
     }
 }
+struct RunningStream {
+    rt: Arc<Runtime>,
+    id: String,
+}
+impl Drop for RunningStream {
+    fn drop(&mut self) {
+        self.rt.running.lock().unwrap().remove(&self.id);
+        self.rt.streams.fetch_sub(1, Ordering::SeqCst);
+    }
+}
 struct FileAudit {
     store: Arc<TaskStore>,
     value: serde_json::Value,
     completed: bool,
+    stream_counts: Option<Arc<crate::streaming::Counts>>,
 }
 impl Drop for FileAudit {
     fn drop(&mut self) {
+        self.value["ended_at_ms"] = serde_json::json!(now_ms());
+        if let Some(counts) = &self.stream_counts {
+            self.value["bytes"] = counts.snapshot();
+        }
         self.value["result"] = serde_json::json!(if self.completed {
             "ok"
         } else {
@@ -196,6 +212,7 @@ pub async fn run() -> Result<()> {
         gate: Mutex::new(()),
         files: Arc::new(Semaphore::new(8)),
         forwards: Arc::new(Semaphore::new(32)),
+        streams: AtomicUsize::new(0),
         stopping: AtomicBool::new(false),
         fatal: Mutex::new(None),
         stop,
@@ -356,14 +373,61 @@ async fn serve(rt: Arc<Runtime>, source: &str, generation: u64, ws: &mut Ws) -> 
         Request::Pull { path, .. } => Some(("pull", Some(path.clone()))),
         Request::Screenshot => Some(("screenshot", None)),
         Request::Forward { port } => Some(("forward", Some(format!("localhost:{port}")))),
+        Request::StreamExec { execution } => Some(("stream_exec", Some(execution.program.clone()))),
         _ => None,
     };
     let mut audit = file_op.map(|(op, path)| FileAudit {
         store: rt.store.clone(),
-        value: serde_json::json!({"source_device_id":source,"op":op,"path":path,"size":null}),
+        value: serde_json::json!({"source_device_id":source,"op":op,"path":path,"size":null,"started_at_ms":now_ms()}),
         completed: false,
+        stream_counts: None,
     });
     match request {
+        Request::StreamExec { execution } => {
+            let counts = Arc::new(crate::streaming::Counts::default());
+            if let Some(a) = &mut audit {
+                a.stream_counts = Some(counts.clone());
+            }
+            let cfg = rt.config()?;
+            validate_stream(&execution)?;
+            let cwd = PathBuf::from(&execution.cwd);
+            let mut env = cfg.env;
+            for (k, v) in &execution.env {
+                #[cfg(windows)]
+                env.retain(|key, _| !key.eq_ignore_ascii_case(k));
+                env.insert(k.clone(), v.clone());
+            }
+            let program = resolve_program(&execution.program, &cwd, &env)?;
+            let id = format!("stream_{}", uuid::Uuid::new_v4());
+            let child = {
+                let _gate = rt.gate.lock().unwrap();
+                rt.check_session(source, generation)?;
+                if rt.stopping.load(Ordering::SeqCst) {
+                    bail!("DAEMON_STOPPING: daemon shutting down")
+                }
+                check_capacity(&rt)?;
+                let child =
+                    crate::process::spawn(&program, &execution.args, &cwd, &env, &id, false)?;
+                rt.running.lock().unwrap().insert(id.clone(), child.pid);
+                rt.streams.fetch_add(1, Ordering::SeqCst);
+                child
+            };
+            let running = RunningStream { rt: rt.clone(), id };
+            if let Some(a) = &mut audit {
+                a.value["args"] = serde_json::json!(execution.args);
+                a.value["cwd"] = serde_json::json!(execution.cwd);
+                a.value["started_at_ms"] = serde_json::json!(now_ms());
+            }
+            let outcome =
+                crate::streaming::serve(ws, child, execution.timeout, counts, move || {
+                    drop(running)
+                })
+                .await?;
+            if let Some(a) = &mut audit {
+                a.completed = true;
+                a.value["outcome"] = serde_json::to_value(outcome)?;
+            }
+        }
         Request::Forward { port } => {
             let _permit = rt
                 .forwards
@@ -607,6 +671,48 @@ fn short_id() -> String {
         .map(|b| ABC[(b & 31) as usize] as char)
         .collect()
 }
+fn validate_stream(request: &StreamExecution) -> Result<()> {
+    if !Path::new(&request.cwd).is_absolute() || request.cwd.contains('\0') {
+        bail!("INVALID_REQUEST: cwd must be absolute")
+    }
+    if request.program.is_empty()
+        || request.program.contains('\0')
+        || request.args.iter().any(|a| a.contains('\0'))
+    {
+        bail!("INVALID_REQUEST: invalid command")
+    }
+    if request
+        .env
+        .iter()
+        .any(|(k, v)| k.is_empty() || k.contains(['=', '\0']) || v.contains('\0'))
+    {
+        bail!("INVALID_REQUEST: invalid environment")
+    }
+    #[cfg(windows)]
+    {
+        let mut keys = HashSet::new();
+        if request
+            .env
+            .keys()
+            .any(|k| !keys.insert(k.to_ascii_lowercase()))
+        {
+            bail!("INVALID_REQUEST: duplicate Windows environment key")
+        }
+    }
+    Ok(())
+}
+fn check_capacity(rt: &Runtime) -> Result<()> {
+    let jobs = rt
+        .store
+        .all()?
+        .iter()
+        .filter(|j| !j.state.terminal())
+        .count();
+    if jobs + rt.streams.load(Ordering::SeqCst) >= rt.config()?.max_concurrent_jobs {
+        bail!("DEVICE_BUSY: job capacity reached")
+    }
+    Ok(())
+}
 fn submit(rt: Arc<Runtime>, source: &str, request: Execution, input: Vec<u8>) -> Result<Job> {
     let _gate = rt.gate.lock().unwrap();
     rt.allow(source)?;
@@ -667,16 +773,7 @@ fn submit(rt: Arc<Runtime>, source: &str, request: Execution, input: Vec<u8>) ->
         }
         return Ok(job);
     }
-    if rt
-        .store
-        .all()?
-        .iter()
-        .filter(|j| !j.state.terminal())
-        .count()
-        >= rt.config()?.max_concurrent_jobs
-    {
-        bail!("DEVICE_BUSY: job capacity reached")
-    }
+    check_capacity(&rt)?;
     let mut id = short_id();
     while rt.store.get(&id)?.is_some() {
         id = short_id()
