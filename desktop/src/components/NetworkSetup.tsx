@@ -53,6 +53,7 @@ export function NetworkSetup({ joined, busy, action, onCreated }: Props) {
         </p>
       </div>
       <form
+        className="network-setup-form"
         id={creating ? "create-network-form" : "join-form"}
         onSubmit={async (event) => {
           event.preventDefault();

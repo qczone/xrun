@@ -184,7 +184,9 @@ export function Devices({
       <section className="panel">
         <div className="list-heading">
           <span>设备</span>
-          <span>允许访问本机</span>
+          <span>
+            {network?.is_manager ? "本机访问与成员管理" : "允许访问本机"}
+          </span>
         </div>
         <div id="devices">
           {devices.map((device) => (

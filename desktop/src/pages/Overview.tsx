@@ -20,50 +20,58 @@ export function Overview({ status, busy, action, stop, navigate }: Props) {
     <>
       <div className="page-heading">
         <div>
-          <h1>本机状态</h1>
-          <p>查看连接状态，管理这台设备的后台服务。</p>
+          <h1>{local && !local.joined ? "连接你的设备" : "本机状态"}</h1>
+          <p>
+            {local && !local.joined
+              ? "创建或加入网络，让你的设备互相连接。"
+              : "查看连接状态，管理这台设备的后台服务。"}
+          </p>
         </div>
       </div>
-      <article className="device-hero">
-        <div className="hero-top">
-          <div className="device-avatar">
-            <Icon name="monitor" />
+      {(!local || local.joined) && (
+        <article className="device-hero">
+          <div className="hero-top">
+            <div className="device-avatar">
+              <Icon name="monitor" />
+            </div>
+            <span
+              className={`badge ${local?.daemon_connected ? "online" : ""}`}
+            >
+              {badge}
+            </span>
           </div>
-          <span className={`badge ${local?.daemon_connected ? "online" : ""}`}>
-            {badge}
-          </span>
-        </div>
-        <h2>{local?.name || "连接你的设备"}</h2>
-        <p>{summary}</p>
-        {local?.joined && (
-          <div className="hero-actions">
-            <button
-              className="primary"
-              disabled={busy || local.daemon_running}
-              onClick={() => void action({ command: "start" })}
-            >
-              启动后台服务
-            </button>
-            <button
-              disabled={busy || !local.daemon_running}
-              onClick={() => void stop()}
-            >
-              停止服务
-            </button>
-            <button
-              disabled={busy}
-              onClick={() =>
-                void action({
-                  command: "pause_access",
-                  args: { paused: !local.remote_access_paused },
-                })
-              }
-            >
-              {local.remote_access_paused ? "恢复远程访问" : "暂停远程访问"}
-            </button>
-          </div>
-        )}
-      </article>
+          <h2>{local?.name || "连接你的设备"}</h2>
+          <p>{summary}</p>
+          {local?.joined && (
+            <div className="hero-actions">
+              <button
+                className="primary"
+                disabled={busy || local.daemon_running}
+                onClick={() => void action({ command: "start" })}
+              >
+                启动后台服务
+              </button>
+              <button
+                disabled={busy || !local.daemon_running}
+                onClick={() => void stop()}
+              >
+                停止服务
+              </button>
+              <button
+                disabled={busy}
+                onClick={() =>
+                  void action({
+                    command: "pause_access",
+                    args: { paused: !local.remote_access_paused },
+                  })
+                }
+              >
+                {local.remote_access_paused ? "恢复远程访问" : "暂停远程访问"}
+              </button>
+            </div>
+          )}
+        </article>
+      )}
       {service?.approval_required && (
         <div className="notice">
           <Icon name="shield" />

@@ -750,10 +750,10 @@ code {
 .section-title code {
   font-size: 12px;
 }
-#join-form input {
+.network-setup-form input {
   margin-bottom: 17px;
 }
-#join-form .field-help {
+.network-setup-form .field-help {
   margin: -10px 0 18px;
 }
 .quick-links {

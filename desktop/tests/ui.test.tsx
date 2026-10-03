@@ -659,6 +659,7 @@ test("membership revocation is manager-only, requires confirmation and sends the
 
 test("revocation keeps its local result during relay failure and can retry delivery", async () => {
   let offline = false;
+  let attempts = 0;
   const members: Device[] = [
     {
       device_id: "win-id",
@@ -687,9 +688,7 @@ test("revocation keeps its local result during relay failure and can retry deliv
         : { devices: members, server_error: null },
     revoke: ({ device }) => {
       members[0].revoked = true;
-      const first = !calls.some(
-        (call) => call.command === "revoke" && call !== calls.at(-1),
-      );
+      const first = ++attempts === 1;
       offline = first;
       return {
         device_id: device,
