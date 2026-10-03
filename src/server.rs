@@ -3,6 +3,7 @@ use anyhow::{Context, Result};
 use axum::{Router, body::Body, http::StatusCode};
 use std::{
     collections::HashMap,
+    future::Future,
     net::IpAddr,
     pin::Pin,
     sync::{Arc, atomic::Ordering},
@@ -34,15 +35,25 @@ impl TransportPermit {
         }
     }
 }
+type StopSignal = Pin<Box<dyn Future<Output = ()> + Send>>;
+fn stop_signal(mut receiver: tokio::sync::watch::Receiver<()>) -> StopSignal {
+    Box::pin(async move {
+        let _ = receiver.changed().await;
+    })
+}
 struct LimitedTcp {
     inner: tokio::net::TcpStream,
     permit: TransportPermit,
+    read_stop: StopSignal,
+    write_stop: StopSignal,
+    stopped: bool,
 }
 impl LimitedTcp {
     fn new(
         inner: tokio::net::TcpStream,
         ip: IpAddr,
         limits: Arc<std::sync::Mutex<ConnectionLimits>>,
+        lifetime: &tokio::sync::watch::Sender<()>,
     ) -> Option<Self> {
         {
             let mut counts = limits.lock().unwrap();
@@ -56,12 +67,25 @@ impl LimitedTcp {
         }
         Some(Self {
             inner,
+            read_stop: stop_signal(lifetime.subscribe()),
+            write_stop: stop_signal(lifetime.subscribe()),
+            stopped: false,
             permit: TransportPermit {
                 limits,
                 ip,
                 anonymous: Arc::new(std::sync::atomic::AtomicBool::new(true)),
             },
         })
+    }
+    fn stopped(&mut self, cx: &mut TaskContext<'_>, read: bool) -> bool {
+        if !self.stopped {
+            self.stopped = if read {
+                self.read_stop.as_mut().poll(cx).is_ready()
+            } else {
+                self.write_stop.as_mut().poll(cx).is_ready()
+            };
+        }
+        self.stopped
     }
 }
 impl ConnectionLimits {
@@ -88,6 +112,9 @@ impl AsyncRead for LimitedTcp {
         cx: &mut TaskContext<'_>,
         buf: &mut ReadBuf<'_>,
     ) -> Poll<std::io::Result<()>> {
+        if self.stopped(cx, true) {
+            return Poll::Ready(Err(std::io::ErrorKind::ConnectionAborted.into()));
+        }
         Pin::new(&mut self.inner).poll_read(cx, buf)
     }
 }
@@ -97,15 +124,24 @@ impl AsyncWrite for LimitedTcp {
         cx: &mut TaskContext<'_>,
         buf: &[u8],
     ) -> Poll<std::io::Result<usize>> {
+        if self.stopped(cx, false) {
+            return Poll::Ready(Err(std::io::ErrorKind::ConnectionAborted.into()));
+        }
         Pin::new(&mut self.inner).poll_write(cx, buf)
     }
     fn poll_flush(mut self: Pin<&mut Self>, cx: &mut TaskContext<'_>) -> Poll<std::io::Result<()>> {
+        if self.stopped(cx, false) {
+            return Poll::Ready(Err(std::io::ErrorKind::ConnectionAborted.into()));
+        }
         Pin::new(&mut self.inner).poll_flush(cx)
     }
     fn poll_shutdown(
         mut self: Pin<&mut Self>,
         cx: &mut TaskContext<'_>,
     ) -> Poll<std::io::Result<()>> {
+        if self.stopped(cx, false) {
+            return Poll::Ready(Err(std::io::ErrorKind::ConnectionAborted.into()));
+        }
         Pin::new(&mut self.inner).poll_shutdown(cx)
     }
 }
@@ -132,6 +168,9 @@ pub(crate) async fn serve_http(
     router: Router,
 ) -> Result<()> {
     let listener = tokio::net::TcpListener::bind((std::net::Ipv4Addr::UNSPECIFIED, port)).await?;
+    // The listener owns this sender. Dropping it wakes and closes sockets even
+    // after Hyper has handed them to detached WebSocket upgrade handlers.
+    let (lifetime, _) = tokio::sync::watch::channel(());
     tracing::info!(port, "xrun relay listening");
     let limits = Arc::new(std::sync::Mutex::new(ConnectionLimits::default()));
     loop {
@@ -143,7 +182,7 @@ pub(crate) async fn serve_http(
                 continue;
             }
         };
-        let Some(tcp) = LimitedTcp::new(tcp, peer.ip(), limits.clone()) else {
+        let Some(tcp) = LimitedTcp::new(tcp, peer.ip(), limits.clone(), &lifetime) else {
             continue;
         };
         let acceptor = acceptor.clone();

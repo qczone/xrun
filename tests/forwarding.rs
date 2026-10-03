@@ -9,12 +9,12 @@ use tokio::{
 };
 
 async fn forward(lab: &Lab, port: u16) -> Result<(Child, String)> {
-    let mut child = command(
+    let mut child = logged(
         &lab.source,
         &["target1", "forward", &format!("0:{port}"), "--json"],
-    )
+        "forward",
+    )?
     .stdout(Stdio::piped())
-    .stderr(Stdio::null())
     .spawn()?;
     let mut reader = BufReader::new(child.stdout.take().unwrap());
     let mut line = String::new();

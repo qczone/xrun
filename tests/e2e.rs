@@ -12,12 +12,7 @@ impl Drop for Daemon {
     }
 }
 fn command(home: &Path, args: &[&str]) -> Command {
-    let mut cmd = Command::new(env!("CARGO_BIN_EXE_xrun"));
-    cmd.env("HOME", home)
-        .env("USERPROFILE", home)
-        .args(args)
-        .kill_on_drop(true);
-    cmd
+    common::command(home, args)
 }
 async fn cli(home: &Path, args: &[&str]) -> std::process::Output {
     tokio::time::timeout(Duration::from_secs(45), command(home, args).output())
@@ -68,9 +63,8 @@ async fn online(home: &Path, name: &str) {
 }
 fn daemon(home: &Path) -> Daemon {
     Daemon(
-        command(home, &["daemon"])
-            .stderr(Stdio::null())
-            .stdout(Stdio::null())
+        common::logged(home, &["daemon"], "daemon")
+            .unwrap()
             .spawn()
             .unwrap(),
     )
@@ -78,6 +72,7 @@ fn daemon(home: &Path) -> Daemon {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn execution_transfer_and_identity() -> Result<()> {
+    common::library_logs()?;
     let temp = tempfile::tempdir()?;
     let root = temp.path();
     let source = root.join("source");
@@ -172,7 +167,7 @@ async fn execution_transfer_and_identity() -> Result<()> {
         "RUSTFLAGS",
         "CARGO_ENCODED_RUSTFLAGS",
     ];
-    let mut target_command = command(&target, &["daemon"]);
+    let mut target_command = common::logged(&target, &["daemon"], "target")?;
     for name in build_env {
         target_command.env(
             if cfg!(windows) {
@@ -187,12 +182,7 @@ async fn execution_transfer_and_identity() -> Result<()> {
         .env("XRUN_ENV_PRESERVED", "keep")
         .env("CARGO_HOME", "cargo-home-kept")
         .env("RUSTUP_HOME", "rustup-home-kept");
-    let mut target_daemon = Daemon(
-        target_command
-            .stderr(Stdio::null())
-            .stdout(Stdio::null())
-            .spawn()?,
-    );
+    let mut target_daemon = Daemon(target_command.spawn()?);
     online(&source, "runner1").await;
     online(&target, "admin").await;
     // A daemon rejection should print its code once, and keep the JSON message
@@ -1058,10 +1048,7 @@ async fn linux_relay_service_configuration_and_foreground_shutdown() -> Result<(
     std::fs::create_dir_all(home.join(".xrun"))?;
     xrun::config::write(&home.join(".xrun/config.toml"), &cfg)?;
     let link = xrun::relay::enrollment(&cfg)?;
-    let mut child = command(home, &["relay", "run"])
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn()?;
+    let mut child = common::logged(home, &["relay", "run"], "relay")?.spawn()?;
     tokio::time::timeout(Duration::from_secs(5), async {
         while tokio::net::TcpStream::connect(("127.0.0.1", port))
             .await

@@ -1,3 +1,4 @@
+mod common;
 use anyhow::Result;
 use std::{sync::Arc, time::Duration};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -99,6 +100,7 @@ async fn anonymous_tls(
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn anonymous_connection_limits_and_http_deadlines() -> Result<()> {
+    common::library_logs()?;
     let temp = tempfile::tempdir()?;
     let port = std::net::TcpListener::bind("127.0.0.1:0")?
         .local_addr()?

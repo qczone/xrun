@@ -2,7 +2,7 @@ mod common;
 use anyhow::Result;
 use base64::{Engine, engine::general_purpose::STANDARD};
 use common::*;
-use std::{process::Stdio, time::Duration};
+use std::time::Duration;
 use xrun::{
     config::{DaemonConfig, Identity},
     membership::RosterCache,
@@ -43,9 +43,7 @@ async fn registration_permissions_migration_and_manager_offline_execution() -> R
             ],
         )
         .await);
-        let mut daemon = command(&ordinary, &["daemon"])
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
+        let mut daemon = logged(&ordinary, &["daemon"],"ordinary")?
             .spawn()?;
         tokio::time::timeout(Duration::from_secs(5), async {
             loop {

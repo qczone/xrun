@@ -96,6 +96,7 @@ async fn attach(id: &Identity, roster: &SignedRoster, sid: &str) -> Result<net::
 }
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn relay_authentication_binding_and_limits() -> Result<()> {
+    common::library_logs()?;
     tokio::time::timeout(Duration::from_secs(25), async {
         let temp = tempfile::tempdir()?;
         let port = std::net::TcpListener::bind("127.0.0.1:0")?

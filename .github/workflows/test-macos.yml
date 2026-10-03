@@ -10,6 +10,8 @@ jobs:
     runs-on: macos-15
     timeout-minutes: 45
     env:
+      RUST_BACKTRACE: '1'
+      XRUN_TEST_LOG_DIR: ${{ github.workspace }}/target/test-logs
       MACOSX_DEPLOYMENT_TARGET: '13.0'
       CARGO_PROFILE_DEV_DEBUG: '0'
     steps:
@@ -53,9 +55,29 @@ jobs:
         run: |
           bun install --frozen-lockfile
           bun run check
-          bun run build --debug
+          bun run build --debug --verbose
       - name: Check desktop code and bundled helper
         run: |
           cargo clippy --locked -p xrun-desktop --all-targets -- -D warnings
           cargo test --locked -p xrun-desktop
           target/debug/bundle/macos/xrun.app/Contents/MacOS/xrun-desktop --self-check
+      - name: Test the DMG's bundled helper
+        shell: bash
+        run: |
+          set -euo pipefail
+          dmgs=(target/debug/bundle/dmg/*.dmg)
+          test "${#dmgs[@]}" -eq 1
+          mount_dir="$RUNNER_TEMP/xrun-app-smoke"
+          mkdir -p "$mount_dir"
+          hdiutil attach -nobrowse -readonly -mountpoint "$mount_dir" "${dmgs[0]}"
+          trap 'hdiutil detach "$mount_dir" -force' EXIT
+          export XRUN_TEST_BINARY="$mount_dir/xrun.app/Contents/MacOS/xrun"
+          cargo test --locked --test smoke -- --nocapture
+      - name: Upload failed test process logs
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: test-logs-${{ runner.os }}-${{ runner.arch }}-${{ github.run_attempt }}
+          path: ${{ env.XRUN_TEST_LOG_DIR }}/*.log
+          if-no-files-found: ignore
+          retention-days: 7

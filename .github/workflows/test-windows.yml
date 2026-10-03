@@ -10,6 +10,8 @@ jobs:
     runs-on: windows-2022
     timeout-minutes: 45
     env:
+      RUST_BACKTRACE: '1'
+      XRUN_TEST_LOG_DIR: ${{ github.workspace }}/target/test-logs
       CARGO_PROFILE_DEV_DEBUG: '0'
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
@@ -59,11 +61,34 @@ jobs:
           $PSNativeCommandUseErrorActionPreference = $true
           bun install --frozen-lockfile
           bun run check
-          bun run build --debug
+          bun run build --debug --verbose
       - name: Check desktop code and bundled helper
         shell: pwsh
         run: |
           $PSNativeCommandUseErrorActionPreference = $true
           cargo clippy --locked -p xrun-desktop --all-targets -- -D warnings
+          cargo test --locked -p xrun-desktop
           $p = Start-Process -FilePath target/debug/xrun-desktop.exe -ArgumentList '--self-check' -Wait -PassThru -NoNewWindow
           if ($p.ExitCode -ne 0) { throw 'Desktop self-check failed' }
+      - name: Install and test the packaged App helper
+        shell: pwsh
+        timeout-minutes: 5
+        run: |
+          $PSNativeCommandUseErrorActionPreference = $true
+          $installers = @(Get-ChildItem target/debug/bundle/nsis/*.exe)
+          if ($installers.Count -ne 1) { throw 'Expected one NSIS installer' }
+          $installDir = Join-Path $env:RUNNER_TEMP 'xrun-app-smoke'
+          $p = Start-Process -FilePath $installers[0].FullName -ArgumentList '/S', "/D=$installDir" -Wait -PassThru
+          if ($p.ExitCode -ne 0) { throw "Installer failed: $($p.ExitCode)" }
+          $p = Start-Process -FilePath (Join-Path $installDir 'xrun-desktop.exe') -ArgumentList '--self-check' -Wait -PassThru -NoNewWindow
+          if ($p.ExitCode -ne 0) { throw 'Installed desktop self-check failed' }
+          $env:XRUN_TEST_BINARY = Join-Path $installDir 'xrun.exe'
+          cargo test --locked --test smoke -- --nocapture
+      - name: Upload failed test process logs
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: test-logs-${{ runner.os }}-${{ runner.arch }}-${{ github.run_attempt }}
+          path: ${{ env.XRUN_TEST_LOG_DIR }}/*.log
+          if-no-files-found: ignore
+          retention-days: 7
