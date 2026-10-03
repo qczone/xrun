@@ -438,6 +438,97 @@ test("joining passes the link only to join and clears it from the form", async (
   expect(document.body.textContent).not.toContain("test-secret");
 });
 
+test("network creation clears secrets, prevents duplicate submissions and opens member management", async () => {
+  let complete!: () => void;
+  const pending = new Promise<void>((resolve) => {
+    complete = resolve;
+  });
+  let current!: Status;
+  const { calls, status } = await fixture(
+    {
+      create_network: async () => {
+        await pending;
+        current.local.joined = true;
+        current.network = {
+          network_id: "new-network",
+          manager_id: "self",
+          manager_name: "mac2",
+          is_manager: true,
+          relay_addresses: ["https://relay.example:8080"],
+        };
+      },
+    },
+    false,
+  );
+  current = status;
+  fireEvent.change(screen.getByLabelText("邀请链接"), {
+    target: { value: "xrun://old-secret" },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "创建新网络" }));
+  const link = screen.getByLabelText("中转部署链接") as HTMLInputElement;
+  expect(link.value).toBe("");
+  fireEvent.change(link, { target: { value: "xrun-relay://creation-secret" } });
+  fireEvent.change(screen.getByLabelText("本机名称"), {
+    target: { value: "mac2" },
+  });
+  fireEvent.submit(document.getElementById("create-network-form")!);
+  fireEvent.submit(document.getElementById("create-network-form")!);
+  expect(
+    calls.filter((call) => call.command === "create_network"),
+  ).toHaveLength(1);
+  await act(async () => complete());
+  await waitFor(() =>
+    expect(screen.queryByLabelText("中转部署链接")).toBeNull(),
+  );
+  expect(
+    document
+      .querySelector('[data-page="devices"]')
+      ?.getAttribute("aria-current"),
+  ).toBe("page");
+  expect(calls.find((call) => call.command === "create_network")?.args).toEqual(
+    {
+      link: "xrun-relay://creation-secret",
+      name: "mac2",
+    },
+  );
+  expect(document.body.textContent).not.toContain("creation-secret");
+  expect(calls.some((call) => call.command === "join")).toBe(false);
+});
+
+test("creation can retry after an identity was saved but publication failed", async () => {
+  let current!: Status;
+  let attempts = 0;
+  const { calls, status } = await fixture(
+    {
+      create_network: () => {
+        current.local.joined = true;
+        if (++attempts === 1) throw "CONNECT_FAILED: relay unavailable";
+      },
+    },
+    false,
+  );
+  current = status;
+  fireEvent.click(screen.getByRole("button", { name: "创建新网络" }));
+  fireEvent.change(screen.getByLabelText("中转部署链接"), {
+    target: { value: "xrun-relay://retry-secret" },
+  });
+  fireEvent.change(screen.getByLabelText("本机名称"), {
+    target: { value: "mac2" },
+  });
+  fireEvent.submit(document.getElementById("create-network-form")!);
+  await screen.findByRole("button", { name: "重试创建并启动" });
+  expect(
+    (screen.getByLabelText("中转部署链接") as HTMLInputElement).value,
+  ).toBe("xrun-relay://retry-secret");
+  fireEvent.submit(document.getElementById("create-network-form")!);
+  await waitFor(() =>
+    expect(screen.queryByLabelText("中转部署链接")).toBeNull(),
+  );
+  expect(
+    calls.filter((call) => call.command === "create_network"),
+  ).toHaveLength(2);
+});
+
 test("all-member access requires confirmation, respects denials and preserves individual grants", async () => {
   const { page, calls, status, poll } = await fixture();
   page("设备");

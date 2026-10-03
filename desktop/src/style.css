@@ -649,6 +649,16 @@ code {
   gap: 4px;
   text-align: right;
 }
+.setup-tabs {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 22px;
+}
+.setup-tabs .selected {
+  color: var(--accent);
+  background: var(--soft);
+  border-color: var(--accent);
+}
 .role-label {
   display: inline-block;
   margin-left: 8px;

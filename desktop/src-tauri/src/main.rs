@@ -200,6 +200,23 @@ async fn file_history(before: Option<i64>) -> Result<xrun::history::FilePage, St
 }
 
 #[tauri::command]
+async fn create_network(
+    app: tauri::AppHandle,
+    state: State<'_, Desktop>,
+    link: String,
+    name: String,
+) -> Result<(), String> {
+    let _guard = state.action.lock().await;
+    let result = async {
+        xrun::network::create(link.trim(), Some(name.trim().to_string())).await?;
+        xrun::daemon::init()?;
+        platform::start().await
+    }
+    .await;
+    record(&app, result)
+}
+
+#[tauri::command]
 async fn join(
     app: tauri::AppHandle,
     state: State<'_, Desktop>,
@@ -390,6 +407,7 @@ fn main() {
             task_history,
             task_output,
             file_history,
+            create_network,
             join,
             start,
             stop,

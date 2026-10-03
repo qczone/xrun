@@ -107,7 +107,7 @@ export interface FileRecord {
 export type TaskFilter = "all" | "running" | "failed";
 export type ActionRequest =
   | { command: "start" | "stop" | "remove_service" | "hide_icon" }
-  | { command: "join"; args: { link: string; name: string } }
+  | { command: "join" | "create_network"; args: { link: string; name: string } }
   | { command: "autostart"; args: { enabled: boolean } }
   | { command: "permission"; args: { device: string; allow: boolean } }
   | { command: "all_permissions"; args: { allow: boolean } }

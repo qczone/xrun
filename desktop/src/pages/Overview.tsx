@@ -1,6 +1,6 @@
-import { useEffect, useState } from "react";
 import type { Action, Status } from "../api";
 import { Icon } from "../components/Icon";
+import { NetworkSetup } from "../components/NetworkSetup";
 import { osName, serviceLabel } from "../format";
 
 interface Props {
@@ -12,15 +12,10 @@ interface Props {
 }
 
 export function Overview({ status, busy, action, stop, navigate }: Props) {
-  const [link, setLink] = useState("");
-  const [name, setName] = useState("");
   const [badge, summary] = serviceLabel(status);
   const local = status?.local;
   const service = status?.service;
   const network = status?.network;
-  useEffect(() => {
-    if (local?.joined) setLink("");
-  }, [local?.joined]);
   return (
     <>
       <div className="page-heading">
@@ -138,55 +133,13 @@ export function Overview({ status, busy, action, stop, navigate }: Props) {
           </div>
         </section>
       )}
-      {local && !local.joined && (
-        <section className="panel padded">
-          <div className="section-title">
-            <h2>加入已有部署</h2>
-            <p>
-              在管理设备上运行 <code>xrun invite</code>，然后粘贴邀请链接。
-            </p>
-          </div>
-          <form
-            id="join-form"
-            onSubmit={async (event) => {
-              event.preventDefault();
-              if (await action({ command: "join", args: { link, name } }))
-                setLink("");
-            }}
-          >
-            <label htmlFor="link">邀请链接</label>
-            <input
-              id="link"
-              type="password"
-              placeholder="xrun://…"
-              autoComplete="off"
-              spellCheck={false}
-              required
-              disabled={busy}
-              value={link}
-              onChange={(event) => setLink(event.target.value)}
-            />
-            <label htmlFor="name">本机名称</label>
-            <input
-              id="name"
-              type="text"
-              placeholder="mac1 或 win1"
-              pattern="[a-z][a-z0-9-]{0,31}"
-              maxLength={32}
-              autoComplete="off"
-              spellCheck={false}
-              required
-              disabled={busy}
-              value={name}
-              onChange={(event) => setName(event.target.value)}
-            />
-            <p className="field-help">小写字母、数字和短横线，以字母开头。</p>
-            <button className="primary" type="submit" disabled={busy}>
-              加入并启动服务
-              <Icon name="arrow" />
-            </button>
-          </form>
-        </section>
+      {local && (
+        <NetworkSetup
+          joined={local.joined}
+          busy={busy}
+          action={action}
+          onCreated={() => navigate("devices")}
+        />
       )}
       <div className="quick-links">
         <button onClick={() => navigate("devices")}>
