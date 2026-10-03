@@ -136,6 +136,8 @@ async fn registration_permissions_migration_and_manager_offline_execution() -> R
                 .any(|m| m.device_id == lab.target_identity.device_id)
         );
         drop(cache);
+        // Release SQLite handles before moving the cache, including on Windows.
+        stop_daemon(&ordinary, &mut daemon).await?;
         let hidden = ordinary.join(".xrun/roster.hidden");
         std::fs::rename(&cache_path, &hidden)?;
         let missing = cli(&ordinary, &["status", "--json"]).await;
@@ -143,6 +145,8 @@ async fn registration_permissions_migration_and_manager_offline_execution() -> R
         assert!(String::from_utf8_lossy(&missing.stdout).contains("MEMBER_STATE_MISSING"));
         assert!(!cache_path.exists());
         std::fs::rename(&hidden, &cache_path)?;
+        daemon = logged(&ordinary, &["daemon"], "ordinary")?.spawn()?;
+        online(&lab.source, "ordinary1").await?;
         ok(cli(&lab.target, &["allow-from", "ordinary1"]).await);
         ok(cli(&ordinary, &["allow-from", "target1"]).await);
         lab.source_daemon.start_kill()?;
