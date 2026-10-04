@@ -175,7 +175,7 @@ async fn anonymous_connection_limits_and_http_deadlines() -> Result<()> {
         .await?;
     let mut response = Vec::new();
     tokio::time::timeout(Duration::from_secs(2), healthy.read_to_end(&mut response)).await??;
-    assert!(String::from_utf8_lossy(&response).contains("UNKNOWN_NETWORK"));
+    assert!(String::from_utf8_lossy(&response).contains("404 Not Found"));
     Ok(())
 }
 
@@ -259,7 +259,7 @@ async fn accept_errors_do_not_stop_server() -> Result<()> {
             .send(),
     )
     .await??;
-    assert!(response.text().await?.contains("UNKNOWN_NETWORK"));
+    assert_eq!(response.status(), reqwest::StatusCode::NOT_FOUND);
     child.start_kill()?;
     child.wait().await?;
     let logs = logs.await?;

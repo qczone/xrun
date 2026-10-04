@@ -131,7 +131,7 @@ impl TestRelay {
             data_dir: home.join(".xrun/server"),
         };
         xrun::config::write(&home.join(".xrun/config.toml"), &config)?;
-        let link = xrun::relay::enrollment(&config)?;
+        let link = xrun::relay::deployment_link(&config)?;
         let mut relay = Self {
             config,
             home: home.into(),
@@ -254,32 +254,15 @@ pub async fn relay_socket(
     roster: &xrun::membership::SignedRoster,
     path: &str,
 ) -> Result<xrun::net::Ws> {
-    use xrun::{
-        crypto, net,
-        relay::{Proof, RelayMessage},
-    };
-    let mut ws = net::websocket_at(
+    let _ = id;
+    xrun::net::websocket_at(
         &roster.roster.relay_addresses[0],
         path,
-        crypto::anonymous_tls_config(&roster.roster.relay_ca_pem)?,
+        xrun::crypto::anonymous_tls_config(&roster.roster.relay_ca_pem)?,
     )
-    .await?;
-    let RelayMessage::Challenge { nonce } = net::receive(&mut ws).await? else {
-        anyhow::bail!("missing relay challenge")
-    };
-    net::send(
-        &mut ws,
-        &RelayMessage::Authenticate {
-            proof: Proof::create(id, &roster.roster.network_id, path, &nonce)?,
-        },
-    )
-    .await?;
-    match net::receive(&mut ws).await? {
-        RelayMessage::Accepted { .. } => Ok(ws),
-        RelayMessage::Error { code, message } => anyhow::bail!("{code}: {message}"),
-        _ => anyhow::bail!("unexpected relay authentication result"),
-    }
+    .await
 }
+
 pub async fn peer_session(home: &Path, id: &Identity, target: &str) -> Result<xrun::net::Ws> {
     use xrun::{membership::RosterCache, net, relay::RelayMessage, secure};
     let cache = RosterCache::open(&home.join(".xrun/roster.db"))?;
@@ -297,5 +280,6 @@ pub async fn peer_session(home: &Path, id: &Identity, target: &str) -> Result<xr
     ));
     let (mut ws, cert) = secure::client(outer, id, target).await?;
     secure::exchange_client(&mut ws, &cache, network, &cert, target).await?;
+    net::send(&mut ws, &secure::Purpose::Execute).await?;
     Ok(ws)
 }

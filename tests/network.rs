@@ -13,6 +13,14 @@ use xrun::{
 async fn registration_permissions_migration_and_manager_offline_execution() -> Result<()> {
     tokio::time::timeout(Duration::from_secs(25), async {
         let mut lab = Lab::new().await?;
+        let invalid = lab.root.path().join("invalid-route");
+        std::fs::create_dir_all(&invalid)?;
+        let link = xrun::relay::deployment_link(&lab.relay.config)?;
+        let wrong = format!("{}#{}", link.split_once('#').unwrap().0, "a".repeat(26));
+        let denied = cli(&invalid, &["up", "--relay", &wrong, "--no-daemon"]).await;
+        assert_eq!(denied.status.code(), Some(125));
+        assert!(!invalid.join(".xrun/identity.toml").exists());
+        assert!(!invalid.join(".xrun/manager/manager.db").exists());
         let ordinary = lab.root.path().join("ordinary");
         std::fs::create_dir_all(&ordinary)?;
         let invite = json(cli(&lab.source, &["invite", "--json"]).await);
@@ -22,8 +30,7 @@ async fn registration_permissions_migration_and_manager_offline_execution() -> R
         let network=&lab.source_identity.network.as_ref().unwrap().network_id;
         let roster=RosterCache::open(&lab.source.join(".xrun/roster.db"))?.load(network)?;
         let mut outer=xrun::net::websocket_at(&roster.roster.relay_addresses[0],
-            &format!("/networks/{network}/pairing"),xrun::crypto::anonymous_tls_config(&roster.roster.relay_ca_pem)?).await?;
-        assert!(matches!(xrun::net::receive(&mut outer).await?,xrun::relay::RelayMessage::Accepted{..}));
+            &format!("/networks/{network}/connect/{}", lab.source_identity.device_id),xrun::crypto::anonymous_tls_config(&roster.roster.relay_ca_pem)?).await?;
         assert!(matches!(xrun::net::receive(&mut outer).await?,xrun::relay::RelayMessage::Connected));
         let (mut peer,_)=xrun::secure::pairing_client(outer,&xrun::crypto::ca_spki_pin(&roster.ca_pem)?,&lab.source_identity.device_id).await?;
         xrun::net::send(&mut peer,&xrun::protocol::PairRequest {
@@ -55,6 +62,15 @@ async fn registration_permissions_migration_and_manager_offline_execution() -> R
             }
         })
         .await?;
+        // Knowing the relay route without a member certificate only permits
+        // inner-TLS pairing, never execution or task-history access.
+        for target in [&lab.source_identity.device_id, &lab.target_identity.device_id] {
+            let mut outer = xrun::net::websocket_at(&roster.roster.relay_addresses[0], &format!("/networks/{network}/connect/{target}"), xrun::crypto::anonymous_tls_config(&roster.roster.relay_ca_pem)?).await?;
+            assert!(matches!(xrun::net::receive(&mut outer).await?, xrun::relay::RelayMessage::Connected));
+            let (mut anonymous, _) = xrun::secure::pairing_client(outer, &xrun::crypto::ca_spki_pin(&roster.ca_pem)?, target).await?;
+            xrun::net::send(&mut anonymous, &xrun::protocol::Data::Request { request: xrun::protocol::Request::Jobs { id: None, running: false, request_id: None, limit: 10, offset: 0 } }).await?;
+            assert!(matches!(xrun::net::receive::<xrun::protocol::Data>(&mut anonymous).await?, xrun::protocol::Data::Error { .. }));
+        }
         // Registration alone grants neither direction of execution.
         for (home, target) in [(&lab.source, "ordinary1"), (&ordinary, "source1")] {
             let output = cli(

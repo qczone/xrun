@@ -621,7 +621,7 @@ test("membership revocation is manager-only, requires confirmation and sends the
         revoked: true,
         roster_version: 2,
         undelivered: [],
-        relay_error: null,
+        sync_error: null,
       };
     },
   });
@@ -695,7 +695,7 @@ test("revocation keeps its local result during relay failure and can retry deliv
         revoked: true,
         roster_version: 2,
         undelivered: first ? ["cloud-id", "unknown-id"] : [],
-        relay_error: first ? "CONNECT_FAILED: relay unavailable" : null,
+        sync_error: first ? "CONNECT_FAILED: relay unavailable" : null,
       };
     },
   });
@@ -709,14 +709,14 @@ test("revocation keeps its local result during relay failure and can retry deliv
   await act(async () => document.querySelector("dialog")!.close("ok"));
   await screen.findByText("已撤销 win1");
   const result = document.querySelector(".revocation-result")!;
-  expect(result.textContent).toContain("尚未发布到中转");
+  expect(result.textContent).toContain("成员名单同步失败");
   expect(result.textContent).toContain("cloud1");
   expect(result.textContent).toContain("unknown-id");
   expect(screen.queryByText("当前其他成员均已确认收到更新。")).toBeNull();
   expect(
     (screen.getByLabelText("允许 win1 访问本机") as HTMLInputElement).disabled,
   ).toBe(true);
-  fireEvent.click(screen.getByRole("button", { name: "重新发布撤销记录" }));
+  fireEvent.click(screen.getByRole("button", { name: "重新同步撤销记录" }));
   await screen.findByText("当前其他成员均已确认收到更新。");
   expect(
     calls.filter((call) => call.command === "revoke").map((call) => call.args),

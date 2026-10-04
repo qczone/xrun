@@ -100,7 +100,7 @@ enum RelayCommand {
         no_detect: bool,
     },
     Run,
-    /// Admit one network; deployment link expires in ten minutes
+    /// Show the relay deployment link
     Invite,
     Uninstall,
 }
@@ -360,12 +360,10 @@ async fn local(cli: LocalCli) -> Result<i32> {
             RelayCommand::Run => run_relay().await?,
             RelayCommand::Invite => {
                 require_linux()?;
-                let link = crate::relay::enrollment(&ServerConfig::load()?)?;
-                print(
-                    json,
-                    &serde_json::json!({"link":link,"expires_in":600}),
-                    || println!("{link}"),
-                );
+                let link = crate::relay::deployment_link(&ServerConfig::load()?)?;
+                print(json, &serde_json::json!({"link":link}), || {
+                    println!("{link}")
+                });
             }
             RelayCommand::Uninstall => {
                 require_linux()?;
@@ -434,9 +432,9 @@ async fn local(cli: LocalCli) -> Result<i32> {
                             .join(", ")
                     );
                 }
-                if let Some(error) = v["relay_error"].as_str() {
+                if let Some(error) = v["sync_error"].as_str() {
                     eprintln!(
-                        "[xrun] signed revocation saved locally; relay publication failed: {error}"
+                        "[xrun] signed revocation saved locally; peer synchronization failed: {error}"
                     );
                 }
             });
@@ -702,21 +700,21 @@ async fn relay_install(
         cfg.addresses = detect_addresses(cfg.port, cfg.no_detect).await?;
     }
     cfg.save()?;
-    let link = crate::relay::enrollment(&cfg)?;
+    let link = crate::relay::deployment_link(&cfg)?;
     service::install("server").await?;
     if before.is_some_and(|old| old.port != cfg.port || old.addresses != cfg.addresses) {
         service::restart("server").await?;
     }
     print(
         json,
-        &serde_json::json!({"link":link,"addresses":cfg.addresses,"expires_in":600}),
+        &serde_json::json!({"link":link,"addresses":crate::relay::addresses(&cfg)?}),
         || {
             println!("relay: {}", cfg.addresses.join(", "));
             println!("xrun up --relay '{link}'");
         },
     );
     eprintln!(
-        "[xrun] deployment link admits one network for 10 minutes; allow inbound TCP {}",
+        "[xrun] keep the relay link private; allow inbound TCP {}",
         cfg.port
     );
     Ok(())

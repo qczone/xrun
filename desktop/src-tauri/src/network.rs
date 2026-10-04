@@ -24,7 +24,7 @@ pub struct Revocation {
     pub revoked: bool,
     pub roster_version: u64,
     pub undelivered: Vec<String>,
-    pub relay_error: Option<String>,
+    pub sync_error: Option<String>,
 }
 
 pub fn local_status() -> Result<NetworkStatus> {

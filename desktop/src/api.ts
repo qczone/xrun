@@ -130,7 +130,7 @@ export interface Revocation {
   revoked: boolean;
   roster_version: number;
   undelivered: string[];
-  relay_error: string | null;
+  sync_error: string | null;
 }
 
 export const api = {

@@ -14,7 +14,6 @@ use xrun::{
     membership::*,
     net::{self, Io, Ws},
     protocol::*,
-    relay::*,
     secure,
 };
 
@@ -149,20 +148,12 @@ async fn manager_offline_members_use_mutual_tls_and_relay_only_sees_ciphertext()
 }
 
 #[tokio::test]
-async fn relay_cannot_substitute_target_or_pairing_manager_and_proofs_cannot_replay() -> Result<()>
-{
+async fn relay_cannot_substitute_target_or_pairing_manager_and_acknowledgements_cannot_be_forged()
+-> Result<()> {
     tokio::time::timeout(Duration::from_secs(10), async {
         let dir = tempfile::tempdir()?;
         let (manager, manager_id, source, target) = identities(dir.path())?;
         let roster = manager.roster()?;
-        let network = &roster.roster.network_id;
-        let proof = Proof::create(&source, network, "/correct", "fresh")?;
-        proof.verify(&roster, "/correct", "fresh")?;
-        assert!(proof.verify(&roster, "/correct", "replayed").is_err());
-        assert!(proof.verify(&roster, "/wrong", "fresh").is_err());
-        let mut impersonated = proof.clone();
-        impersonated.device_id = target.device_id.clone();
-        assert!(impersonated.verify(&roster, "/correct", "fresh").is_err());
         let ack = ReceiptAck::create(&source, &roster)?;
         ack.verify(&roster)?;
         let mut fake = ack.clone();
@@ -195,11 +186,7 @@ async fn relay_cannot_substitute_target_or_pairing_manager_and_proofs_cannot_rep
             result?;
             pump.abort();
         }
-        assert!(
-            proof
-                .verify(&manager.revoke("source1")?, "/correct", "fresh")
-                .is_err()
-        );
+        assert!(ack.verify(&manager.revoke("source1")?).is_err());
         Ok::<_, anyhow::Error>(())
     })
     .await??;

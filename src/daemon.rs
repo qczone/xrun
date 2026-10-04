@@ -1,10 +1,10 @@
 use crate::{
     config::{self, DaemonConfig, Identity},
-    membership::RosterCache,
+    membership::{ReceiptAck, RosterCache},
     net::{self, Ws},
     network,
     protocol::*,
-    relay::{ReceiptAck, RelayMessage},
+    relay::RelayMessage,
     secure,
     store::TaskStore,
 };
@@ -241,9 +241,12 @@ pub async fn run() -> Result<()> {
     });
     let connector = control_reconnect(rt.clone());
     tokio::pin!(connector);
+    let sync = membership_sync();
+    tokio::pin!(sync);
     let mut stop = rt.stop.subscribe();
     let outcome = tokio::select! {
         result=&mut connector=>result,
+        result=&mut sync=>result,
         _=shutdown_signal()=>Ok(()),
         result=control.shutdown()=>result,
         _=stop.changed()=>Err(anyhow::anyhow!("STORAGE_ERROR: {}", rt.fatal.lock().unwrap().as_deref().unwrap_or("daemon stopped"))),
@@ -292,17 +295,9 @@ async fn control_once(rt: Arc<Runtime>) -> Result<()> {
     if current.device_id != rt.id.device_id || current.network != rt.id.network {
         bail!("IDENTITY_CHANGED: restart daemon after replacing its identity");
     }
-    // A relay error cannot terminate reliable jobs. Only signed membership
-    // records can revoke identities, and existing jobs retain their semantics.
+    // Membership authority and synchronization belong to endpoints.
     if network::authority(&current)?.manager_id == current.device_id {
-        // Recover publication after a successful local membership transaction
-        // whose relay request failed. The authority never comes from the relay.
-        let manager = network::manager(&current)?;
-        let roster = manager.roster()?;
-        network::observe(&current, &roster)?;
-        if let Err(error) = network::publish(&roster).await {
-            tracing::warn!(%error,"signed roster publication unavailable");
-        }
+        network::observe(&current, &network::manager(&current)?.roster()?)?;
     }
     let _ = network::refresh(&current).await;
     net::renew_identity(&mut current).await?;
@@ -310,28 +305,24 @@ async fn control_once(rt: Arc<Runtime>) -> Result<()> {
     net::send(
         &mut ws,
         &RelayMessage::Hello {
-            version: VERSION.into(),
-            os: std::env::consts::OS.into(),
-            arch: std::env::consts::ARCH.into(),
-            hostname: std::env::var("HOSTNAME")
-                .or_else(|_| std::env::var("COMPUTERNAME"))
-                .ok(),
-            execution_user: std::env::var("USER")
-                .or_else(|_| std::env::var("USERNAME"))
-                .ok(),
-            default_cwd: Some(rt.cwd()?.to_string_lossy().into()),
+            device_id: current.device_id.clone(),
         },
     )
     .await?;
-    if !matches!(network::receive(&mut ws).await?, RelayMessage::HelloAck) {
-        bail!("INVALID_MESSAGE: expected hello acknowledgement")
-    }
-    acknowledge_roster(&current, &mut ws).await?;
+    let RelayMessage::HelloAck { generation } = network::receive(&mut ws).await? else {
+        bail!("INVALID_MESSAGE: expected control acknowledgement")
+    };
     rt.control.connected(true)?;
     let mut ping = tokio::time::interval(Duration::from_secs(15));
     let mut last = tokio::time::Instant::now();
+    let mut membership = tokio::time::interval(Duration::from_secs(1));
     loop {
         tokio::select! {
+            _=membership.tick()=>{
+                if !network::current(&current)?.roster.relay_addresses.contains(&address) {
+                    bail!("RELAY_CHANGED: reconnect using the signed relay addresses")
+                }
+            },
             _=ping.tick()=>{
                 if last.elapsed()>Duration::from_secs(45){bail!("CONTROL_TIMEOUT: relay stopped responding")}
                 ws.send(Message::Ping(vec![].into())).await?;
@@ -345,26 +336,18 @@ async fn control_once(rt: Arc<Runtime>) -> Result<()> {
                         last=tokio::time::Instant::now();
                         match serde_json::from_str::<RelayMessage>(&text)? {
                             RelayMessage::Incoming{session_id,..}=>{
-                                // source_hint is routing metadata, never an identity or grant.
                                 let Ok(permit)=rt.sessions.clone().try_acquire_owned() else {
                                     net::send(&mut ws,&RelayMessage::Reject{session_id,
                                         error:Box::new(Data::error(&anyhow::anyhow!("DEVICE_BUSY: encrypted session limit reached")))}).await?;
                                     continue;
                                 };
-                                let rt=rt.clone();let address=address.clone();
+                                let rt=rt.clone();let address=address.clone();let generation=generation.clone();
                                 tokio::spawn(async move{
                                     let _permit=permit;
-                                    if let Err(error)=data_session(rt,&address,&session_id).await {
+                                    if let Err(error)=data_session(rt,&address,&generation,&session_id).await {
                                         tracing::debug!(%error,"encrypted data session ended");
                                     }
                                 });
-                            },
-                            RelayMessage::RosterUpdate{roster}=>{
-                                network::observe(&current,&roster)?;
-                                acknowledge_roster(&current,&mut ws).await?;
-                                if !roster.roster.relay_addresses.contains(&address) {
-                                    bail!("RELAY_CHANGED: reconnect using the signed relay addresses")
-                                }
                             },
                             RelayMessage::Error{code,message}=>bail!("{code}: {message}"),
                             _=>bail!("INVALID_MESSAGE: unexpected control message"),
@@ -376,20 +359,21 @@ async fn control_once(rt: Arc<Runtime>) -> Result<()> {
         }
     }
 }
-async fn acknowledge_roster(id: &Identity, ws: &mut Ws) -> Result<()> {
-    let roster = network::current(id)?;
-    net::send(
-        ws,
-        &RelayMessage::RosterAck {
-            ack: ReceiptAck::create(id, &roster)?,
-        },
-    )
-    .await
+async fn membership_sync() -> Result<()> {
+    let mut cursor = 0;
+    let mut tick = tokio::time::interval(Duration::from_secs(5));
+    loop {
+        tick.tick().await;
+        let id = Identity::load()?;
+        if let Err(error) = network::refresh_one(&id, &mut cursor).await {
+            tracing::debug!(%error, "peer membership synchronization unavailable");
+        }
+    }
 }
-async fn data_session(rt: Arc<Runtime>, address: &str, sid: &str) -> Result<()> {
+async fn data_session(rt: Arc<Runtime>, address: &str, generation: &str, sid: &str) -> Result<()> {
     let id = Identity::load()?;
     let (mut ws, certificate) = tokio::time::timeout(Duration::from_secs(10), async {
-        let outer = network::attach(&id, address, sid).await?;
+        let outer = network::attach(&id, address, generation, sid).await?;
         secure::server(outer, &id).await
     })
     .await??;
@@ -400,6 +384,16 @@ async fn data_session(rt: Arc<Runtime>, address: &str, sid: &str) -> Result<()> 
                 secure::exchange_server(&mut ws, &rt.members, &rt.network_id, &certificate),
             )
             .await??;
+            let purpose: secure::Purpose =
+                tokio::time::timeout(Duration::from_secs(10), net::receive(&mut ws)).await??;
+            if matches!(purpose, secure::Purpose::State) {
+                let state = network::PeerState {
+                    device: network::local_device(&id, rt.cwd()?.to_string_lossy().into())?,
+                    ack: ReceiptAck::create(&id, &network::current(&id)?)?,
+                };
+                net::send(&mut ws, &state).await?;
+                return Ok(());
+            }
             rt.allow(&source)?;
             let generation = rt.config()?.pause_generation;
             net::send(

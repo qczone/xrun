@@ -226,6 +226,13 @@ struct RosterExchange {
     version: String,
     roster: SignedRoster,
 }
+async fn receive_roster(ws: &mut Ws) -> Result<RosterExchange> {
+    let value: serde_json::Value = net::receive(ws).await?;
+    if let Ok(Data::Error { code, message }) = serde_json::from_value(value.clone()) {
+        bail!("{code}: {message}")
+    }
+    Ok(serde_json::from_value(value)?)
+}
 fn observe(cache: &RosterCache, network: &str, next: &SignedRoster) -> Result<()> {
     match cache.observe(network, next) {
         Ok(()) => Ok(()),
@@ -251,7 +258,7 @@ pub async fn exchange_client(
         },
     )
     .await?;
-    let peer: RosterExchange = net::receive(ws).await?;
+    let peer = receive_roster(ws).await?;
     if peer.version != VERSION {
         bail!("VERSION_MISMATCH: peer release differs")
     }
@@ -266,7 +273,7 @@ pub async fn exchange_server(
     network: &str,
     cert: &[u8],
 ) -> Result<(SignedRoster, String)> {
-    let peer: RosterExchange = net::receive(ws).await?;
+    let peer = receive_roster(ws).await?;
     if peer.version != VERSION {
         bail!("VERSION_MISMATCH: peer release differs")
     }
@@ -282,4 +289,11 @@ pub async fn exchange_server(
     )
     .await?;
     Ok((current, source))
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(tag = "purpose", rename_all = "snake_case", deny_unknown_fields)]
+pub enum Purpose {
+    Execute,
+    State,
 }

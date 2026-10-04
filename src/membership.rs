@@ -185,11 +185,13 @@ impl SignedRoster {
                 || u.host_str().is_none()
                 || !u.username().is_empty()
                 || u.password().is_some()
-                || u.path() != "/"
+                || !(u.path() == "/" || crate::relay::valid_route(u.path().trim_start_matches('/')))
                 || u.query().is_some()
                 || u.fragment().is_some()
             {
-                bail!("INVALID_ROSTER: expected HTTPS relay addresses")
+                bail!(
+                    "INVALID_ROSTER: expected HTTPS relay addresses with an optional random route"
+                )
             }
         }
         Ok(())
@@ -615,5 +617,50 @@ impl RosterCache {
         save_state(&tx, next)?;
         tx.commit()?;
         Ok(())
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ReceiptAck {
+    pub network: String,
+    pub device_id: String,
+    pub version: u64,
+    pub hash: String,
+    pub cert_pem: String,
+    pub signature: String,
+}
+impl ReceiptAck {
+    fn binding(&self) -> serde_json::Value {
+        serde_json::json!({"network":self.network,"device_id":self.device_id,"version":self.version,"hash":self.hash})
+    }
+    pub fn create(id: &config::Identity, roster: &SignedRoster) -> Result<Self> {
+        let mut ack = Self {
+            network: roster.roster.network_id.clone(),
+            device_id: id.device_id.clone(),
+            version: roster.roster.version,
+            hash: roster.hash()?,
+            cert_pem: id.cert_pem.clone(),
+            signature: String::new(),
+        };
+        ack.signature = sign(&id.key_pem, "roster-ack", &ack.binding())?;
+        Ok(ack)
+    }
+    pub fn verify(&self, roster: &SignedRoster) -> Result<()> {
+        if self.network != roster.roster.network_id
+            || self.version != roster.roster.version
+            || self.hash != roster.hash()?
+        {
+            bail!("INVALID_ACK: acknowledgement is for another roster")
+        }
+        let der = crypto::cert_der(&self.cert_pem)?;
+        crypto::verify_member_certificate(&self.cert_pem, &roster.ca_pem, &self.device_id)?;
+        roster.peer(&der, Some(&self.device_id))?;
+        verify(
+            &self.cert_pem,
+            "roster-ack",
+            &self.binding(),
+            &self.signature,
+        )
     }
 }

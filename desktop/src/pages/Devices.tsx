@@ -95,9 +95,9 @@ export function Devices({
             </button>
           </div>
           <p>撤销记录已在本机保存。</p>
-          {revocation.relay_error && (
+          {revocation.sync_error && (
             <p className="warning-text">
-              尚未发布到中转：{revocation.relay_error}
+              成员名单同步失败：{revocation.sync_error}
             </p>
           )}
           {revocation.undelivered.length > 0 ? (
@@ -114,10 +114,10 @@ export function Devices({
                 这些设备收到更新前，可能仍接受被撤销成员。紧急阻断可以在对应设备上暂停远程访问。
               </p>
             </>
-          ) : !revocation.relay_error ? (
+          ) : !revocation.sync_error ? (
             <p>当前其他成员均已确认收到更新。</p>
           ) : null}
-          {(revocation.relay_error || revocation.undelivered.length > 0) &&
+          {(revocation.sync_error || revocation.undelivered.length > 0) &&
             network?.is_manager && (
               <button
                 disabled={busy}
@@ -126,7 +126,7 @@ export function Devices({
                   if (result) setRevocation(result);
                 }}
               >
-                重新发布撤销记录
+                重新同步撤销记录
               </button>
             )}
         </section>

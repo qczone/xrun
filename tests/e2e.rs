@@ -95,7 +95,7 @@ async fn execution_transfer_and_identity() -> Result<()> {
         no_detect: true,
         data_dir: root.join("server"),
     };
-    let link = xrun::relay::enrollment(&cfg)?;
+    let link = xrun::relay::deployment_link(&cfg)?;
     let server = tokio::spawn(xrun::relay::run(cfg.clone()));
     tokio::time::timeout(Duration::from_secs(5), async {
         while tokio::net::TcpStream::connect(("127.0.0.1", port))
@@ -1054,7 +1054,7 @@ async fn linux_relay_service_configuration_and_foreground_shutdown() -> Result<(
     };
     std::fs::create_dir_all(home.join(".xrun"))?;
     xrun::config::write(&home.join(".xrun/config.toml"), &cfg)?;
-    let link = xrun::relay::enrollment(&cfg)?;
+    let link = xrun::relay::deployment_link(&cfg)?;
     let mut child = common::logged(home, &["relay", "run"], "relay")?.spawn()?;
     tokio::time::timeout(Duration::from_secs(5), async {
         while tokio::net::TcpStream::connect(("127.0.0.1", port))

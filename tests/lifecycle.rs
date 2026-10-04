@@ -219,7 +219,10 @@ async fn signed_relay_change_survives_device_restart_without_new_identity() -> R
         online(&lab.source, "target1").await?;
         let current = roster(&lab.target)?;
         assert_eq!(current.roster.version, 3);
-        assert_ne!(current.roster.relay_addresses, lab.relay.config.urls());
+        assert_ne!(
+            current.roster.relay_addresses,
+            xrun::relay::addresses(&lab.relay.config)?
+        );
         assert_eq!(
             identity(&lab.source)?.device_id,
             lab.source_identity.device_id
@@ -286,6 +289,67 @@ async fn offline_device_receives_revocation_on_reconnect_and_reports_pending_del
         let policy: xrun::config::DaemonConfig =
             config::read(&lab.target.join(".xrun/daemon.toml"))?;
         assert!(policy.allow_from.contains(&other_id));
+        Ok::<_, anyhow::Error>(())
+    })
+    .await?
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn peers_deliver_revocation_after_relay_restart_with_manager_offline() -> Result<()> {
+    tokio::time::timeout(Duration::from_secs(45), async {
+        let mut lab = Lab::new().await?;
+        let keeper = lab.root.path().join("keeper");
+        let removed = lab.root.path().join("removed");
+        for (home, name) in [(&keeper, "keeper1"), (&removed, "removed1")] {
+            std::fs::create_dir_all(home)?;
+            let invite = json(cli(&lab.source, &["invite", "--json"]).await);
+            ok(cli(
+                home,
+                &[
+                    "join",
+                    invite["link"].as_str().unwrap(),
+                    "--name",
+                    name,
+                    "--no-daemon",
+                ],
+            )
+            .await);
+        }
+        let mut keeper_daemon = logged(&keeper, &["daemon"], "keeper")?.spawn()?;
+        let mut removed_daemon = logged(&removed, &["daemon"], "removed")?.spawn()?;
+        online(&lab.source, "keeper1").await?;
+        online(&lab.source, "removed1").await?;
+        ok(cli(&lab.target, &["allow-from", "removed1"]).await);
+        version(&removed, "target1").await;
+        let removed_id = identity(&removed)?.device_id;
+        let before = roster(&lab.target)?;
+        assert!(!before.member(&removed_id)?.revoked);
+        stop_daemon(&lab.target, &mut lab.daemon).await?;
+        let revoked = json(cli(&lab.source, &["revoke", "removed1", "--json"]).await);
+        assert_eq!(
+            revoked["undelivered"],
+            serde_json::json!([lab.target_identity.device_id])
+        );
+        assert!(roster(&keeper)?.member(&removed_id)?.revoked);
+        stop_daemon(&lab.source, &mut lab.source_daemon).await?;
+        lab.relay.stop().await?;
+        assert!(!lab.relay.config.data_dir.join("relay.db").exists());
+        lab.relay.start().await?;
+        online(&keeper, "keeper1").await?;
+        // No execution grant exists between keeper and target. State exchange
+        // still synchronizes the manager-signed revocation before business use.
+        lab.daemon = logged(&lab.target, &["daemon"], "target")?.spawn()?;
+        online(&keeper, "target1").await?;
+        assert!(roster(&lab.target)?.member(&removed_id)?.revoked);
+        let denied = cli(
+            &removed,
+            &["target1", "--", &binary().to_string_lossy(), "--version"],
+        )
+        .await;
+        assert_eq!(denied.status.code(), Some(125));
+        assert!(String::from_utf8_lossy(&denied.stderr).contains("DEVICE_REVOKED"));
+        stop_daemon(&keeper, &mut keeper_daemon).await?;
+        stop_daemon(&removed, &mut removed_daemon).await?;
         Ok::<_, anyhow::Error>(())
     })
     .await?
