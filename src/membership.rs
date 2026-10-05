@@ -29,6 +29,7 @@ pub struct Roster {
     pub manager_id: String,
     pub members: Vec<Member>,
     pub relay_addresses: Vec<String>,
+    /// Empty for public HTTPS relays; otherwise pins the private deployment CA.
     pub relay_ca_pem: String,
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -178,7 +179,9 @@ impl SignedRoster {
         {
             bail!("INVALID_ROSTER: manager must be an active member")
         }
-        crypto::cert_der(&r.relay_ca_pem)?;
+        if !r.relay_ca_pem.is_empty() {
+            crypto::cert_der(&r.relay_ca_pem)?;
+        }
         for address in &r.relay_addresses {
             let u = url::Url::parse(address)?;
             if u.scheme() != "https"

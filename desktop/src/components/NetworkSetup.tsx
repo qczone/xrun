@@ -43,8 +43,8 @@ export function NetworkSetup({ joined, busy, action, onCreated }: Props) {
         <p>
           {creating ? (
             <>
-              先在 Linux 中转主机运行 <code>xrun relay install</code> 或{" "}
-              <code>xrun relay invite</code>，再粘贴输出的部署链接。
+              粘贴 Cloudflare 部署输出的 HTTPS 地址，或 Linux
+              中转输出的部署链接。
               创建后，本机成为管理设备，负责邀请和撤销成员。
             </>
           ) : (
@@ -66,7 +66,7 @@ export function NetworkSetup({ joined, busy, action, onCreated }: Props) {
             setRetry(false);
             if (creating) onCreated();
           } else if (creating) {
-            // Creation may save the identity before publishing or starting the service.
+            // Creation may save the identity before starting the service.
             setRetry(true);
           }
         }}
@@ -77,7 +77,7 @@ export function NetworkSetup({ joined, busy, action, onCreated }: Props) {
         <input
           id="setup-link"
           type="password"
-          placeholder={creating ? "xrun-relay://…" : "xrun://…"}
+          placeholder={creating ? "https://… 或 xrun-relay://…" : "xrun://…"}
           autoComplete="off"
           spellCheck={false}
           required

@@ -66,7 +66,7 @@ async fn open_at(roster: &SignedRoster, address: &str, path: &str) -> Result<Ws>
     net::websocket_at(
         address,
         path,
-        crypto::anonymous_tls_config(&roster.roster.relay_ca_pem)?,
+        crypto::relay_tls_config(&roster.roster.relay_ca_pem)?,
     )
     .await
 }
@@ -370,7 +370,7 @@ pub fn invitation_link(roster: &SignedRoster, token: &str) -> Result<String> {
         r.network_id,
         r.manager_id,
         crypto::ca_spki_pin(&roster.ca_pem)?,
-        crypto::ca_spki_pin(&r.relay_ca_pem)?
+        relay_pin(&r.relay_ca_pem)?
     ))
 }
 pub async fn invite(id: &Identity, allow: bool) -> Result<serde_json::Value> {
@@ -440,7 +440,7 @@ fn parse_link(link: &str) -> Result<Invitation> {
                 .all(|b| b.is_ascii_lowercase() || matches!(b, b'2'..=b'7'))
     };
     if !pin_valid(parts[3], 52)
-        || !pin_valid(parts[4], 52)
+        || !(parts[4] == "webpki" || pin_valid(parts[4], 52))
         || !pin_valid(token, 26)
         || parts[1] != format!("net_{}", parts[3])
     {
@@ -450,6 +450,9 @@ fn parse_link(link: &str) -> Result<Invitation> {
     let addresses = parts[0]
         .split(',')
         .map(|a| {
+            if parts[4] == "webpki" {
+                return Ok(endpoint(&format!("https://{a}"))?.addresses.remove(0));
+            }
             let (host, route) = a
                 .split_once('/')
                 .context("INVALID_LINK: missing relay route")?;
@@ -480,8 +483,7 @@ async fn pairing_at(
     manager: &str,
 ) -> Result<(Ws, String)> {
     let path = format!("/networks/{network}/connect/{manager}");
-    let mut outer =
-        net::websocket_at(address, &path, crypto::anonymous_tls_config(relay_ca)?).await?;
+    let mut outer = net::websocket_at(address, &path, crypto::relay_tls_config(relay_ca)?).await?;
     authenticate(&mut outer, None, network, &path, None).await?;
     if !matches!(receive(&mut outer).await?, RelayMessage::Connected) {
         bail!("INVALID_MESSAGE: expected pairing tunnel")
@@ -551,7 +553,7 @@ pub async fn join(link: &str, name: String) -> Result<Identity> {
     let mut error = None;
     for address in &net::ordered_addresses(&invite.addresses, &invite.root_pin) {
         let result = tokio::time::timeout(Duration::from_secs(30), async {
-            let relay_ca = crypto::discover_ca(address, &invite.relay_pin).await?;
+            let relay_ca = discover_relay_ca(address, &invite.relay_pin).await?;
             let (mut ws, root) = pairing_at(
                 address,
                 &relay_ca,
@@ -750,9 +752,40 @@ struct RelayEndpoint {
     addresses: Vec<String>,
     pin: String,
 }
+fn relay_pin(ca: &str) -> Result<String> {
+    if ca.is_empty() {
+        Ok("webpki".into())
+    } else {
+        crypto::ca_spki_pin(ca)
+    }
+}
+async fn discover_relay_ca(address: &str, pin: &str) -> Result<String> {
+    if pin == "webpki" {
+        Ok(String::new())
+    } else {
+        crypto::discover_ca(address, pin).await
+    }
+}
 fn endpoint(link: &str) -> Result<RelayEndpoint> {
+    if link.starts_with("https://") {
+        let url = url::Url::parse(link)?;
+        if url.host_str().is_none()
+            || !url.username().is_empty()
+            || url.password().is_some()
+            || url.query().is_some()
+            || url.fragment().is_some()
+            || !crate::relay::valid_route(url.path().trim_start_matches('/'))
+            || url.path().matches('/').count() != 1
+        {
+            bail!("INVALID_RELAY: expected a complete HTTPS relay address with its random route")
+        }
+        return Ok(RelayEndpoint {
+            addresses: vec![url.into()],
+            pin: "webpki".into(),
+        });
+    }
     let value = link.strip_prefix("xrun-relay://").context(
-        "INVALID_RELAY: use the deployment link printed by xrun relay install or xrun relay invite",
+        "INVALID_RELAY: use the HTTPS address or deployment link printed by the relay deployment",
     )?;
     let (value, route) = value
         .split_once('#')
@@ -789,11 +822,11 @@ pub async fn create(relay_link: &str, name: Option<String>) -> Result<Identity> 
     let mut error = None;
     for address in &endpoint.addresses {
         match tokio::time::timeout(Duration::from_secs(5), async {
-            let ca = crypto::discover_ca(address, &endpoint.pin).await?;
+            let ca = discover_relay_ca(address, &endpoint.pin).await?;
             let mut ws = net::websocket_at(
                 address,
                 "/networks/probe/status",
-                crypto::anonymous_tls_config(&ca)?,
+                crypto::relay_tls_config(&ca)?,
             )
             .await?;
             // A challenge proves the random route; there is no member yet.
@@ -829,7 +862,7 @@ pub async fn create(relay_link: &str, name: Option<String>) -> Result<Identity> 
         let manager = manager(old)?;
         let before = manager.roster()?;
         let next = if before.roster.relay_addresses == endpoint.addresses
-            && crypto::ca_spki_pin(&before.roster.relay_ca_pem)? == endpoint.pin
+            && relay_pin(&before.roster.relay_ca_pem)? == endpoint.pin
         {
             before.clone()
         } else {
@@ -871,7 +904,7 @@ pub async fn create(relay_link: &str, name: Option<String>) -> Result<Identity> 
         }
         if member.name != name
             || roster.roster.relay_addresses != endpoint.addresses
-            || crypto::ca_spki_pin(&roster.roster.relay_ca_pem)? != endpoint.pin
+            || relay_pin(&roster.roster.relay_ca_pem)? != endpoint.pin
         {
             bail!("MANAGER_STATE_MISMATCH: retry initial creation with the same name and relay")
         }
@@ -981,4 +1014,50 @@ pub async fn http<T: DeserializeOwned>(
         _ => bail!("INVALID_REQUEST: unsupported network operation"),
     };
     Ok(serde_json::from_value(value)?)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn public_relay_invitation_keeps_the_network_root_pinned() -> Result<()> {
+        let dir = tempfile::tempdir()?;
+        let address = format!("https://relay.example/{}", crate::crypto::random_token());
+        let (manager, _, _, _) = Manager::create(
+            &dir.path().join("manager"),
+            "manager1",
+            vec![address.clone()],
+            String::new(),
+        )?;
+        let roster = manager.roster()?;
+        let link = invitation_link(&roster, &crate::crypto::random_token())?;
+        let invitation = parse_link(&link)?;
+        assert_eq!(invitation.addresses, vec![address.clone()]);
+        assert_eq!(invitation.relay_pin, "webpki");
+        assert_eq!(invitation.root_pin, crypto::ca_spki_pin(&roster.ca_pem)?);
+        let endpoint = endpoint(&address)?;
+        assert_eq!(endpoint.addresses, vec![address]);
+        assert_eq!(endpoint.pin, "webpki");
+        // The manager's signature binds the transport trust policy too.
+        let mut tampered = roster.clone();
+        tampered.roster.relay_ca_pem = roster.ca_pem.clone();
+        assert!(tampered.verify(&roster.roster.network_id).is_err());
+        Ok(())
+    }
+
+    #[test]
+    fn public_relay_requires_an_unambiguous_secret_route() {
+        for value in [
+            "https://relay.example",
+            "https://relay.example/wrong",
+            "http://relay.example/abcdefghijklmnopqrstuvwxyz",
+            "https://user@relay.example/abcdefghijklmnopqrstuvwxyz",
+            "https://relay.example/abcdefghijklmnopqrstuvwxyz/",
+            "https://relay.example/abcdefghijklmnopqrstuvwxyz?x=1",
+            "https://relay.example/abcdefghijklmnopqrstuvwxyz#x",
+        ] {
+            assert!(endpoint(value).is_err(), "accepted {value}");
+        }
+    }
 }

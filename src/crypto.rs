@@ -204,6 +204,19 @@ pub fn anonymous_tls_config(ca: &str) -> Result<Arc<rustls::ClientConfig>> {
             .with_no_client_auth(),
     ))
 }
+/// An empty relay CA selects public WebPKI roots. Peer TLS always uses the
+/// separate network root, regardless of how the outer relay is hosted.
+pub fn relay_tls_config(ca: &str) -> Result<Arc<rustls::ClientConfig>> {
+    if !ca.is_empty() {
+        return anonymous_tls_config(ca);
+    }
+    let roots = rustls::RootCertStore::from_iter(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
+    Ok(Arc::new(
+        rustls::ClientConfig::builder()
+            .with_root_certificates(roots)
+            .with_no_client_auth(),
+    ))
+}
 pub fn http_client(ca: &str, id: Option<&Identity>) -> Result<reqwest::Client> {
     let mut builder = reqwest::Client::builder()
         .tls_certs_only([reqwest::Certificate::from_pem(ca.as_bytes())?])

@@ -206,6 +206,16 @@ async fn relay_routes_only_proven_members_and_keeps_binding_and_resource_limits(
                 .is_err()
         );
         let client = crypto::http_client(&keys.ca_pem, None)?;
+        // Selecting public roots must not silently trust a private deployment.
+        assert!(
+            net::websocket_at(
+                &xrun::relay::addresses(&cfg)?[0],
+                &format!("/networks/{n}/status"),
+                crypto::relay_tls_config("")?,
+            )
+            .await
+            .is_err()
+        );
         // Only the random route is accepted; there is no roster API or database.
         for url in [
             format!("{}/networks/{n}/status", cfg.urls()[0]),
