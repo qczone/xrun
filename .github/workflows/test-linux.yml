@@ -47,6 +47,23 @@ jobs:
           sudo apt-get update -qq
           sudo apt-get install -y xvfb libx11-6 libxrandr2
           xvfb-run -a -s '-screen 0 1024x768x24' cargo test --locked --test screenshot -- --ignored
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version-file: cloudflare/package.json
+      - name: Cache Cloudflare relay dependencies
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.bun/install/cache
+          key: xrun-${{ runner.os }}-${{ runner.arch }}-cloudflare-${{ hashFiles('cloudflare/bun.lock', 'cloudflare/package.json') }}
+          restore-keys: xrun-${{ runner.os }}-${{ runner.arch }}-cloudflare-
+      - name: Check Cloudflare relay in workerd
+        working-directory: cloudflare
+        env:
+          WRANGLER_SEND_METRICS: 'false'
+        run: |
+          bun install --frozen-lockfile
+          bun run check
+          bun run test
       - name: Upload failed test process logs
         if: failure()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
