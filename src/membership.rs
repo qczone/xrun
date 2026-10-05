@@ -1,5 +1,5 @@
-//! Network authority lives on the manager. Relays may cache these records, but
-//! neither their transport certificate nor their claims establish peer identity.
+//! Network authority lives on the manager; signed records travel between peers.
+//! Relay transport certificates and routing claims do not establish peer identity.
 use crate::{config, crypto, protocol::*};
 use anyhow::{Context, Result, bail};
 use base64::{Engine, engine::general_purpose::STANDARD};

@@ -1,5 +1,5 @@
 node_modules/
 .wrangler/
+.deploy/
 .dev.vars
 .env
-probe/target/

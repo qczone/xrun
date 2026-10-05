@@ -200,7 +200,13 @@ pub fn local_device(id: &Identity, cwd: String) -> Result<Device> {
     })
 }
 async fn peer_state(id: &Identity, target: &str, via: &SignedRoster) -> Result<PeerState> {
-    tokio::time::timeout(Duration::from_secs(5), async {
+    // Public relays add edge and inter-device round trips to the full handshake.
+    let timeout = Duration::from_secs(if via.roster.relay_ca_pem.is_empty() {
+        20
+    } else {
+        5
+    });
+    tokio::time::timeout(timeout, async {
         let (mut ws, _) = peer_session(id, target, via, secure::Purpose::State).await?;
         let value: serde_json::Value = net::receive(&mut ws).await?;
         if let Ok(Data::Error { code, message }) = serde_json::from_value(value.clone()) {
@@ -258,7 +264,7 @@ async fn states_for(id: &Identity, via: &SignedRoster, ids: Vec<String>) -> Resu
             {
                 return Err(error);
             }
-            Err(_) => {}
+            Err(error) => tracing::debug!(%target, %error, "peer state request unavailable"),
         }
     }
     Ok(states)
@@ -1029,7 +1035,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn public_relay_invitation_keeps_the_network_root_pinned() -> Result<()> {
+    fn public_relay_preserves_network_identity_through_pairing_and_revocation() -> Result<()> {
         let dir = tempfile::tempdir()?;
         let address = format!("https://relay.example/{}", crate::crypto::random_token());
         let (manager, _, _, _) = Manager::create(
@@ -1051,6 +1057,22 @@ mod tests {
         let mut tampered = roster.clone();
         tampered.roster.relay_ca_pem = roster.ca_pem.clone();
         assert!(tampered.verify(&roster.roster.network_id).is_err());
+        let cache = RosterCache::open(&dir.path().join("roster.db"))?;
+        cache.observe(&roster.roster.network_id, &roster)?;
+        let (_, csr) = crypto::new_device_request()?;
+        let paired = manager.pair(&manager.invite(false)?, "member1", &csr)?;
+        cache.observe(&roster.roster.network_id, &paired.roster)?;
+        drop(manager);
+        let manager = Manager::open(&dir.path().join("manager"))?;
+        let revoked = manager.revoke("member1")?;
+        cache.observe(&roster.roster.network_id, &revoked)?;
+        assert!(
+            cache
+                .load(&roster.roster.network_id)?
+                .member("member1")?
+                .revoked
+        );
+        assert!(manager.pair("", "member1", &csr).is_err());
         Ok(())
     }
 

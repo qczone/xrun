@@ -34,7 +34,7 @@ struct LocalCli {
 enum Local {
     /// Create an end-to-end network; this device becomes its manager
     Up {
-        /// Deployment link printed by xrun relay install or relay invite
+        /// Complete HTTPS relay address or xrun-relay:// deployment link
         #[arg(long)]
         relay: String,
         #[arg(long)]
