@@ -4,7 +4,7 @@ use crate::{
     membership::{Manager, Pairing, ReceiptAck, RosterCache, SignedRoster},
     net::{self, Ws},
     protocol::*,
-    relay::RelayMessage,
+    relay::{Proof, RelayMessage},
     secure,
 };
 use anyhow::{Context, Result, bail};
@@ -91,12 +91,35 @@ async fn open_via(id: &Identity, roster: &SignedRoster, path: &str) -> Result<(W
 pub async fn open(id: &Identity, path: &str) -> Result<(Ws, String)> {
     open_via(id, &current(id)?, path).await
 }
+/// Answers the relay challenge. Members prove their certificate; joining and
+/// renewing devices send no proof and can reach only the manager.
+pub async fn authenticate(
+    ws: &mut Ws,
+    id: Option<&Identity>,
+    network: &str,
+    path: &str,
+    root: Option<&Manager>,
+) -> Result<()> {
+    let RelayMessage::Challenge { nonce } = receive(ws).await? else {
+        bail!("INVALID_MESSAGE: expected a relay challenge")
+    };
+    let proof = id
+        .map(|id| Proof::create(id, network, path, &nonce, root))
+        .transpose()?;
+    net::send(ws, &RelayMessage::Authenticate { proof }).await
+}
 pub async fn control(id: &Identity) -> Result<(Ws, String)> {
-    open(
-        id,
-        &format!("/networks/{}/control", authority(id)?.network_id),
-    )
-    .await
+    let network = &authority(id)?.network_id;
+    let path = format!("/networks/{network}/control");
+    // The root-key signature lets the relay route pairing to the manager only.
+    let root = if authority(id)?.manager_id == id.device_id {
+        Some(manager(id)?)
+    } else {
+        None
+    };
+    let (mut ws, address) = open(id, &path).await?;
+    authenticate(&mut ws, Some(id), network, &path, root.as_ref()).await?;
+    Ok((ws, address))
 }
 pub async fn attach(id: &Identity, address: &str, generation: &str, sid: &str) -> Result<Ws> {
     let roster = current(id)?;
@@ -119,6 +142,7 @@ async fn peer_session(
     let network = authority(id)?;
     let path = format!("/networks/{}/connect/{target}", network.network_id);
     let (mut outer, address) = open_via(id, via, &path).await?;
+    authenticate(&mut outer, Some(id), &network.network_id, &path, None).await?;
     if !matches!(receive(&mut outer).await?, RelayMessage::Connected) {
         bail!("INVALID_MESSAGE: expected an encrypted tunnel")
     }
@@ -185,8 +209,10 @@ async fn peer_state(id: &Identity, target: &str, via: &SignedRoster) -> Result<P
     .context("CONNECT_TIMEOUT: peer state request timed out")?
 }
 async fn online_ids(id: &Identity, via: &SignedRoster) -> Result<Vec<String>> {
-    let path = format!("/networks/{}/status", authority(id)?.network_id);
+    let network = &authority(id)?.network_id;
+    let path = format!("/networks/{network}/status");
     let (mut ws, _) = open_via(id, via, &path).await?;
+    authenticate(&mut ws, Some(id), network, &path, None).await?;
     let RelayMessage::Status { mut devices } = receive(&mut ws).await? else {
         bail!("INVALID_MESSAGE: expected relay routes")
     };
@@ -456,6 +482,7 @@ async fn pairing_at(
     let path = format!("/networks/{network}/connect/{manager}");
     let mut outer =
         net::websocket_at(address, &path, crypto::anonymous_tls_config(relay_ca)?).await?;
+    authenticate(&mut outer, None, network, &path, None).await?;
     if !matches!(receive(&mut outer).await?, RelayMessage::Connected) {
         bail!("INVALID_MESSAGE: expected pairing tunnel")
     }
@@ -769,8 +796,9 @@ pub async fn create(relay_link: &str, name: Option<String>) -> Result<Identity> 
                 crypto::anonymous_tls_config(&ca)?,
             )
             .await?;
-            if !matches!(receive(&mut ws).await?, RelayMessage::Status { .. }) {
-                bail!("INVALID_MESSAGE: expected relay routes")
+            // A challenge proves the random route; there is no member yet.
+            if !matches!(receive(&mut ws).await?, RelayMessage::Challenge { .. }) {
+                bail!("INVALID_MESSAGE: expected a relay challenge")
             }
             Ok::<_, anyhow::Error>(ca)
         })

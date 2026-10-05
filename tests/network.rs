@@ -29,8 +29,8 @@ async fn registration_permissions_migration_and_manager_offline_execution() -> R
         // untrusted relay accepts a mismatched component. The token survives.
         let network=&lab.source_identity.network.as_ref().unwrap().network_id;
         let roster=RosterCache::open(&lab.source.join(".xrun/roster.db"))?.load(network)?;
-        let mut outer=xrun::net::websocket_at(&roster.roster.relay_addresses[0],
-            &format!("/networks/{network}/connect/{}", lab.source_identity.device_id),xrun::crypto::anonymous_tls_config(&roster.roster.relay_ca_pem)?).await?;
+        let mut outer=common::relay_socket(None,&roster,
+            &format!("/networks/{network}/connect/{}", lab.source_identity.device_id)).await?;
         assert!(matches!(xrun::net::receive(&mut outer).await?,xrun::relay::RelayMessage::Connected));
         let (mut peer,_)=xrun::secure::pairing_client(outer,&xrun::crypto::ca_spki_pin(&roster.ca_pem)?,&lab.source_identity.device_id).await?;
         xrun::net::send(&mut peer,&xrun::protocol::PairRequest {
@@ -63,14 +63,21 @@ async fn registration_permissions_migration_and_manager_offline_execution() -> R
         })
         .await?;
         // Knowing the relay route without a member certificate only permits
-        // inner-TLS pairing, never execution or task-history access.
-        for target in [&lab.source_identity.device_id, &lab.target_identity.device_id] {
-            let mut outer = xrun::net::websocket_at(&roster.roster.relay_addresses[0], &format!("/networks/{network}/connect/{target}"), xrun::crypto::anonymous_tls_config(&roster.roster.relay_ca_pem)?).await?;
-            assert!(matches!(xrun::net::receive(&mut outer).await?, xrun::relay::RelayMessage::Connected));
-            let (mut anonymous, _) = xrun::secure::pairing_client(outer, &xrun::crypto::ca_spki_pin(&roster.ca_pem)?, target).await?;
+        // pairing with the manager, never execution or task-history access.
+        let path = format!("/networks/{network}/connect/{}", lab.target_identity.device_id);
+        let mut outer = common::relay_socket(None, &roster, &path).await?;
+        assert!(matches!(xrun::net::receive(&mut outer).await?, xrun::relay::RelayMessage::Error { code, .. } if code == "UNAUTHENTICATED"));
+        let manager = &lab.source_identity.device_id;
+        let mut outer = common::relay_socket(None, &roster, &format!("/networks/{network}/connect/{manager}")).await?;
+        assert!(matches!(xrun::net::receive(&mut outer).await?, xrun::relay::RelayMessage::Connected));
+        let (mut anonymous, _) = xrun::secure::pairing_client(outer, &xrun::crypto::ca_spki_pin(&roster.ca_pem)?, manager).await?;
+        // The manager may reject and close before reading the request, so a
+        // failed write is a refusal too.
+        let answer = async {
             xrun::net::send(&mut anonymous, &xrun::protocol::Data::Request { request: xrun::protocol::Request::Jobs { id: None, running: false, request_id: None, limit: 10, offset: 0 } }).await?;
-            assert!(matches!(xrun::net::receive::<xrun::protocol::Data>(&mut anonymous).await?, xrun::protocol::Data::Error { .. }));
-        }
+            xrun::net::receive::<xrun::protocol::Data>(&mut anonymous).await
+        }.await;
+        assert!(matches!(answer, Err(_) | Ok(xrun::protocol::Data::Error { .. })));
         // Registration alone grants neither direction of execution.
         for (home, target) in [(&lab.source, "ordinary1"), (&ordinary, "source1")] {
             let output = cli(

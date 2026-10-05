@@ -299,16 +299,12 @@ async fn control_once(rt: Arc<Runtime>) -> Result<()> {
     if network::authority(&current)?.manager_id == current.device_id {
         network::observe(&current, &network::manager(&current)?.roster()?)?;
     }
-    let _ = network::refresh(&current).await;
+    // Catch up once per connection from the manager, or from one random peer
+    // while it is offline, so a relay restart does not make every device
+    // contact every other device at once.
+    let _ = network::refresh_one(&current, &mut sync_cursor()).await;
     net::renew_identity(&mut current).await?;
     let (mut ws, address) = network::control(&current).await?;
-    net::send(
-        &mut ws,
-        &RelayMessage::Hello {
-            device_id: current.device_id.clone(),
-        },
-    )
-    .await?;
     let RelayMessage::HelloAck { generation } = network::receive(&mut ws).await? else {
         bail!("INVALID_MESSAGE: expected control acknowledgement")
     };
@@ -359,11 +355,19 @@ async fn control_once(rt: Arc<Runtime>) -> Result<()> {
         }
     }
 }
+fn sync_cursor() -> usize {
+    usize::from(uuid::Uuid::new_v4().as_bytes()[0])
+}
+// The manager pushes membership changes, each reconnect catches up once, and
+// every session exchanges signed rosters. This fallback only covers devices
+// that missed all of those, so it runs rarely and with jitter: each pass costs
+// relay connections and a mutual TLS handshake, usually with the manager.
+const MEMBERSHIP_SYNC: Duration = Duration::from_secs(300);
 async fn membership_sync() -> Result<()> {
-    let mut cursor = 0;
-    let mut tick = tokio::time::interval(Duration::from_secs(5));
+    let mut cursor = sync_cursor();
     loop {
-        tick.tick().await;
+        let jitter = u64::from(uuid::Uuid::new_v4().as_bytes()[0]) * 60_000 / 256;
+        tokio::time::sleep(MEMBERSHIP_SYNC + Duration::from_millis(jitter)).await;
         let id = Identity::load()?;
         if let Err(error) = network::refresh_one(&id, &mut cursor).await {
             tracing::debug!(%error, "peer membership synchronization unavailable");

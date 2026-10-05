@@ -1,6 +1,7 @@
 use crate::{
-    config::ServerConfig,
+    config::{Identity, ServerConfig},
     crypto,
+    membership::{self, Manager},
     protocol::*,
     server::{self, TransportPermit},
 };
@@ -25,10 +26,81 @@ use std::{
 use tokio::sync::{Mutex, mpsc, oneshot, watch};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Proof {
+    pub device_id: String,
+    pub cert_pem: String,
+    pub root_pem: String,
+    pub signature: String,
+    /// Only the manager's control connection carries this root-key signature,
+    /// so pairing without a member certificate reaches no other device.
+    pub manager_signature: Option<String>,
+}
+#[derive(Debug, Serialize)]
+pub struct ChallengeBinding<'a> {
+    pub network: &'a str,
+    pub device: &'a str,
+    pub path: &'a str,
+    pub nonce: &'a str,
+}
+impl Proof {
+    pub fn create(
+        id: &Identity,
+        network: &str,
+        path: &str,
+        nonce: &str,
+        manager: Option<&Manager>,
+    ) -> Result<Self> {
+        let binding = ChallengeBinding {
+            network,
+            device: &id.device_id,
+            path,
+            nonce,
+        };
+        Ok(Self {
+            device_id: id.device_id.clone(),
+            cert_pem: id.cert_pem.clone(),
+            root_pem: id.ca_pem.clone(),
+            signature: membership::sign(&id.key_pem, "relay-proof", &binding)?,
+            manager_signature: manager.map(|m| m.sign_relay(&binding)).transpose()?,
+        })
+    }
+    /// The network ID is the root key fingerprint, so the relay verifies
+    /// members without storing a roster. Revocation remains an endpoint check;
+    /// a revoked device can only appear as itself until its certificate expires.
+    /// Returns whether the proof also holds the network root key.
+    pub fn verify(&self, network: &str, path: &str, nonce: &str) -> Result<bool> {
+        if network != format!("net_{}", crypto::ca_spki_pin(&self.root_pem)?) {
+            bail!("UNAUTHENTICATED: proof belongs to another network")
+        }
+        crypto::verify_member_certificate(&self.cert_pem, &self.root_pem, &self.device_id)
+            .map_err(|e| anyhow::anyhow!("UNAUTHENTICATED: invalid member certificate: {e}"))?;
+        let binding = ChallengeBinding {
+            network,
+            device: &self.device_id,
+            path,
+            nonce,
+        };
+        membership::verify(&self.cert_pem, "relay-proof", &binding, &self.signature)
+            .map_err(|_| anyhow::anyhow!("UNAUTHENTICATED: invalid member proof"))?;
+        let Some(signature) = &self.manager_signature else {
+            return Ok(false);
+        };
+        membership::verify(&self.root_pem, "relay-manager", &binding, signature)
+            .map_err(|_| anyhow::anyhow!("UNAUTHENTICATED: invalid manager proof"))?;
+        Ok(true)
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub enum RelayMessage {
-    Hello {
-        device_id: String,
+    Challenge {
+        nonce: String,
+    },
+    /// None only for pairing, which the relay routes to the manager alone.
+    Authenticate {
+        proof: Option<Proof>,
     },
     HelloAck {
         generation: String,
@@ -100,16 +172,56 @@ type ApiResult<T> = std::result::Result<T, Api>;
 
 struct ControlConnection {
     generation: String,
+    manager: bool,
     tx: mpsc::Sender<RelayMessage>,
     cancel: watch::Sender<bool>,
 }
 struct Session {
     network: String,
     source: std::net::IpAddr,
+    anonymous: bool,
     target: String,
     generation: String,
     claim: Option<oneshot::Sender<std::result::Result<WebSocket, Data>>>,
     cancel: watch::Sender<bool>,
+}
+/// Challenges the client and returns the proven device and whether it holds
+/// the network root key, or None for a pairing client without a certificate.
+async fn authenticate(
+    ws: &mut WebSocket,
+    network: &str,
+    path: &str,
+    permit: &TransportPermit,
+) -> Result<Option<(String, bool)>> {
+    let nonce = crypto::random_token();
+    send(
+        ws,
+        &RelayMessage::Challenge {
+            nonce: nonce.clone(),
+        },
+    )
+    .await?;
+    let RelayMessage::Authenticate { proof } =
+        tokio::time::timeout(Duration::from_secs(5), receive(ws)).await??
+    else {
+        bail!("UNAUTHENTICATED: expected a member proof")
+    };
+    let Some(proof) = proof else {
+        return Ok(None);
+    };
+    let manager = proof.verify(network, path, &nonce)?;
+    permit.authenticated();
+    Ok(Some((proof.device_id, manager)))
+}
+async fn member(
+    ws: &mut WebSocket,
+    network: &str,
+    path: &str,
+    permit: &TransportPermit,
+) -> Result<(String, bool)> {
+    authenticate(ws, network, path, permit)
+        .await?
+        .context("UNAUTHENTICATED: member proof required")
 }
 #[derive(Default)]
 struct Connections {
@@ -128,21 +240,25 @@ async fn status_route(
     ws: WebSocketUpgrade,
 ) -> ApiResult<Response> {
     version(&headers)?;
-    permit.authenticated();
     Ok(ws
         .max_message_size(MAX_MESSAGE)
         .max_frame_size(MAX_MESSAGE)
         .on_upgrade(move |mut ws| async move {
-            let devices = app
-                .connections
-                .lock()
-                .await
-                .controls
-                .keys()
-                .filter(|(n, _)| n == &network)
-                .map(|(_, id)| id.clone())
-                .collect();
-            let result = send(&mut ws, &RelayMessage::Status { devices }).await;
+            let result = async {
+                let path = format!("/networks/{network}/status");
+                member(&mut ws, &network, &path, &permit).await?;
+                let devices = app
+                    .connections
+                    .lock()
+                    .await
+                    .controls
+                    .keys()
+                    .filter(|(n, _)| n == &network)
+                    .map(|(_, id)| id.clone())
+                    .collect();
+                send(&mut ws, &RelayMessage::Status { devices }).await
+            }
+            .await;
             finish(&mut ws, result).await;
         }))
 }
@@ -154,12 +270,11 @@ async fn control_route(
     ws: WebSocketUpgrade,
 ) -> ApiResult<Response> {
     version(&headers)?;
-    permit.authenticated();
     Ok(ws
         .max_message_size(MAX_MESSAGE)
         .max_frame_size(MAX_MESSAGE)
         .on_upgrade(move |mut ws| async move {
-            let result = control(&app, &network, &mut ws).await;
+            let result = control(&app, &network, &mut ws, &permit).await;
             finish(&mut ws, result).await;
         }))
 }
@@ -169,16 +284,16 @@ async fn finish(ws: &mut WebSocket, result: Result<()>) {
     }
     let _ = tokio::time::timeout(Duration::from_secs(1), ws.close()).await;
 }
-async fn control(app: &App, network: &str, ws: &mut WebSocket) -> Result<()> {
-    let RelayMessage::Hello { device_id: id } =
-        tokio::time::timeout(Duration::from_secs(5), receive(ws)).await??
-    else {
-        bail!("INVALID_MESSAGE: expected a routing ID")
-    };
-    // IDs only select connections. Peer certificates are checked inside the tunnel.
-    if id.is_empty() || id.len() > 128 || network.is_empty() || network.len() > 128 {
-        bail!("INVALID_MESSAGE: invalid routing ID")
-    }
+async fn control(
+    app: &App,
+    network: &str,
+    ws: &mut WebSocket,
+    permit: &TransportPermit,
+) -> Result<()> {
+    // Only the holder of a device key can take over that device's routing slot.
+    // Authorization still happens inside the end-to-end tunnel.
+    let path = format!("/networks/{network}/control");
+    let (id, manager) = member(ws, network, &path, permit).await?;
     let key = (network.to_owned(), id.clone());
     let generation = uuid::Uuid::new_v4().simple().to_string();
     let (tx, mut rx) = mpsc::channel(16);
@@ -195,6 +310,7 @@ async fn control(app: &App, network: &str, ws: &mut WebSocket) -> Result<()> {
             key.clone(),
             ControlConnection {
                 generation: generation.clone(),
+                manager,
                 tx,
                 cancel,
             },
@@ -256,12 +372,11 @@ async fn source_route(
     ws: WebSocketUpgrade,
 ) -> ApiResult<Response> {
     version(&headers)?;
-    permit.authenticated();
     Ok(ws
         .max_message_size(MAX_MESSAGE)
         .max_frame_size(MAX_MESSAGE)
         .on_upgrade(move |mut ws| async move {
-            let result = source(&app, &network, &target, peer.ip(), &mut ws).await;
+            let result = source(&app, &network, &target, peer.ip(), &mut ws, &permit).await;
             finish(&mut ws, result).await;
         }))
 }
@@ -271,19 +386,26 @@ async fn source(
     target: &str,
     source: std::net::IpAddr,
     ws: &mut WebSocket,
+    permit: &TransportPermit,
 ) -> Result<()> {
+    let path = format!("/networks/{network}/connect/{target}");
+    let anonymous = authenticate(ws, network, &path, permit).await?.is_none();
     let sid = uuid::Uuid::new_v4().simple().to_string();
     let (tx, rx) = oneshot::channel();
     let (cancel, mut closed) = watch::channel(false);
     {
         let mut c = app.connections.lock().await;
+        let to_target = |s: &&Session| s.network == network && s.target == target;
         if c.sessions.len() >= 4096
-            || c.sessions
-                .values()
-                .filter(|s| s.network == network && s.target == target)
-                .count()
-                >= 32
+            || c.sessions.values().filter(to_target).count() >= 32
             || c.sessions.values().filter(|s| s.source == source).count() >= 16
+            || (anonymous
+                && c.sessions
+                    .values()
+                    .filter(to_target)
+                    .filter(|s| s.anonymous)
+                    .count()
+                    >= 4)
         {
             bail!("SESSION_LIMIT: too many concurrent relay sessions")
         }
@@ -291,6 +413,11 @@ async fn source(
             .controls
             .get(&(network.into(), target.into()))
             .context("DEVICE_OFFLINE: target is offline")?;
+        // Joining and renewal clients have no usable member certificate; they
+        // may only reach the device that proved it holds the network root key.
+        if anonymous && !control.manager {
+            bail!("UNAUTHENTICATED: member proof required")
+        }
         let generation = control.generation.clone();
         control
             .tx
@@ -303,6 +430,7 @@ async fn source(
             Session {
                 network: network.into(),
                 source,
+                anonymous,
                 target: target.into(),
                 generation,
                 claim: Some(tx),
@@ -332,12 +460,13 @@ async fn attach_route(
     ws: WebSocketUpgrade,
 ) -> ApiResult<Response> {
     version(&headers)?;
-    permit.authenticated();
     Ok(ws
         .max_message_size(MAX_MESSAGE)
         .max_frame_size(MAX_MESSAGE)
         .on_upgrade(move |mut ws| async move {
             let result = async {
+                // The generation and session ID reach only the authenticated
+                // control connection, so a matching attach needs no new proof.
                 let sender = {
                     let mut c = app.connections.lock().await;
                     let control = c
@@ -362,6 +491,7 @@ async fn attach_route(
                         .take()
                         .context("INVALID_SESSION: session was already claimed")?
                 };
+                permit.authenticated();
                 send(&mut ws, &RelayMessage::Connected).await?;
                 sender
                     .send(Ok(ws))

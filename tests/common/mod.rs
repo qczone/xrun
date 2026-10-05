@@ -249,18 +249,20 @@ impl Lab {
     }
 }
 
+/// Opens a relay socket and answers its challenge; None pairs anonymously.
 pub async fn relay_socket(
-    id: &Identity,
+    id: Option<&Identity>,
     roster: &xrun::membership::SignedRoster,
     path: &str,
 ) -> Result<xrun::net::Ws> {
-    let _ = id;
-    xrun::net::websocket_at(
+    let mut ws = xrun::net::websocket_at(
         &roster.roster.relay_addresses[0],
         path,
         xrun::crypto::anonymous_tls_config(&roster.roster.relay_ca_pem)?,
     )
-    .await
+    .await?;
+    xrun::network::authenticate(&mut ws, id, &roster.roster.network_id, path, None).await?;
+    Ok(ws)
 }
 
 pub async fn peer_session(home: &Path, id: &Identity, target: &str) -> Result<xrun::net::Ws> {
@@ -269,7 +271,7 @@ pub async fn peer_session(home: &Path, id: &Identity, target: &str) -> Result<xr
     let network = &id.network.as_ref().context("network identity")?.network_id;
     let roster = cache.load(network)?;
     let mut outer = relay_socket(
-        id,
+        Some(id),
         &roster,
         &format!("/networks/{network}/connect/{target}"),
     )

@@ -21,6 +21,9 @@
 /.env.*
 !/.env.example
 
+# Local design exports
+/output/
+
 # Editor and OS files
 .DS_Store
 /.idea/

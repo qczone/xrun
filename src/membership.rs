@@ -412,6 +412,10 @@ impl Manager {
     pub fn roster(&self) -> Result<SignedRoster> {
         state(&self.db.lock().unwrap())
     }
+    /// Proves to the relay that this device holds the network root key.
+    pub(crate) fn sign_relay<T: Serialize>(&self, value: &T) -> Result<String> {
+        sign(&self.key_pem, "relay-manager", value)
+    }
     pub fn invite(&self, allow: bool) -> Result<String> {
         let token = crypto::random_token();
         let db = self.db.lock().unwrap();
