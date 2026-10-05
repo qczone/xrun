@@ -4,6 +4,7 @@ use crate::{
     net::{self, Ws},
     protocol::*,
     service,
+    session::Session,
     store::{Submission, SubmissionStore},
 };
 use anyhow::{Context, Result, bail};
@@ -755,37 +756,8 @@ fn invitation_notice(allow: bool) {
     }
 }
 
-struct Session {
-    ws: Ws,
-    db_id: String,
-    cwd: String,
-}
 async fn session(id: &Identity, target: &str) -> Result<Session> {
-    let (mut ws, _) = net::websocket(id, &format!("/devices/{target}/session")).await?;
-    let data =
-        tokio::time::timeout(Duration::from_secs(12), net::receive::<Data>(&mut ws)).await??;
-    match data {
-        Data::Ready {
-            version,
-            device_id,
-            db_id,
-            default_cwd,
-        } => {
-            if version != VERSION {
-                bail!("VERSION_MISMATCH: daemon runs {version}, CLI runs {VERSION}")
-            }
-            if device_id != target {
-                bail!("DEVICE_MISMATCH: session connected to a different device")
-            };
-            Ok(Session {
-                ws,
-                db_id,
-                cwd: default_cwd,
-            })
-        }
-        Data::Error { code, message } => bail!("{code}: {message}"),
-        _ => bail!("INVALID_MESSAGE: expected ready"),
-    }
+    Session::open(id, target).await
 }
 async fn response(ws: &mut Ws) -> Result<Data> {
     match net::receive::<Data>(ws).await? {
@@ -796,7 +768,9 @@ async fn response(ws: &mut Ws) -> Result<Data> {
 async fn request(id: &Identity, target: &str, req: Request) -> Result<Data> {
     let mut s = session(id, target).await?;
     net::send(&mut s.ws, &Data::Request { request: req }).await?;
-    response(&mut s.ws).await
+    let value = response(&mut s.ws).await?;
+    s.finish().await;
+    Ok(value)
 }
 fn job_ref(job: &Job) -> String {
     format!("{}/{}", job.target_device_id, job.job_id)
@@ -854,15 +828,6 @@ fn read_input(max: u64) -> Result<Vec<u8>> {
     Ok(bytes)
 }
 
-fn file_input() -> Result<Vec<u8>> {
-    let mut spool = tempfile::Builder::new().prefix("xrun-push-").tempfile()?;
-    let count = std::io::copy(&mut std::io::stdin().take(MAX_FILE + 1), &mut spool)?;
-    if count > MAX_FILE {
-        bail!("INPUT_TOO_LARGE: maximum {MAX_FILE} bytes");
-    }
-    spool.as_file().sync_all()?;
-    crate::transfer::read_file(spool.path())
-}
 fn save_download(
     bytes: &[u8],
     path: Option<PathBuf>,
@@ -910,8 +875,18 @@ async fn remote(cli: DeviceCli) -> Result<i32> {
         Remote::Run(e) | Remote::Start(e) => e.request_id.as_deref(),
         _ => None,
     };
-    let submissions = SubmissionStore::open(&config::device_dir()?.join("submissions.sqlite"))?;
-    let prior = explicit.map(|r| submissions.get(r)).transpose()?.flatten();
+    let submissions = if matches!(&cli.command, Remote::Run(e) | Remote::Start(e) if !e.interactive)
+    {
+        Some(SubmissionStore::open(
+            &config::device_dir()?.join("submissions.sqlite"),
+        )?)
+    } else {
+        None
+    };
+    let prior = explicit
+        .map(|r| submissions.as_ref().context("submission store")?.get(r))
+        .transpose()?
+        .flatten();
     if prior
         .as_ref()
         .is_some_and(|p| cli.device != p.target_device_id && cli.device != p.target_name)
@@ -992,7 +967,7 @@ async fn remote(cli: DeviceCli) -> Result<i32> {
                 e,
                 false,
                 json,
-                &submissions,
+                submissions.as_ref().context("submission store")?,
                 prior,
             ))
             .await
@@ -1004,7 +979,7 @@ async fn remote(cli: DeviceCli) -> Result<i32> {
                 e,
                 true,
                 json,
-                &submissions,
+                submissions.as_ref().context("submission store")?,
                 prior,
             ))
             .await
@@ -1201,6 +1176,7 @@ async fn remote(cli: DeviceCli) -> Result<i32> {
             };
             match result {
                 Ok(Data::Job { job }) => {
+                    s.finish().await;
                     show_job(json, &job);
                     Ok(0)
                 }
@@ -1219,13 +1195,14 @@ async fn remote(cli: DeviceCli) -> Result<i32> {
             no_overwrite,
             expect,
         } => {
-            let bytes = if local == "-" {
-                file_input()?
+            let input_snapshot;
+            let (file, size, hash) = if local == "-" {
+                let (temp, size, hash) = crate::transfer::snapshot_input(std::io::stdin().lock())?;
+                input_snapshot = temp;
+                (input_snapshot.reopen()?, size, hash)
             } else {
-                crate::transfer::read_file(Path::new(&local))?
+                crate::transfer::prepare_upload(Path::new(&local))?
             };
-            let size = bytes.len() as u64;
-            let hash = sha256(&bytes);
             let mut s = session(&id, target).await?;
             let path = remote;
             let sent = std::sync::atomic::AtomicBool::new(false);
@@ -1246,7 +1223,7 @@ async fn remote(cli: DeviceCli) -> Result<i32> {
                     },
                 )
                 .await?;
-                net::send_bytes(&mut s.ws, &bytes).await?;
+                net::send_file(&mut s.ws, &file).await?;
                 response(&mut s.ws).await
             };
             let result = tokio::select! {
@@ -1256,6 +1233,7 @@ async fn remote(cli: DeviceCli) -> Result<i32> {
             };
             match result {
                 Ok(Data::File { path, .. }) => {
+                    s.finish().await;
                     print(
                         json,
                         &serde_json::json!({"device_id":target,"remote_path":path,"size":size,"sha256":hash}),
@@ -1294,12 +1272,23 @@ async fn remote(cli: DeviceCli) -> Result<i32> {
             else {
                 bail!("INVALID_MESSAGE: expected file header")
             };
-            let bytes = net::receive_bytes(&mut s.ws, size, &sha256, MAX_FILE).await?;
+            let mut temp =
+                net::receive_file_with_prefix(&mut s.ws, size, &sha256, "xrun-pull-").await?;
+            s.finish().await;
             if local.as_deref() == Some("-") {
-                std::io::stdout().write_all(&bytes)?;
+                std::io::copy(temp.as_file_mut(), &mut std::io::stdout().lock())?;
                 return Ok(0);
             }
-            let local = save_download(&bytes, local.map(PathBuf::from), "xrun-pull-", "")?;
+            let local = if let Some(path) = local {
+                crate::transfer::save_local_reader(
+                    &std::env::current_dir()?.join(path),
+                    temp.as_file_mut(),
+                )?
+            } else {
+                temp.as_file().sync_all()?;
+                config::sync_parent(temp.path())?;
+                temp.keep()?.1
+            };
             print(
                 json,
                 &serde_json::json!({"path":local,"device_id":target,"remote_path":path,"size":size,"sha256":sha256}),
@@ -1328,6 +1317,7 @@ async fn remote(cli: DeviceCli) -> Result<i32> {
                 bail!("INVALID_MESSAGE: expected screenshot header")
             };
             let bytes = net::receive_bytes(&mut s.ws, size, &sha256, MAX_FILE).await?;
+            s.finish().await;
             let path = save_download(&bytes, local, "xrun-screen-", ".png")?;
             print(
                 json,
@@ -1561,6 +1551,9 @@ async fn execute_cli(
     submission.status = "confirmed".into();
     store.save(&submission)?;
     if background {
+        if acknowledged {
+            s.finish().await;
+        }
         print(json, &job, || println!("{target_name}/{}", job.job_id));
         return Ok(0);
     }
@@ -1575,7 +1568,9 @@ async fn execute_cli(
         let result = {
             let logs = async {
                 if let Some(mut session) = initial.take() {
-                    receive_logs(&mut session.ws, false, &mut cursor).await
+                    let job = receive_logs(&mut session.ws, false, &mut cursor).await?;
+                    session.finish().await;
+                    Ok(job)
                 } else {
                     stream_logs(id, target, &job.job_id, true, false, &mut cursor).await
                 }
@@ -1660,10 +1655,11 @@ async fn recover(
                         },
                     )
                     .await?;
-                    if let Data::Jobs { jobs } = response(&mut s.ws).await?
-                        && let Some(job) = jobs.into_iter().next()
-                    {
-                        return Ok(job);
+                    if let Data::Jobs { jobs } = response(&mut s.ws).await? {
+                        s.finish().await;
+                        if let Some(job) = jobs.into_iter().next() {
+                            return Ok(job);
+                        }
                     }
                 }
                 Err(e) if net::explicit(&e) && !e.to_string().starts_with("DEVICE_OFFLINE") => {
@@ -1794,7 +1790,9 @@ async fn stream_logs(
         },
     )
     .await?;
-    receive_logs(&mut s.ws, json, cursor).await
+    let job = receive_logs(&mut s.ws, json, cursor).await?;
+    s.finish().await;
+    Ok(job)
 }
 async fn receive_logs(ws: &mut Ws, json: bool, cursor: &mut LogCursor) -> Result<Job> {
     let mut final_job = None;
@@ -1846,6 +1844,7 @@ async fn collect_logs(
                 state = Some(job);
             }
             Data::End => {
+                s.finish().await;
                 return Ok((
                     events,
                     state.context("INVALID_MESSAGE: logs ended without job state")?,

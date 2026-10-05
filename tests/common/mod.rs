@@ -96,7 +96,7 @@ pub async fn online(home: &Path, name: &str) -> Result<()> {
     .context("device did not reconnect; see process logs")
 }
 pub async fn stop_daemon(home: &Path, child: &mut Child) -> Result<()> {
-    xrun::control::request_shutdown(&home.join(".xrun"))?;
+    xrun::control::request_shutdown(&home.join(".xrun")).await?;
     let status = tokio::time::timeout(Duration::from_secs(15), child.wait()).await??;
     anyhow::ensure!(status.success(), "daemon shutdown failed: {status}");
     Ok(())

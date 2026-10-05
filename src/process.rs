@@ -38,6 +38,17 @@ impl ManagedChild {
         #[cfg(unix)]
         {
             use std::os::unix::process::ExitStatusExt;
+            #[cfg(target_os = "linux")]
+            let pidfd = {
+                use std::os::fd::FromRawFd;
+                let raw = unsafe { libc::syscall(libc::SYS_pidfd_open, self.pid, 0) };
+                if raw >= 0 {
+                    let owned = unsafe { std::os::fd::OwnedFd::from_raw_fd(raw as i32) };
+                    tokio::io::unix::AsyncFd::new(owned).ok()
+                } else {
+                    None
+                }
+            };
             loop {
                 {
                     let mut info: libc::siginfo_t = unsafe { std::mem::zeroed() };
@@ -65,6 +76,11 @@ impl ManagedChild {
                         };
                         return Ok(std::process::ExitStatus::from_raw(raw));
                     }
+                }
+                #[cfg(target_os = "linux")]
+                if let Some(fd) = &pidfd {
+                    let _ready = fd.readable().await?;
+                    continue;
                 }
                 tokio::time::sleep(std::time::Duration::from_millis(25)).await;
             }

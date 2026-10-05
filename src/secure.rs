@@ -21,10 +21,7 @@ use tokio::{
     io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, DuplexStream, ReadBuf},
     task::JoinHandle,
 };
-use tokio_tungstenite::{
-    accept_async_with_config, client_async_with_config,
-    tungstenite::{Message, protocol::WebSocketConfig},
-};
+use tokio_tungstenite::tungstenite::{Message, protocol::WebSocketConfig};
 
 // Every direction has at most the duplex capacity plus one 64 KiB frame. The
 // task belongs to the stream; closing/cancelling the inner TLS session closes
@@ -146,14 +143,21 @@ fn tunnel(outer: Ws, flow_control: bool) -> Tunnel {
             }
         };
         let receive = async {
+            let mut unacked = 0usize;
             while let Some(message) = socket_rx.next().await {
                 match message? {
                     Message::Binary(bytes) if bytes.len() <= FILE_CHUNK => {
                         tokio::time::timeout(Duration::from_secs(300), output.write_all(&bytes))
                             .await??;
+                        // A small unacknowledged tail is bounded by the threshold.
+                        // Keep it across requests; the window is much larger, so
+                        // even a short request never has to wait for an ACK timer.
                         if flow_control {
-                            let ack =
-                                serde_json::to_string(&FlowControl::Ack { bytes: bytes.len() })?;
+                            unacked += bytes.len();
+                        }
+                        if flow_control && unacked >= 256 * 1024 {
+                            let ack = serde_json::to_string(&FlowControl::Ack { bytes: unacked })?;
+                            unacked = 0;
                             tokio::time::timeout(Duration::from_secs(300), async {
                                 socket_tx.lock().await.send(Message::Text(ack.into())).await
                             })
@@ -224,12 +228,14 @@ pub async fn client_with_flow(
     if actual != target {
         bail!("IDENTITY_MISMATCH: relay connected an unexpected device")
     }
-    let (ws, _) = client_async_with_config(
-        "wss://peer.xrun/xrun",
+    // TLS already authenticates this private protocol; no HTTP endpoint or
+    // Upgrade negotiation is needed inside the encrypted relay tunnel.
+    let ws = tokio_tungstenite::WebSocketStream::from_raw_socket(
         Box::new(tls) as Io,
+        tokio_tungstenite::tungstenite::protocol::Role::Client,
         Some(ws_config()),
     )
-    .await?;
+    .await;
     Ok((ws, der))
 }
 // Anonymous pairing validates the pinned network root AND expected manager ID
@@ -264,12 +270,14 @@ pub async fn pairing_client_with_flow(
         .unwrap()
         .clone()
         .context("UNAUTHENTICATED: manager omitted the network root")?;
-    let (ws, _) = client_async_with_config(
-        "wss://peer.xrun/xrun",
+    // TLS already authenticates this private protocol; no HTTP endpoint or
+    // Upgrade negotiation is needed inside the encrypted relay tunnel.
+    let ws = tokio_tungstenite::WebSocketStream::from_raw_socket(
         Box::new(tls) as Io,
+        tokio_tungstenite::tungstenite::protocol::Role::Client,
         Some(ws_config()),
     )
-    .await?;
+    .await;
     Ok((ws, root))
 }
 pub async fn server(outer: Ws, identity: &Identity) -> Result<(Ws, Option<Vec<u8>>)> {
@@ -289,7 +297,12 @@ pub async fn server_with_flow(
         .peer_certificates()
         .and_then(|c| c.first())
         .map(|c| c.to_vec());
-    let ws = accept_async_with_config(Box::new(tls) as Io, Some(ws_config())).await?;
+    let ws = tokio_tungstenite::WebSocketStream::from_raw_socket(
+        Box::new(tls) as Io,
+        tokio_tungstenite::tungstenite::protocol::Role::Server,
+        Some(ws_config()),
+    )
+    .await;
     Ok((ws, peer))
 }
 #[derive(Serialize, Deserialize)]

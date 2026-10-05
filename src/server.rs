@@ -182,6 +182,10 @@ pub(crate) async fn serve_http(
                 continue;
             }
         };
+        if let Err(error) = tcp.set_nodelay(true) {
+            tracing::warn!(%error, "cannot configure accepted socket");
+            continue;
+        }
         let Some(tcp) = LimitedTcp::new(tcp, peer.ip(), limits.clone(), &lifetime) else {
             continue;
         };

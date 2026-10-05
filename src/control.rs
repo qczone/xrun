@@ -1,12 +1,10 @@
-//! Local daemon state and a generation-bound graceful stop request. Both files
-//! live in the private device directory; no network listener is needed.
+//! Local daemon state and generation-bound graceful shutdown through private IPC.
 use crate::config;
 use anyhow::{Result, bail};
 use serde::{Deserialize, Serialize};
 use std::{
     path::{Path, PathBuf},
     sync::Mutex,
-    time::Duration,
 };
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -18,6 +16,7 @@ pub struct State {
 pub struct Control {
     dir: PathBuf,
     value: Mutex<State>,
+    stop: tokio::sync::watch::Sender<bool>,
 }
 impl Control {
     pub fn new(dir: &Path) -> Result<Self> {
@@ -32,6 +31,7 @@ impl Control {
         Ok(Self {
             dir: dir.into(),
             value: Mutex::new(value),
+            stop: tokio::sync::watch::channel(false).0,
         })
     }
     pub fn connected(&self, connected: bool) -> Result<()> {
@@ -42,17 +42,21 @@ impl Control {
             &serde_json::to_vec(&*value)?,
         )
     }
-    pub async fn shutdown(&self) -> Result<()> {
-        let generation = self.value.lock().unwrap().generation.clone();
-        loop {
-            match std::fs::read(self.dir.join("daemon-stop")) {
-                Ok(bytes) if bytes == generation.as_bytes() => return Ok(()),
-                Ok(_) => {}
-                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
-                Err(e) => return Err(e.into()),
-            }
-            tokio::time::sleep(Duration::from_millis(100)).await;
+    pub(crate) fn check_generation(&self, generation: &str) -> Result<()> {
+        if self.value.lock().unwrap().generation != generation {
+            bail!("DAEMON_CHANGED: stop request belongs to an earlier daemon");
         }
+        Ok(())
+    }
+    pub(crate) fn request_stop(&self, generation: &str) -> Result<()> {
+        self.check_generation(generation)?;
+        self.stop.send_replace(true);
+        Ok(())
+    }
+    pub async fn shutdown(&self) -> Result<()> {
+        let mut stop = self.stop.subscribe();
+        stop.wait_for(|value| *value).await?;
+        Ok(())
     }
 }
 impl Drop for Control {
@@ -74,32 +78,39 @@ pub fn state(dir: &Path) -> Result<Option<State>> {
         Err(e) => Err(e.into()),
     }
 }
-pub fn request_shutdown(dir: &Path) -> Result<()> {
+pub async fn request_shutdown(dir: &Path) -> Result<()> {
     let Some(state) = state(dir)? else {
         bail!(
             "DAEMON_UPGRADE_REQUIRED: restart the daemon with the current xrun before stopping it from the app"
         )
     };
-    config::atomic_private_write(&dir.join("daemon-stop"), state.generation.as_bytes())
+    if dir.join("daemon-ipc.json").exists() {
+        crate::ipc::stop(dir, &state.generation).await
+    } else {
+        // Also allows the app to stop an installed daemon from before IPC.
+        config::atomic_private_write(&dir.join("daemon-stop"), state.generation.as_bytes())
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::time::Duration;
     #[tokio::test]
     async fn stale_stop_does_not_stop_a_new_generation() -> Result<()> {
         let dir = tempfile::tempdir()?;
         let old = Control::new(dir.path())?;
-        request_shutdown(dir.path())?;
+        let old_generation = state(dir.path())?.unwrap().generation;
         let current = Control::new(dir.path())?;
         drop(old);
+        assert!(current.request_stop(&old_generation).is_err());
         assert!(
             tokio::time::timeout(Duration::from_millis(150), current.shutdown())
                 .await
                 .is_err()
         );
         assert!(state(dir.path())?.is_some());
-        request_shutdown(dir.path())?;
+        current.request_stop(&state(dir.path())?.unwrap().generation)?;
         tokio::time::timeout(Duration::from_secs(1), current.shutdown()).await??;
         drop(current);
         assert!(state(dir.path())?.is_none());

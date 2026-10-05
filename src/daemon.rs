@@ -186,8 +186,11 @@ pub async fn run() -> Result<()> {
     let _lock = instance_lock()?;
     let dir = config::device_dir()?;
     let control = Arc::new(crate::control::Control::new(&dir)?);
+    let local_listener = crate::ipc::Listener::bind(&dir)?;
+    let local = crate::pool::run(local_listener, control.clone());
+    tokio::pin!(local);
     let mut id = Identity::load()?;
-    tokio::select! { _=net::renew_identity(&mut id)=>{}, result=control.shutdown()=>{result?;return Ok(())} }
+    tokio::select! { result=&mut local=>{return result}, _=net::renew_identity(&mut id)=>{}, result=control.shutdown()=>{result?;return Ok(())} }
     if !dir.join("daemon.initialized").exists() {
         bail!("DAEMON_NOT_INITIALIZED: run daemon install")
     }
@@ -245,6 +248,7 @@ pub async fn run() -> Result<()> {
     tokio::pin!(sync);
     let mut stop = rt.stop.subscribe();
     let outcome = tokio::select! {
+        result=&mut local=>result,
         result=&mut connector=>result,
         result=&mut sync=>result,
         _=shutdown_signal()=>Ok(()),
@@ -400,29 +404,41 @@ async fn data_session(rt: Arc<Runtime>, address: &str, generation: &str, sid: &s
             }
             rt.allow(&source)?;
             let generation = rt.config()?.pause_generation;
-            net::send(
-                &mut ws,
-                &Data::Ready {
-                    version: VERSION.into(),
-                    device_id: rt.id.device_id.clone(),
-                    db_id: rt.store.db_id.clone(),
-                    default_cwd: rt.cwd()?.to_string_lossy().into(),
-                },
-            )
-            .await?;
+            let (_, cert) = x509_parser::parse_x509_certificate(&certificate).map_err(|_| anyhow::anyhow!("INVALID_CERTIFICATE: malformed member certificate"))?;
+            let expiry = cert.validity().not_after.timestamp()
+                .min(crate::crypto::certificate_expiry(&id.cert_pem)?)
+                .min(crate::crypto::certificate_expiry(&id.ca_pem)?);
+            send_ready(&rt, &mut ws).await?;
             let mut stop = rt.stop.subscribe();
-            let denied = async {
-                loop {
-                    tokio::time::sleep(Duration::from_millis(100)).await;
-                    if rt.check_session(&source, generation).is_err() {
-                        break;
-                    }
+            loop {
+                let req = tokio::select! {
+                    req = tokio::time::timeout(Duration::from_secs(60), net::receive::<Data>(&mut ws)) => req??,
+                    _ = stop.changed() => bail!("DAEMON_STOPPING: daemon shutting down"),
+                };
+                rt.check_session(&source, generation)?;
+                if expiry <= now_ms() / 1000 || Identity::load()?.cert_pem != id.cert_pem {
+                    bail!("SESSION_EXPIRED: renew the authenticated connection");
                 }
-            };
-            tokio::select! {
-                r=serve(rt.clone(),&source,generation,&mut ws)=>r,
-                _=stop.changed()=>Err(anyhow::anyhow!("DAEMON_STOPPING: daemon shutting down")),
-                _=denied=>Ok(()),
+                if let Data::SessionProbe { roster_version } = req {
+                    if rt.members.load(&rt.network_id)?.roster.version != roster_version {
+                        bail!("MEMBERSHIP_CHANGED: renew the authenticated connection");
+                    }
+                    send_ready(&rt, &mut ws).await?;
+                    continue;
+                }
+                let Data::Request { request } = req else { bail!("INVALID_MESSAGE: expected operation"); };
+                let denied = async {
+                    loop {
+                        tokio::time::sleep(Duration::from_millis(100)).await;
+                        if rt.check_session(&source, generation).is_err() || expiry <= now_ms() / 1000 { break; }
+                    }
+                };
+                tokio::select! {
+                    result = serve(rt.clone(), &source, generation, &mut ws, request) => result?,
+                    _ = stop.changed() => bail!("DAEMON_STOPPING: daemon shutting down"),
+                    _ = denied => bail!("SESSION_CLOSED: access changed"),
+                }
+                net::send(&mut ws, &Data::Complete).await?;
             }
         }
         .await
@@ -447,14 +463,26 @@ async fn data_session(rt: Arc<Runtime>, address: &str, generation: &str, sid: &s
     }
     Ok(())
 }
-async fn serve(rt: Arc<Runtime>, source: &str, generation: u64, ws: &mut Ws) -> Result<()> {
-    let req = tokio::time::timeout(Duration::from_secs(300), net::receive::<Data>(ws))
-        .await?
-        .context("INVALID_REQUEST: malformed request")?;
+async fn send_ready(rt: &Runtime, ws: &mut Ws) -> Result<()> {
+    net::send(
+        ws,
+        &Data::Ready {
+            version: VERSION.into(),
+            device_id: rt.id.device_id.clone(),
+            db_id: rt.store.db_id.clone(),
+            default_cwd: rt.cwd()?.to_string_lossy().into(),
+        },
+    )
+    .await
+}
+async fn serve(
+    rt: Arc<Runtime>,
+    source: &str,
+    generation: u64,
+    ws: &mut Ws,
+    request: Request,
+) -> Result<()> {
     rt.check_session(source, generation)?;
-    let Data::Request { request } = req else {
-        bail!("INVALID_MESSAGE: expected operation")
-    };
     let file_op = match &request {
         Request::Push { path, .. } => Some(("push", Some(path.clone()))),
         Request::Pull { path, .. } => Some(("pull", Some(path.clone()))),
@@ -561,16 +589,7 @@ async fn serve(rt: Arc<Runtime>, source: &str, generation: u64, ws: &mut Ws) -> 
             } else {
                 let jobs = rt
                     .store
-                    .all()?
-                    .into_iter()
-                    .filter(|j| {
-                        j.source_device_id == source
-                            && (!running || !j.state.terminal())
-                            && request_id.as_ref().is_none_or(|r| j.request_id == *r)
-                    })
-                    .skip(offset)
-                    .take(limit.min(1000))
-                    .collect();
+                    .page(source, running, request_id.as_deref(), limit, offset)?;
                 net::send(ws, &Data::Jobs { jobs }).await?
             }
         }
@@ -808,12 +827,7 @@ fn validate_stream(request: &StreamExecution) -> Result<()> {
     Ok(())
 }
 fn check_capacity(rt: &Runtime) -> Result<()> {
-    let jobs = rt
-        .store
-        .all()?
-        .iter()
-        .filter(|j| !j.state.terminal())
-        .count();
+    let jobs = rt.store.active_count()?;
     if jobs + rt.streams.load(Ordering::SeqCst) >= rt.config()?.max_concurrent_jobs {
         bail!("DEVICE_BUSY: job capacity reached")
     }

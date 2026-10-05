@@ -619,7 +619,11 @@ impl RosterCache {
             .query_row("SELECT data FROM state WHERE id=1", [], |r| r.get(0))
             .optional()?;
         if let Some(old) = old {
-            serde_json::from_str::<SignedRoster>(&old)?.check_successor(next)?;
+            let previous = serde_json::from_str::<SignedRoster>(&old)?;
+            previous.check_successor(next)?;
+            if previous.roster.version == next.roster.version {
+                return Ok(());
+            }
         }
         save_state(&tx, next)?;
         tx.commit()?;

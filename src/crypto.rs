@@ -231,6 +231,9 @@ pub fn http_client(ca: &str, id: Option<&Identity>) -> Result<reqwest::Client> {
     }
     Ok(builder.build()?)
 }
+pub(crate) fn certificate_expiry(pem: &str) -> Result<i64> {
+    Ok(expiry(pem)?.unix_timestamp())
+}
 pub fn certificate_expiring(pem: &str, days: i64) -> Result<bool> {
     Ok(expiry(pem)? <= OffsetDateTime::now_utc() + Duration::days(days))
 }

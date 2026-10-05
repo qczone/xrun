@@ -266,7 +266,7 @@ mod mac {
                     & 0o777,
                 0o600
             );
-            xrun::control::request_shutdown(dir.path())?;
+            xrun::control::request_shutdown(dir.path()).await?;
             tokio::time::timeout(Duration::from_secs(3), async {
                 while xrun::config::instance_running(&dir.path().join("daemon.lock"))? {
                     tokio::time::sleep(Duration::from_millis(20)).await;

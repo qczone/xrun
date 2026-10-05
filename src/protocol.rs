@@ -178,6 +178,13 @@ pub enum Request {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Data {
+    /// Checks a cached session before sending an operation. A roster change
+    /// requires a new authenticated exchange.
+    SessionProbe {
+        roster_version: u64,
+    },
+    /// All response frames for this request have been sent.
+    Complete,
     Ready {
         version: String,
         device_id: String,

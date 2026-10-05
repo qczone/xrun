@@ -65,7 +65,17 @@ pub fn ordered_addresses(values: &[String], pin: &str) -> Vec<String> {
 }
 pub(crate) fn remember(id: &Identity, address: &str) {
     if let Ok(dir) = device_dir() {
-        let _=atomic_private_write(&dir.join("last-address.json"),&serde_json::to_vec(&serde_json::json!({"ca_pin":crypto::ca_spki_pin(&id.ca_pem).ok(),"address":address})).unwrap());
+        let value =
+            serde_json::json!({"ca_pin":crypto::ca_spki_pin(&id.ca_pem).ok(),"address":address});
+        let path = dir.join("last-address.json");
+        if std::fs::read(&path)
+            .ok()
+            .and_then(|b| serde_json::from_slice::<serde_json::Value>(&b).ok())
+            .as_ref()
+            != Some(&value)
+        {
+            let _ = atomic_private_write(&path, &serde_json::to_vec(&value).unwrap());
+        }
     }
 }
 pub async fn websocket_at(address: &str, path: &str, tls: Arc<rustls::ClientConfig>) -> Result<Ws> {
@@ -175,7 +185,7 @@ pub async fn receive<T: DeserializeOwned>(ws: &mut Ws) -> Result<T> {
 }
 pub async fn send_bytes(ws: &mut Ws, bytes: &[u8]) -> Result<()> {
     for chunk in bytes.chunks(FILE_CHUNK) {
-        ws.send(Message::Binary(chunk.to_vec().into())).await?
+        ws.feed(Message::Binary(chunk.to_vec().into())).await?
     }
     send(ws, &Data::End).await
 }
@@ -185,21 +195,36 @@ pub async fn receive_bytes(ws: &mut Ws, size: u64, hash: &str, max: u64) -> Resu
     Ok(bytes)
 }
 pub async fn receive_file(ws: &mut Ws, size: u64, hash: &str) -> Result<tempfile::NamedTempFile> {
-    let temp = tempfile::Builder::new().prefix("xrun-upload-").tempfile()?;
+    receive_file_with_prefix(ws, size, hash, "xrun-upload-").await
+}
+pub async fn receive_file_with_prefix(
+    ws: &mut Ws,
+    size: u64,
+    hash: &str,
+    prefix: &str,
+) -> Result<tempfile::NamedTempFile> {
+    let temp = tempfile::Builder::new().prefix(prefix).tempfile()?;
     let mut file = tokio::fs::File::from_std(temp.reopen()?);
     receive_body(ws, &mut file, size, hash, MAX_FILE).await?;
     file.flush().await?;
+    use std::io::{Seek, SeekFrom};
+    temp.as_file().seek(SeekFrom::Start(0))?;
     Ok(temp)
 }
 pub async fn send_file(ws: &mut Ws, file: &std::fs::File) -> Result<()> {
-    let mut file = tokio::fs::File::from_std(file.try_clone()?);
+    let mut file = tokio::fs::File::from_std(file.try_clone()?).take(MAX_FILE + 1);
+    let mut sent = 0u64;
     let mut chunk = vec![0; FILE_CHUNK];
     loop {
         let n = file.read(&mut chunk).await?;
         if n == 0 {
             break;
         }
-        ws.send(Message::Binary(chunk[..n].to_vec().into())).await?;
+        sent += n as u64;
+        if sent > MAX_FILE {
+            bail!("FILE_TOO_LARGE: limit {MAX_FILE} bytes");
+        }
+        ws.feed(Message::Binary(chunk[..n].to_vec().into())).await?;
     }
     send(ws, &Data::End).await
 }

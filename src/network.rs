@@ -143,7 +143,7 @@ async fn peer_session(
     target: &str,
     via: &SignedRoster,
     purpose: secure::Purpose,
-) -> Result<(Ws, String)> {
+) -> Result<(Ws, String, i64)> {
     let network = authority(id)?;
     let path = format!("/networks/{}/connect/{target}", network.network_id);
     let (mut outer, address) = open_via(id, via, &path).await?;
@@ -169,9 +169,21 @@ async fn peer_session(
     )
     .await??;
     current(id)?;
-    Ok((ws, address))
+    let (_, peer) = x509_parser::parse_x509_certificate(&cert)
+        .map_err(|_| anyhow::anyhow!("INVALID_CERTIFICATE: malformed target certificate"))?;
+    let expires = peer
+        .validity()
+        .not_after
+        .timestamp()
+        .min(crypto::certificate_expiry(&id.cert_pem)?)
+        .min(crypto::certificate_expiry(&id.ca_pem)?);
+    Ok((ws, address, expires))
 }
 pub async fn session(id: &Identity, target: &str) -> Result<(Ws, String)> {
+    let (ws, address, _) = session_with_expiry(id, target).await?;
+    Ok((ws, address))
+}
+pub(crate) async fn session_with_expiry(id: &Identity, target: &str) -> Result<(Ws, String, i64)> {
     let roster = current(id)?;
     if roster.member(target)?.revoked {
         bail!("DEVICE_REVOKED: target has been revoked")
@@ -213,7 +225,7 @@ async fn peer_state(id: &Identity, target: &str, via: &SignedRoster) -> Result<P
         5
     });
     tokio::time::timeout(timeout, async {
-        let (mut ws, _) = peer_session(id, target, via, secure::Purpose::State).await?;
+        let (mut ws, _, _) = peer_session(id, target, via, secure::Purpose::State).await?;
         let value: serde_json::Value = net::receive(&mut ws).await?;
         if let Ok(Data::Error { code, message }) = serde_json::from_value(value.clone()) {
             bail!("{code}: {message}")

@@ -230,7 +230,7 @@ pub async fn stop_daemon() -> Result<()> {
         return Ok(());
     }
     if crate::control::state(&dir)?.is_some() {
-        crate::control::request_shutdown(&dir)?;
+        crate::control::request_shutdown(&dir).await?;
     } else {
         // Older daemons do not have the private stop channel. Unix SIGTERM still
         // follows the same cleanup path; Windows task termination does not.

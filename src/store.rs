@@ -43,6 +43,7 @@ impl TaskStore {
     pub fn open(path: &Path, create: bool) -> Result<Self> {
         let db = open(path, create)?;
         db.execute_batch("CREATE TABLE IF NOT EXISTS meta(key TEXT PRIMARY KEY,value TEXT NOT NULL); CREATE TABLE IF NOT EXISTS jobs(id TEXT PRIMARY KEY,source TEXT NOT NULL,request_id TEXT NOT NULL,data TEXT NOT NULL,UNIQUE(source,request_id)); CREATE TABLE IF NOT EXISTS logs(job TEXT NOT NULL,seq INTEGER NOT NULL,stream TEXT NOT NULL,bytes BLOB NOT NULL,PRIMARY KEY(job,seq)); CREATE TABLE IF NOT EXISTS log_sizes(job TEXT PRIMARY KEY,bytes INTEGER NOT NULL); INSERT OR IGNORE INTO log_sizes SELECT job,SUM(length(bytes)) FROM logs GROUP BY job; INSERT OR IGNORE INTO meta VALUES('log_bytes',(SELECT COALESCE(SUM(bytes),0) FROM log_sizes)); CREATE TABLE IF NOT EXISTS audit(time INTEGER NOT NULL,data TEXT NOT NULL);")?;
+        db.execute_batch("CREATE INDEX IF NOT EXISTS jobs_active ON jobs(source) WHERE json_extract(data,'$.state') IN ('starting','running'); CREATE INDEX IF NOT EXISTS jobs_source ON jobs(source);")?;
         let db_id: Option<String> = db
             .query_row("SELECT value FROM meta WHERE key='db_id'", [], |r| r.get(0))
             .optional()?;
@@ -92,6 +93,45 @@ impl TaskStore {
         stmt.query_map([], |r| r.get::<_, String>(0))?
             .map(|r| decode(r?))
             .collect()
+    }
+    pub fn active_count(&self) -> Result<usize> {
+        let count: i64 = self.db.lock().unwrap().query_row("SELECT COUNT(*) FROM jobs WHERE json_extract(data,'$.state') IN ('starting','running')", [], |r|r.get(0))?;
+        Ok(count.try_into()?)
+    }
+    pub fn page(
+        &self,
+        source: &str,
+        running: bool,
+        request: Option<&str>,
+        limit: usize,
+        offset: usize,
+    ) -> Result<Vec<Job>> {
+        if let Some(request) = request {
+            return Ok(self
+                .by_request(source, request)?
+                .into_iter()
+                .filter(|j| !running || !j.state.terminal())
+                .skip(offset)
+                .take(limit.min(1000))
+                .collect());
+        }
+        let sql = if running {
+            "SELECT data FROM jobs WHERE source=?1 AND json_extract(data,'$.state') IN ('starting','running') ORDER BY rowid DESC LIMIT ?2 OFFSET ?3"
+        } else {
+            "SELECT data FROM jobs WHERE source=?1 ORDER BY rowid DESC LIMIT ?2 OFFSET ?3"
+        };
+        let db = self.db.lock().unwrap();
+        let mut stmt = db.prepare(sql)?;
+        stmt.query_map(
+            params![
+                source,
+                limit.min(1000) as i64,
+                i64::try_from(offset).unwrap_or(i64::MAX)
+            ],
+            |r| r.get::<_, String>(0),
+        )?
+        .map(|r| decode(r?))
+        .collect()
     }
     pub fn insert(&self, job: &Job) -> Result<()> {
         self.db.lock().unwrap().execute(
@@ -281,6 +321,7 @@ impl SubmissionStore {
     pub fn open(path: &Path) -> Result<Self> {
         let db = open(path, true)?;
         db.execute_batch("CREATE TABLE IF NOT EXISTS submissions(id TEXT PRIMARY KEY,data TEXT NOT NULL,time INTEGER NOT NULL)")?;
+        db.execute_batch("CREATE INDEX IF NOT EXISTS submission_time ON submissions(time)")?;
         db.execute(
             "DELETE FROM submissions WHERE time<?1",
             [now_ms() - 7 * 86_400_000],

@@ -57,7 +57,7 @@ pub fn read_file(path: &Path) -> Result<Vec<u8>> {
     }
     Ok(bytes)
 }
-fn copy_hashed(file: std::fs::File, output: &mut impl std::io::Write) -> Result<(u64, String)> {
+fn copy_hashed(file: impl Read, output: &mut impl std::io::Write) -> Result<(u64, String)> {
     let mut input = file.take(MAX_FILE + 1);
     let mut chunk = [0u8; 64 * 1024];
     let mut size = 0;
@@ -270,7 +270,22 @@ fn replace(temp: tempfile::NamedTempFile, path: &Path) -> Result<()> {
     }
     Ok(())
 }
+pub fn prepare_upload(path: &Path) -> Result<(std::fs::File, u64, String)> {
+    let mut file = open_file(path)?;
+    let (size, hash) = copy_hashed(file.try_clone()?, &mut std::io::sink())?;
+    file.seek(SeekFrom::Start(0))?;
+    Ok((file, size, hash))
+}
+pub fn snapshot_input(input: impl Read) -> Result<(tempfile::NamedTempFile, u64, String)> {
+    let mut temp = tempfile::Builder::new().prefix("xrun-input-").tempfile()?;
+    let (size, hash) = copy_hashed(input, temp.as_file_mut())?;
+    temp.as_file_mut().seek(SeekFrom::Start(0))?;
+    Ok((temp, size, hash))
+}
 pub fn save_local(path: &Path, bytes: &[u8]) -> Result<PathBuf> {
+    save_local_reader(path, &mut std::io::Cursor::new(bytes))
+}
+pub fn save_local_reader(path: &Path, input: &mut impl Read) -> Result<PathBuf> {
     // Resolve the chosen parent, never the final path component. Publication
     // replaces that directory entry rather than writing through a link.
     let name = path.file_name().context("INVALID_PATH: missing filename")?;
@@ -281,7 +296,7 @@ pub fn save_local(path: &Path, bytes: &[u8]) -> Result<PathBuf> {
         .join(name);
     let metadata = local_metadata(&path)?;
     let mut temp = tempfile::NamedTempFile::new_in(path.parent().unwrap())?;
-    std::io::Write::write_all(&mut temp, bytes)?;
+    std::io::copy(input, &mut temp)?;
     if let Some(metadata) = metadata {
         temp.as_file().set_permissions(metadata.permissions())?;
     }
