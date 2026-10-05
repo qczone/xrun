@@ -133,6 +133,8 @@ pub struct LogEvent {
 pub enum Request {
     Exec {
         execution: Execution,
+        #[serde(default)]
+        follow: bool,
     },
     Jobs {
         id: Option<String>,

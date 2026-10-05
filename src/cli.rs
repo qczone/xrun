@@ -1517,6 +1517,7 @@ async fn execute_cli(
     let header = Data::Request {
         request: Request::Exec {
             execution: execution.clone(),
+            follow: !background,
         },
     };
     if serde_json::to_vec(&header)?.len() > MAX_MESSAGE {
@@ -1537,6 +1538,7 @@ async fn execute_cli(
             &Data::Request {
                 request: Request::Exec {
                     execution: execution.clone(),
+                    follow: !background,
                 },
             },
         )
@@ -1547,10 +1549,10 @@ async fn execute_cli(
             _ => bail!("INVALID_MESSAGE: expected job acknowledgement"),
         }
     };
-    let job = tokio::select! {
-        r=submitted=>match r{Ok(job)=>job,Err(error)=>{
+    let (job, acknowledged) = tokio::select! {
+        r=submitted=>match r{Ok(job)=>(job, true),Err(error)=>{
             if definitive(&error){submission.status="not_accepted".into();store.save(&submission)?;diagnostic(json,&error);return Ok(125)}
-            match recover(id,target,&execution.request_id,Some(&execution.db_id)).await{Ok(job)=>job,Err(e)=>{if e.to_string().starts_with("DB_RESET"){diagnostic(json,&e);return Ok(125)}diagnostic(json,&anyhow::anyhow!("UNCONFIRMED: request {} may have executed; use recent or jobs --request-id",execution.request_id));return Ok(75)}}
+            match recover(id,target,&execution.request_id,Some(&execution.db_id)).await{Ok(job)=>(job, false),Err(e)=>{if e.to_string().starts_with("DB_RESET"){diagnostic(json,&e);return Ok(125)}diagnostic(json,&anyhow::anyhow!("UNCONFIRMED: request {} may have executed; use recent or jobs --request-id",execution.request_id));return Ok(75)}}
         }},
         _=tokio::signal::ctrl_c()=>{if !sent.load(std::sync::atomic::Ordering::SeqCst){submission.status="not_accepted".into();store.save(&submission)?;return Ok(130)}return Box::pin(cancel_unknown(id,target,&execution.request_id,&execution.db_id,json)).await;},
         _=termination()=>{if !sent.load(std::sync::atomic::Ordering::SeqCst){submission.status="not_accepted".into();store.save(&submission)?;return Ok(125)}diagnostic(json,&anyhow::anyhow!("UNCONFIRMED: request {} may have executed",execution.request_id));return Ok(75)}
@@ -1567,10 +1569,17 @@ async fn execute_cli(
         db_id: Some(job.db_id.clone()),
         received: false,
     };
+    let mut initial = acknowledged.then_some(s);
     let mut deadline = None;
     loop {
         let result = {
-            let logs = stream_logs(id, target, &job.job_id, true, false, &mut cursor);
+            let logs = async {
+                if let Some(mut session) = initial.take() {
+                    receive_logs(&mut session.ws, false, &mut cursor).await
+                } else {
+                    stream_logs(id, target, &job.job_id, true, false, &mut cursor).await
+                }
+            };
             tokio::pin!(logs);
             tokio::select! {
                 r=&mut logs=>r,
@@ -1785,9 +1794,12 @@ async fn stream_logs(
         },
     )
     .await?;
+    receive_logs(&mut s.ws, json, cursor).await
+}
+async fn receive_logs(ws: &mut Ws, json: bool, cursor: &mut LogCursor) -> Result<Job> {
     let mut final_job = None;
     loop {
-        match response(&mut s.ws).await? {
+        match response(ws).await? {
             Data::Logs { events, job } => {
                 cursor.received = true;
                 if json {

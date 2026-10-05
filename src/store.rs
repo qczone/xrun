@@ -37,6 +37,7 @@ fn decode<T: serde::de::DeserializeOwned>(s: String) -> Result<T> {
 pub struct TaskStore {
     db: Mutex<Connection>,
     pub db_id: String,
+    changes: tokio::sync::watch::Sender<()>,
 }
 impl TaskStore {
     pub fn open(path: &Path, create: bool) -> Result<Self> {
@@ -57,7 +58,11 @@ impl TaskStore {
         Ok(Self {
             db: Mutex::new(db),
             db_id,
+            changes: tokio::sync::watch::channel(()).0,
         })
+    }
+    pub(crate) fn subscribe(&self) -> tokio::sync::watch::Receiver<()> {
+        self.changes.subscribe()
     }
     pub fn get(&self, id: &str) -> Result<Option<Job>> {
         let value: Option<String> = self
@@ -98,6 +103,7 @@ impl TaskStore {
                 serde_json::to_string(job)?
             ],
         )?;
+        self.changes.send_replace(());
         Ok(())
     }
     pub fn save(&self, job: &Job) -> Result<()> {
@@ -105,6 +111,7 @@ impl TaskStore {
             "UPDATE jobs SET data=?2 WHERE id=?1",
             params![job.job_id, serde_json::to_string(job)?],
         )?;
+        self.changes.send_replace(());
         Ok(())
     }
     pub fn logs(&self, job: &str, after: u64) -> Result<Vec<LogEvent>> {
@@ -151,6 +158,7 @@ impl TaskStore {
                     params![job, serde_json::to_string(&value)?],
                 )?;
                 tx.commit()?;
+                self.changes.send_replace(());
             }
             return Ok(None);
         }
@@ -190,6 +198,7 @@ impl TaskStore {
                 params![job, serde_json::to_string(&value)?],
             )?;
             tx.commit()?;
+            self.changes.send_replace(());
             return Ok(None);
         }
         let value: String =
@@ -210,6 +219,7 @@ impl TaskStore {
             [total + bytes.len() as i64],
         )?;
         tx.commit()?;
+        self.changes.send_replace(());
         Ok(Some(value.last_seq))
     }
     pub fn prune(&self) -> Result<()> {
@@ -239,6 +249,7 @@ impl TaskStore {
         }
         tx.execute("UPDATE meta SET value=(SELECT COALESCE(SUM(bytes),0) FROM log_sizes) WHERE key='log_bytes'",[])?;
         tx.commit()?;
+        self.changes.send_replace(());
         Ok(())
     }
     pub fn audit(&self, value: serde_json::Value) -> Result<()> {

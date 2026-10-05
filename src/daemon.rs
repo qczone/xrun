@@ -529,7 +529,10 @@ async fn serve(rt: Arc<Runtime>, source: &str, generation: u64, ws: &mut Ws) -> 
                 a.completed = true;
             }
         }
-        Request::Exec { execution } => {
+        Request::Exec {
+            execution,
+            follow: following,
+        } => {
             let input = net::receive_bytes(
                 ws,
                 execution.input_size,
@@ -538,8 +541,12 @@ async fn serve(rt: Arc<Runtime>, source: &str, generation: u64, ws: &mut Ws) -> 
             )
             .await?;
             rt.check_session(source, generation)?;
-            let job = submit(rt, source, execution, input)?;
-            net::send(ws, &Data::Job { job }).await?
+            let job = submit(rt.clone(), source, execution, input)?;
+            let id = job.job_id.clone();
+            net::send(ws, &Data::Job { job }).await?;
+            if following {
+                follow(&rt, source, ws, &id, 0, true, true).await?;
+            }
         }
         Request::Jobs {
             id,
@@ -695,12 +702,16 @@ async fn follow(
 ) -> Result<()> {
     let mut ping = tokio::time::Instant::now();
     let mut previous = None;
+    let mut changes = rt.store.subscribe();
     let snapshot = if following {
         None
     } else {
         Some(rt.owned_job(source, id)?.last_seq)
     };
     loop {
+        // Mark the notification before reading so a concurrent write cannot
+        // be lost between the database snapshot and the wait below.
+        changes.borrow_and_update();
         rt.allow(source)?;
         let job = rt.owned_job(source, id)?;
         let mut events = if logs {
@@ -746,7 +757,15 @@ async fn follow(
         if count == 16 {
             continue;
         }
-        tokio::select! {_=tokio::time::sleep(Duration::from_millis(100))=>{},m=ws.next()=>match m {Some(Ok(Message::Ping(b)))=>ws.send(Message::Pong(b)).await?,Some(Ok(Message::Pong(_)))=>{},_=>bail!("CONNECTION_CLOSED: subscriber disconnected")}}
+        tokio::select! {
+            _ = changes.changed() => {},
+            _ = tokio::time::sleep_until(ping + Duration::from_secs(15)) => {},
+            m = ws.next() => match m {
+                Some(Ok(Message::Ping(b))) => ws.send(Message::Pong(b)).await?,
+                Some(Ok(Message::Pong(_))) => {},
+                _ => bail!("CONNECTION_CLOSED: subscriber disconnected"),
+            }
+        }
     }
 }
 fn short_id() -> String {
