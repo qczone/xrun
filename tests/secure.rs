@@ -230,3 +230,93 @@ async fn final_large_response_survives_backpressure_and_immediate_close() -> Res
     })
     .await?
 }
+
+#[tokio::test]
+async fn final_response_survives_a_relay_that_buffers_until_after_close_is_sent() -> Result<()> {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use tokio::sync::{Notify, mpsc, oneshot};
+    tokio::time::timeout(Duration::from_secs(10), async {
+        let dir = tempfile::tempdir()?;
+        let (_, _, source, target) = identities(dir.path())?;
+        let (wire_a, relay_a) = wire().await;
+        let (wire_b, relay_b) = wire().await;
+        let delaying = Arc::new(AtomicBool::new(false));
+        let release = Arc::new(Notify::new());
+        let blocked = Arc::new(Notify::new());
+        let pump = {
+            let delaying = delaying.clone();
+            let release = release.clone();
+            let blocked = blocked.clone();
+            tokio::spawn(async move {
+                let (mut a_tx, mut a_rx) = relay_a.split();
+                let (mut b_tx, mut b_rx) = relay_b.split();
+                let (queue, mut pending) = mpsc::channel(64);
+                let receive = async {
+                    while let Some(message) = b_rx.next().await {
+                        queue.send(message?).await?;
+                    }
+                    Ok::<_, anyhow::Error>(())
+                };
+                let forward = async {
+                    let mut released = false;
+                    while let Some(message) = pending.recv().await {
+                        if delaying.load(Ordering::SeqCst) && !released {
+                            blocked.notify_one();
+                            release.notified().await;
+                            released = true;
+                        }
+                        a_tx.send(message).await?;
+                    }
+                    Ok::<_, anyhow::Error>(())
+                };
+                let reverse = async {
+                    while let Some(message) = a_rx.next().await {
+                        b_tx.send(message?).await?;
+                    }
+                    Ok::<_, anyhow::Error>(())
+                };
+                // As on the hosted relay, disconnecting either endpoint tears
+                // down both directions, including any undelivered ciphertext.
+                tokio::select! { _ = receive => {}, _ = forward => {}, _ = reverse => {} }
+            })
+        };
+        let (ready, ready_rx) = oneshot::channel();
+        let (sent, sent_rx) = oneshot::channel();
+        let (finished, mut finished_rx) = oneshot::channel();
+        let content = vec![71; 128 * 1024];
+        let server = async {
+            let (mut ws, _) = secure::server(wire_b, &target).await?;
+            ready_rx.await?;
+            delaying.store(true, Ordering::SeqCst);
+            net::send_bytes(&mut ws, &content).await?;
+            let _ = sent.send(());
+            net::close(&mut ws).await;
+            let _ = finished.send(());
+            Ok::<_, anyhow::Error>(())
+        };
+        let client = async {
+            let (mut ws, _) = secure::client(wire_a, &source, &target.device_id).await?;
+            let _ = ready.send(());
+            blocked.notified().await;
+            sent_rx.await?;
+            // All writes have completed, but the relay still holds the body.
+            assert!(
+                tokio::time::timeout(Duration::from_millis(50), &mut finished_rx)
+                    .await
+                    .is_err()
+            );
+            release.notify_one();
+            let received =
+                net::receive_bytes(&mut ws, content.len() as u64, &sha256(&content), MAX_FILE)
+                    .await?;
+            assert_eq!(received, content);
+            net::close(&mut ws).await;
+            Ok::<_, anyhow::Error>(())
+        };
+        let result = tokio::try_join!(server, client);
+        pump.abort();
+        result?;
+        Ok::<_, anyhow::Error>(())
+    })
+    .await?
+}

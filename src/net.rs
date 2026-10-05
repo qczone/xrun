@@ -144,6 +144,20 @@ pub async fn send<T: Serialize>(ws: &mut Ws, value: &T) -> Result<()> {
     ws.send(Message::Text(bytes.into())).await?;
     Ok(())
 }
+pub async fn close(ws: &mut Ws) {
+    // A buffering relay may still be forwarding our final response. Keep the
+    // tunnel alive until the peer closes, rather than just sending Close.
+    let _ = tokio::time::timeout(std::time::Duration::from_secs(30), async {
+        ws.close(None).await?;
+        while let Some(message) = ws.next().await {
+            if matches!(message?, Message::Close(_)) {
+                break;
+            }
+        }
+        Ok::<_, anyhow::Error>(())
+    })
+    .await;
+}
 pub async fn receive<T: DeserializeOwned>(ws: &mut Ws) -> Result<T> {
     loop {
         match ws

@@ -438,7 +438,13 @@ async fn data_session(rt: Arc<Runtime>, address: &str, generation: &str, sid: &s
         )
         .await;
     }
-    let _ = tokio::time::timeout(Duration::from_secs(1), ws.close(None)).await;
+    let mut stop = rt.stop.subscribe();
+    if !*stop.borrow() {
+        tokio::select! {
+            _ = net::close(&mut ws) => {},
+            _ = stop.changed() => {},
+        }
+    }
     Ok(())
 }
 async fn serve(rt: Arc<Runtime>, source: &str, generation: u64, ws: &mut Ws) -> Result<()> {
