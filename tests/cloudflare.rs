@@ -4,7 +4,7 @@ use common::*;
 use std::{
     path::{Path, PathBuf},
     process::{Output, Stdio},
-    time::Duration,
+    time::{Duration, Instant},
 };
 use tokio::{
     io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader},
@@ -115,7 +115,9 @@ async fn public_relay_executes_transfers_streams_and_rejects_route_takeover() ->
     tokio::time::timeout(Duration::from_secs(600), async {
         let lab = lab().await?;
         let binary = binary().to_string_lossy().into_owned();
+        let started = Instant::now();
         assert_eq!(ok(run(&lab.source, &["target1", "--", &binary, "--version"]).await).trim(), format!("xrun {VERSION}"));
+        println!("short command: {:.3}s", started.elapsed().as_secs_f64());
         let job = json(run(&lab.source, &["target1", "start", "--json", "--", &binary, "--version"]).await);
         let job_id = job["job_id"].as_str().context("job ID")?;
         let completed = json(run(&lab.source, &["target1", "wait", job_id, "--json"]).await);
@@ -144,9 +146,12 @@ async fn public_relay_executes_transfers_streams_and_rejects_route_takeover() ->
         let local = lab.root.path().join("upload.bin"); let remote = lab.target.join("artifact.bin"); let download = lab.root.path().join("download.bin");
         std::fs::write(&local, &content)?;
         println!("starting 64 MiB upload");
+        let started = Instant::now();
         ok(run(&lab.source, &["target1", "push", &local.to_string_lossy(), &remote.to_string_lossy(), "--no-overwrite"]).await);
-        println!("64 MiB upload completed; starting download");
+        println!("64 MiB upload: {:.3}s; starting download", started.elapsed().as_secs_f64());
+        let started = Instant::now();
         let result = json(run(&lab.source, &["target1", "pull", &remote.to_string_lossy(), &download.to_string_lossy(), "--json"]).await);
+        println!("64 MiB download: {:.3}s", started.elapsed().as_secs_f64());
         assert_eq!(result["sha256"], sha256(&content));
         assert_eq!(sha256(&std::fs::read(download)?), sha256(&content));
         println!("64 MiB file transfer in both directions: passed");

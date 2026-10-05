@@ -149,11 +149,45 @@ test("unacknowledged ciphertext is bounded and forged credit closes both peers",
       expect((await receiver.json()).code).toBe("INVALID_MESSAGE");
       await expect(sender.next()).rejects.toThrow("closed");
     } else {
-      for (let i = 0; i < 16; i++) { sender.send(new Uint8Array(64 * 1024).buffer); await receiver.next(); }
+      for (let i = 0; i < 64; i++) { sender.send(new Uint8Array(64 * 1024).buffer); await receiver.next(); }
       sender.send(new Uint8Array(1).buffer);
       expect((await sender.json()).code).toBe("MESSAGE_TOO_LARGE");
       await expect(receiver.next()).rejects.toThrow("closed");
     }
     control.close(); sender.close(); receiver.close();
   }
+});
+
+test("pending and active sessions share the network buffer budget and release their slots", async () => {
+  const f = await fixture(), source = await f.member();
+  const targets = await Promise.all([f.member(), f.member()]);
+  const controlPath = `/networks/${f.network}/control`;
+  const controls: Socket[] = [], generations: string[] = [], sources: Socket[] = [], receivers: Socket[] = [];
+  for (const target of targets) {
+    const control = await authenticated(controlPath, (nonce) => target.proof(controlPath, nonce));
+    generations.push((await control.json()).generation);
+    controls.push(control);
+  }
+  for (let i = 0; i < 8; i++) {
+    const index = i % 2, target = targets[index];
+    const connect = `/networks/${f.network}/connect/${target.device}`;
+    const sender = await authenticated(connect, (nonce) => source.proof(connect, nonce));
+    sources.push(sender);
+    const incoming = await controls[index].json();
+    expect(incoming.type).toBe("incoming");
+    if (i < 4) {
+      const receiver = await open(`/networks/${f.network}/attach/${target.device}/${generations[index]}/${incoming.session_id}`);
+      expect((await receiver.json()).type).toBe("connected");
+      expect((await sender.json()).type).toBe("connected");
+      receivers.push(receiver);
+    }
+  }
+  const connect = `/networks/${f.network}/connect/${targets[1].device}`;
+  const overflow = await authenticated(connect, (nonce) => source.proof(connect, nonce));
+  expect((await overflow.json()).code).toBe("SESSION_LIMIT");
+  sources[0].close();
+  await expect(receivers[0].next()).rejects.toThrow("closed");
+  const replacement = await authenticated(connect, (nonce) => source.proof(connect, nonce));
+  expect((await controls[1].json()).type).toBe("incoming");
+  for (const socket of [...controls, ...sources.slice(1), ...receivers, overflow, replacement]) socket.close();
 });

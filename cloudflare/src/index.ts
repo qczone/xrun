@@ -7,7 +7,9 @@ export interface Env {
   XRUN_VERSION: string;
 }
 const FRAME = 64 * 1024;
-const WINDOW = 16 * FRAME;
+const WINDOW = 64 * FRAME;
+// Cap unacknowledged data at 64 MiB across eight full-duplex sessions.
+const SESSIONS = 8;
 const IDLE = 300_000;
 interface Attachment {
   id: string;
@@ -164,7 +166,7 @@ export class XrunRelay extends DurableObject<Env> {
       if (!proof && !this.state(target).manager) throw new Error("Member proof required");
       const sources = this.sockets().map((socket) => this.state(socket)).filter((a) => a.role === "source" || a.role === "pending");
       const toTarget = sources.filter((a) => a.target === state.target);
-      if (sources.length >= 32 || toTarget.length >= 32 || sources.filter((a) => a.ip === state.ip).length >= 16 || (!proof && toTarget.filter((a) => a.anonymous).length >= 4)) {
+      if (sources.length >= SESSIONS || (!proof && toTarget.filter((a) => a.anonymous).length >= 4)) {
         this.reject(ws, "SESSION_LIMIT", "Too many concurrent relay sessions"); return;
       }
       const sid = crypto.randomUUID().replaceAll("-", "");
