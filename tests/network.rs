@@ -31,7 +31,7 @@ async fn registration_permissions_migration_and_manager_offline_execution() -> R
         let roster=RosterCache::open(&lab.source.join(".xrun/roster.db"))?.load(network)?;
         let mut outer=common::relay_socket(None,&roster,
             &format!("/networks/{network}/connect/{}", lab.source_identity.device_id)).await?;
-        assert!(matches!(xrun::net::receive(&mut outer).await?,xrun::relay::RelayMessage::Connected));
+        assert!(matches!(xrun::net::receive(&mut outer).await?,xrun::relay::RelayMessage::Connected { .. }));
         let (mut peer,_)=xrun::secure::pairing_client(outer,&xrun::crypto::ca_spki_pin(&roster.ca_pem)?,&lab.source_identity.device_id).await?;
         xrun::net::send(&mut peer,&xrun::protocol::PairRequest {
             version:"incompatible".into(),token:invite["link"].as_str().unwrap().split_once('#').unwrap().1.into(),
@@ -69,7 +69,7 @@ async fn registration_permissions_migration_and_manager_offline_execution() -> R
         assert!(matches!(xrun::net::receive(&mut outer).await?, xrun::relay::RelayMessage::Error { code, .. } if code == "UNAUTHENTICATED"));
         let manager = &lab.source_identity.device_id;
         let mut outer = common::relay_socket(None, &roster, &format!("/networks/{network}/connect/{manager}")).await?;
-        assert!(matches!(xrun::net::receive(&mut outer).await?, xrun::relay::RelayMessage::Connected));
+        assert!(matches!(xrun::net::receive(&mut outer).await?, xrun::relay::RelayMessage::Connected { .. }));
         let (mut anonymous, _) = xrun::secure::pairing_client(outer, &xrun::crypto::ca_spki_pin(&roster.ca_pem)?, manager).await?;
         // The manager may reject and close before reading the request, so a
         // failed write is a refusal too.

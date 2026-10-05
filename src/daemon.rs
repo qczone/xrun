@@ -377,8 +377,8 @@ async fn membership_sync() -> Result<()> {
 async fn data_session(rt: Arc<Runtime>, address: &str, generation: &str, sid: &str) -> Result<()> {
     let id = Identity::load()?;
     let (mut ws, certificate) = tokio::time::timeout(Duration::from_secs(10), async {
-        let outer = network::attach(&id, address, generation, sid).await?;
-        secure::server(outer, &id).await
+        let (outer, flow_control) = network::attach(&id, address, generation, sid).await?;
+        secure::server_with_flow(outer, &id, flow_control).await
     })
     .await??;
     let result = if let Some(certificate) = certificate {

@@ -162,7 +162,7 @@ async fn attach(
     )
     .await?;
     match net::receive(&mut ws).await? {
-        RelayMessage::Connected => Ok(ws),
+        RelayMessage::Connected { .. } => Ok(ws),
         RelayMessage::Error { code, message } => anyhow::bail!("{code}: {message}"),
         _ => anyhow::bail!("invalid attach result"),
     }
@@ -290,7 +290,7 @@ async fn relay_routes_only_proven_members_and_keeps_binding_and_resource_limits(
         let mut data = attach(&cfg, &n, &target, &generation, &sid).await?;
         assert!(matches!(
             net::receive(&mut cli).await?,
-            RelayMessage::Connected
+            RelayMessage::Connected { .. }
         ));
         assert!(attach(&cfg, &n, &target, &generation, &sid).await.is_err());
         let ciphertext = vec![23, 3, 3, 0, 6, 0, 255, 128, 17, 1, 2];

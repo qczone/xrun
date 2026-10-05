@@ -112,7 +112,10 @@ pub enum RelayMessage {
         session_id: String,
         error: Box<Data>,
     },
-    Connected,
+    Connected {
+        #[serde(default)]
+        flow_control: bool,
+    },
     Status {
         devices: Vec<String>,
     },
@@ -444,7 +447,7 @@ async fn source(
             _ = closed.changed() => bail!("CONNECTION_CLOSED: session was cancelled"),
             _ = ws.next() => bail!("CONNECTION_CLOSED: source disconnected before session establishment"),
         };
-        send(ws, &RelayMessage::Connected).await?;
+        send(ws, &RelayMessage::Connected { flow_control: false }).await?;
         let result = bridge(ws, &mut target, &mut closed).await;
         let _ = tokio::time::timeout(Duration::from_secs(1), target.close()).await;
         result
@@ -492,7 +495,13 @@ async fn attach_route(
                         .context("INVALID_SESSION: session was already claimed")?
                 };
                 permit.authenticated();
-                send(&mut ws, &RelayMessage::Connected).await?;
+                send(
+                    &mut ws,
+                    &RelayMessage::Connected {
+                        flow_control: false,
+                    },
+                )
+                .await?;
                 sender
                     .send(Ok(ws))
                     .map_err(|_| anyhow::anyhow!("CONNECTION_CLOSED: source disappeared"))?;

@@ -278,7 +278,7 @@ pub async fn peer_session(home: &Path, id: &Identity, target: &str) -> Result<xr
     .await?;
     assert!(matches!(
         net::receive(&mut outer).await?,
-        RelayMessage::Connected
+        RelayMessage::Connected { .. }
     ));
     let (mut ws, cert) = secure::client(outer, id, target).await?;
     secure::exchange_client(&mut ws, &cache, network, &cert, target).await?;

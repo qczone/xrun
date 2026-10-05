@@ -12,7 +12,7 @@ use std::{
     pin::Pin,
     sync::{
         Arc,
-        atomic::{AtomicBool, AtomicU64, Ordering},
+        atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering},
     },
     task::{Context as TaskContext, Poll},
     time::Duration,
@@ -94,25 +94,52 @@ impl AsyncWrite for Tunnel {
         Pin::new(&mut self.inner).poll_shutdown(cx)
     }
 }
-fn tunnel(outer: Ws) -> Tunnel {
+#[derive(Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
+enum FlowControl {
+    Ack { bytes: usize },
+}
+fn tunnel(outer: Ws, flow_control: bool) -> Tunnel {
     let (inner, peer) = tokio::io::duplex(256 * 1024);
     let progress = Arc::new(Progress::default());
     let sent = progress.clone();
     let pump = tokio::spawn(async move {
         let _guard = PumpGuard(sent.clone());
         let (mut input, mut output) = tokio::io::split(peer);
-        let (mut socket_tx, mut socket_rx) = outer.split();
+        let (socket_tx, mut socket_rx) = outer.split();
+        let socket_tx = tokio::sync::Mutex::new(socket_tx);
+        let credit = tokio::sync::Semaphore::new(RELAY_WINDOW);
+        let outstanding = AtomicUsize::new(0);
         let send = async {
             let mut buffer = vec![0; FILE_CHUNK];
             loop {
+                let permit = if flow_control {
+                    Some(
+                        tokio::time::timeout(
+                            Duration::from_secs(300),
+                            credit.acquire_many(FILE_CHUNK as u32),
+                        )
+                        .await??,
+                    )
+                } else {
+                    None
+                };
                 let n = input.read(&mut buffer).await?;
                 if n == 0 {
                     return Ok::<_, anyhow::Error>(());
                 }
-                tokio::time::timeout(
-                    Duration::from_secs(300),
-                    socket_tx.send(Message::Binary(buffer[..n].to_vec().into())),
-                )
+                if let Some(permit) = permit {
+                    permit.forget();
+                    credit.add_permits(FILE_CHUNK - n);
+                    outstanding.fetch_add(n, Ordering::AcqRel);
+                }
+                tokio::time::timeout(Duration::from_secs(300), async {
+                    socket_tx
+                        .lock()
+                        .await
+                        .send(Message::Binary(buffer[..n].to_vec().into()))
+                        .await
+                })
                 .await??;
                 sent.sent.fetch_add(n as u64, Ordering::Release);
                 sent.waker.wake();
@@ -124,6 +151,28 @@ fn tunnel(outer: Ws) -> Tunnel {
                     Message::Binary(bytes) if bytes.len() <= FILE_CHUNK => {
                         tokio::time::timeout(Duration::from_secs(300), output.write_all(&bytes))
                             .await??;
+                        if flow_control {
+                            let ack =
+                                serde_json::to_string(&FlowControl::Ack { bytes: bytes.len() })?;
+                            tokio::time::timeout(Duration::from_secs(300), async {
+                                socket_tx.lock().await.send(Message::Text(ack.into())).await
+                            })
+                            .await??;
+                        }
+                    }
+                    Message::Text(text) if flow_control => {
+                        let FlowControl::Ack { bytes } = serde_json::from_str(&text)?;
+                        if bytes == 0
+                            || bytes > RELAY_WINDOW
+                            || outstanding
+                                .fetch_update(Ordering::AcqRel, Ordering::Acquire, |pending| {
+                                    pending.checked_sub(bytes)
+                                })
+                                .is_err()
+                        {
+                            bail!("INVALID_RELAY_MESSAGE: invalid ciphertext acknowledgement")
+                        }
+                        credit.add_permits(bytes);
                     }
                     Message::Ping(_) | Message::Pong(_) => {}
                     Message::Close(_) => return Ok::<_, anyhow::Error>(()),
@@ -150,10 +199,18 @@ fn ws_config() -> WebSocketConfig {
         .max_frame_size(Some(MAX_MESSAGE))
 }
 pub async fn client(outer: Ws, identity: &Identity, target: &str) -> Result<(Ws, Vec<u8>)> {
+    client_with_flow(outer, identity, target, false).await
+}
+pub async fn client_with_flow(
+    outer: Ws,
+    identity: &Identity,
+    target: &str,
+    flow_control: bool,
+) -> Result<(Ws, Vec<u8>)> {
     let tls = tokio_rustls::TlsConnector::from(crypto::client_tls_config(identity)?)
         .connect(
             rustls::pki_types::ServerName::try_from(membership::device_name(target)?)?,
-            tunnel(outer),
+            tunnel(outer, flow_control),
         )
         .await?;
     let der = tls
@@ -178,11 +235,19 @@ pub async fn client(outer: Ws, identity: &Identity, target: &str) -> Result<(Ws,
 // Anonymous pairing validates the pinned network root AND expected manager ID
 // before any invitation token or CSR is sent through the encrypted channel.
 pub async fn pairing_client(outer: Ws, pin: &str, manager: &str) -> Result<(Ws, String)> {
+    pairing_client_with_flow(outer, pin, manager, false).await
+}
+pub async fn pairing_client_with_flow(
+    outer: Ws,
+    pin: &str,
+    manager: &str,
+    flow_control: bool,
+) -> Result<(Ws, String)> {
     let (config, ca) = crypto::pinned_client_config(pin);
     let tls = tokio_rustls::TlsConnector::from(config)
         .connect(
             rustls::pki_types::ServerName::try_from(membership::device_name(manager)?)?,
-            tunnel(outer),
+            tunnel(outer, flow_control),
         )
         .await?;
     let der = tls
@@ -208,8 +273,15 @@ pub async fn pairing_client(outer: Ws, pin: &str, manager: &str) -> Result<(Ws, 
     Ok((ws, root))
 }
 pub async fn server(outer: Ws, identity: &Identity) -> Result<(Ws, Option<Vec<u8>>)> {
+    server_with_flow(outer, identity, false).await
+}
+pub async fn server_with_flow(
+    outer: Ws,
+    identity: &Identity,
+    flow_control: bool,
+) -> Result<(Ws, Option<Vec<u8>>)> {
     let tls = tokio_rustls::TlsAcceptor::from(crypto::peer_server_config(identity)?)
-        .accept(tunnel(outer))
+        .accept(tunnel(outer, flow_control))
         .await?;
     let peer = tls
         .get_ref()
@@ -296,4 +368,73 @@ pub async fn exchange_server(
 pub enum Purpose {
     Execute,
     State,
+}
+
+#[cfg(test)]
+mod flow_tests {
+    use super::*;
+    use tokio_tungstenite::{WebSocketStream, tungstenite::protocol::Role};
+
+    async fn wire() -> (Ws, Ws) {
+        let (a, b) = tokio::io::duplex(2 * RELAY_WINDOW);
+        (
+            WebSocketStream::from_raw_socket(Box::new(a) as Io, Role::Client, None).await,
+            WebSocketStream::from_raw_socket(Box::new(b) as Io, Role::Server, None).await,
+        )
+    }
+
+    #[tokio::test]
+    async fn slow_receiver_stops_ciphertext_until_it_acknowledges() -> Result<()> {
+        tokio::time::timeout(Duration::from_secs(5), async {
+            let (outer, mut receiver) = wire().await;
+            let mut sender = tunnel(outer, true);
+            let producer = tokio::spawn(async move {
+                sender.write_all(&vec![7; 2 * RELAY_WINDOW]).await?;
+                sender.flush().await
+            });
+            for pass in 0..2 {
+                let mut received = 0;
+                while received < RELAY_WINDOW {
+                    let Message::Binary(bytes) = receiver.next().await.context("closed")?? else {
+                        bail!("unexpected frame")
+                    };
+                    assert!(bytes.iter().all(|b| *b == 7));
+                    received += bytes.len();
+                }
+                assert_eq!(received, RELAY_WINDOW);
+                if pass == 0 {
+                    assert!(
+                        tokio::time::timeout(Duration::from_millis(100), receiver.next())
+                            .await
+                            .is_err()
+                    );
+                }
+                if pass == 0 {
+                    net::send(&mut receiver, &FlowControl::Ack { bytes: received }).await?;
+                }
+            }
+            producer.await??;
+            Ok::<_, anyhow::Error>(())
+        })
+        .await?
+    }
+
+    #[tokio::test]
+    async fn forged_credit_closes_the_tunnel() -> Result<()> {
+        let (outer, mut relay) = wire().await;
+        let mut stream = tunnel(outer, true);
+        net::send(
+            &mut relay,
+            &FlowControl::Ack {
+                bytes: RELAY_WINDOW + 1,
+            },
+        )
+        .await?;
+        let mut byte = [0];
+        assert_eq!(
+            tokio::time::timeout(Duration::from_secs(1), stream.read(&mut byte)).await??,
+            0
+        );
+        Ok(())
+    }
 }

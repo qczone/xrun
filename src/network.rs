@@ -121,17 +121,22 @@ pub async fn control(id: &Identity) -> Result<(Ws, String)> {
     authenticate(&mut ws, Some(id), network, &path, root.as_ref()).await?;
     Ok((ws, address))
 }
-pub async fn attach(id: &Identity, address: &str, generation: &str, sid: &str) -> Result<Ws> {
+pub async fn attach(
+    id: &Identity,
+    address: &str,
+    generation: &str,
+    sid: &str,
+) -> Result<(Ws, bool)> {
     let roster = current(id)?;
     let path = format!(
         "/networks/{}/attach/{}/{generation}/{sid}",
         roster.roster.network_id, id.device_id
     );
     let mut ws = open_at(&roster, address, &path).await?;
-    if !matches!(receive(&mut ws).await?, RelayMessage::Connected) {
+    let RelayMessage::Connected { flow_control } = receive(&mut ws).await? else {
         bail!("INVALID_MESSAGE: expected attached tunnel")
-    }
-    Ok(ws)
+    };
+    Ok((ws, flow_control))
 }
 async fn peer_session(
     id: &Identity,
@@ -143,11 +148,14 @@ async fn peer_session(
     let path = format!("/networks/{}/connect/{target}", network.network_id);
     let (mut outer, address) = open_via(id, via, &path).await?;
     authenticate(&mut outer, Some(id), &network.network_id, &path, None).await?;
-    if !matches!(receive(&mut outer).await?, RelayMessage::Connected) {
+    let RelayMessage::Connected { flow_control } = receive(&mut outer).await? else {
         bail!("INVALID_MESSAGE: expected an encrypted tunnel")
-    }
-    let (mut ws, cert) =
-        tokio::time::timeout(Duration::from_secs(10), secure::client(outer, id, target)).await??;
+    };
+    let (mut ws, cert) = tokio::time::timeout(
+        Duration::from_secs(10),
+        secure::client_with_flow(outer, id, target, flow_control),
+    )
+    .await??;
     tokio::time::timeout(
         Duration::from_secs(10),
         secure::exchange_client(&mut ws, &cache()?, &network.network_id, &cert, target),
@@ -485,10 +493,10 @@ async fn pairing_at(
     let path = format!("/networks/{network}/connect/{manager}");
     let mut outer = net::websocket_at(address, &path, crypto::relay_tls_config(relay_ca)?).await?;
     authenticate(&mut outer, None, network, &path, None).await?;
-    if !matches!(receive(&mut outer).await?, RelayMessage::Connected) {
+    let RelayMessage::Connected { flow_control } = receive(&mut outer).await? else {
         bail!("INVALID_MESSAGE: expected pairing tunnel")
-    }
-    secure::pairing_client(outer, root_pin, manager).await
+    };
+    secure::pairing_client_with_flow(outer, root_pin, manager, flow_control).await
 }
 fn validate_pair(
     pair: &Pairing,

@@ -5,6 +5,8 @@ pub const MAX_MESSAGE: usize = 1024 * 1024;
 pub const MAX_INPUT: usize = 1024 * 1024;
 pub const MAX_FILE: u64 = 64 * 1024 * 1024;
 pub const FILE_CHUNK: usize = 64 * 1024;
+/// Maximum unacknowledged ciphertext per direction on relays without drain().
+pub const RELAY_WINDOW: usize = 4 * FILE_CHUNK;
 pub const LOG_CHUNK: usize = 32 * 1024;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Device {
