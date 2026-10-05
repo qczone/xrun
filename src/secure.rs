@@ -320,6 +320,7 @@ pub async fn exchange_client(
     network: &str,
     cert: &[u8],
     target: &str,
+    purpose: &Purpose,
 ) -> Result<SignedRoster> {
     let roster = cache.load(network)?;
     net::send(
@@ -330,6 +331,9 @@ pub async fn exchange_client(
         },
     )
     .await?;
+    // Purpose carries no command or input. Pipeline it with our roster; the
+    // caller still waits for verified peer state and Ready before any request.
+    net::send(ws, purpose).await?;
     let peer = receive_roster(ws).await?;
     if peer.version != VERSION {
         bail!("VERSION_MISMATCH: peer release differs")

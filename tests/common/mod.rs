@@ -281,7 +281,14 @@ pub async fn peer_session(home: &Path, id: &Identity, target: &str) -> Result<xr
         RelayMessage::Connected { .. }
     ));
     let (mut ws, cert) = secure::client(outer, id, target).await?;
-    secure::exchange_client(&mut ws, &cache, network, &cert, target).await?;
-    net::send(&mut ws, &secure::Purpose::Execute).await?;
+    secure::exchange_client(
+        &mut ws,
+        &cache,
+        network,
+        &cert,
+        target,
+        &secure::Purpose::Execute,
+    )
+    .await?;
     Ok(ws)
 }

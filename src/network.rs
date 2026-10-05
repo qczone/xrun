@@ -158,11 +158,17 @@ async fn peer_session(
     .await??;
     tokio::time::timeout(
         Duration::from_secs(10),
-        secure::exchange_client(&mut ws, &cache()?, &network.network_id, &cert, target),
+        secure::exchange_client(
+            &mut ws,
+            &cache()?,
+            &network.network_id,
+            &cert,
+            target,
+            &purpose,
+        ),
     )
     .await??;
     current(id)?;
-    net::send(&mut ws, &purpose).await?;
     Ok((ws, address))
 }
 pub async fn session(id: &Identity, target: &str) -> Result<(Ws, String)> {

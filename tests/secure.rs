@@ -121,6 +121,10 @@ async fn manager_offline_members_use_mutual_tls_and_relay_only_sees_ciphertext()
                 &cert.context("missing peer certificate")?,
             )
             .await?;
+            assert!(matches!(
+                net::receive(&mut ws).await?,
+                secure::Purpose::Execute
+            ));
             assert_eq!(actual, source.device_id);
             assert_eq!(net::receive::<String>(&mut ws).await?, secret);
             net::send(&mut ws, &secret).await?;
@@ -129,7 +133,15 @@ async fn manager_offline_members_use_mutual_tls_and_relay_only_sees_ciphertext()
         };
         let client = async {
             let (mut ws, cert) = secure::client(wire_a, &source, &target.device_id).await?;
-            secure::exchange_client(&mut ws, &a, &network, &cert, &target.device_id).await?;
+            secure::exchange_client(
+                &mut ws,
+                &a,
+                &network,
+                &cert,
+                &target.device_id,
+                &secure::Purpose::Execute,
+            )
+            .await?;
             net::send(&mut ws, &secret).await?;
             assert_eq!(net::receive::<String>(&mut ws).await?, secret);
             net::send(&mut ws, &"received").await?;
@@ -210,13 +222,25 @@ async fn final_large_response_survives_backpressure_and_immediate_close() -> Res
             let (mut ws, cert) = secure::server(wire_b, &target).await?;
             secure::exchange_server(&mut ws, &b, network, &cert.context("client certificate")?)
                 .await?;
+            assert!(matches!(
+                net::receive(&mut ws).await?,
+                secure::Purpose::Execute
+            ));
             net::send_bytes(&mut ws, &content).await?;
             ws.close(None).await?;
             Ok::<_, anyhow::Error>(())
         };
         let client = async {
             let (mut ws, cert) = secure::client(wire_a, &source, &target.device_id).await?;
-            secure::exchange_client(&mut ws, &a, network, &cert, &target.device_id).await?;
+            secure::exchange_client(
+                &mut ws,
+                &a,
+                network,
+                &cert,
+                &target.device_id,
+                &secure::Purpose::Execute,
+            )
+            .await?;
             tokio::time::sleep(Duration::from_millis(100)).await;
             let received =
                 net::receive_bytes(&mut ws, content.len() as u64, &sha256(&content), MAX_FILE)

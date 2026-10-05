@@ -247,3 +247,61 @@ fn main() {
         Ok::<_, anyhow::Error>(())
     }).await?
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn pipelined_purpose_never_sends_execution_before_handshake_acceptance() -> Result<()> {
+    use xrun::membership::Manager;
+    tokio::time::timeout(Duration::from_secs(20), async {
+        let mut lab = Lab::new().await?;
+        stop_daemon(&lab.source, &mut lab.source_daemon).await?;
+        stop_daemon(&lab.target, &mut lab.daemon).await?;
+        let network = &lab.target_identity.network.as_ref().unwrap().network_id;
+        let roster = RosterCache::open(&lab.target.join(".xrun/roster.db"))?.load(network)?;
+        let mut control = relay_socket(Some(&lab.target_identity), &roster, &format!("/networks/{network}/control")).await?;
+        let RelayMessage::HelloAck { generation } = net::receive(&mut control).await? else { bail!("control acknowledgement") };
+        let failures = ["version", "signature", "ready-version", "ready-identity", "denied", "revoked"];
+        let peer = async {
+            for failure in failures {
+                let RelayMessage::Incoming { session_id } = net::receive(&mut control).await? else { bail!("incoming session") };
+                let mut outer = net::websocket_at(&roster.roster.relay_addresses[0], &format!("/networks/{network}/attach/{}/{generation}/{session_id}", lab.target_identity.device_id), crypto::relay_tls_config(&roster.roster.relay_ca_pem)?).await?;
+                assert!(matches!(net::receive(&mut outer).await?, RelayMessage::Connected { .. }));
+                let (mut ws, cert) = secure::server(outer, &lab.target_identity).await?;
+                roster.peer(&cert.context("certificate")?, Some(&lab.source_identity.device_id))?;
+                let exchange: serde_json::Value = net::receive(&mut ws).await?;
+                assert_eq!(exchange["version"], VERSION);
+                // Receiving Purpose before sending our roster proves there is
+                // no extra round trip. It must be the only pipelined message.
+                assert!(matches!(net::receive(&mut ws).await?, secure::Purpose::Execute));
+                assert!(tokio::time::timeout(Duration::from_millis(50), net::receive::<Data>(&mut ws)).await.is_err());
+                let mut sent_roster = roster.clone();
+                if failure == "signature" { sent_roster.roster.version += 1; }
+                if failure == "revoked" {
+                    sent_roster = Manager::open(&lab.source.join(".xrun/manager"))?.revoke("target1")?;
+                }
+                net::send(&mut ws, &serde_json::json!({ "version": if failure == "version" { "incompatible" } else { VERSION }, "roster": sent_roster })).await?;
+                if failure.starts_with("ready-") || failure == "denied" {
+                    // Even a valid roster does not permit sending Exec before Ready.
+                    assert!(tokio::time::timeout(Duration::from_millis(50), net::receive::<Data>(&mut ws)).await.is_err());
+                    let response = if failure == "denied" {
+                        Data::Error { code: "PERMISSION_DENIED".into(), message: "not allowed".into() }
+                    } else {
+                        Data::Ready { version: if failure == "ready-version" { "incompatible" } else { VERSION }.into(), device_id: if failure == "ready-identity" { lab.source_identity.device_id.clone() } else { lab.target_identity.device_id.clone() }, db_id: "test-db".into(), default_cwd: lab.target.to_string_lossy().into() }
+                    };
+                    net::send(&mut ws, &response).await?;
+                }
+                assert!(net::receive::<Data>(&mut ws).await.is_err(), "{failure} must not send an execution request");
+            }
+            Ok::<_, anyhow::Error>(())
+        };
+        let commands = async {
+            for failure in failures {
+                let output = cli(&lab.source, &["target1", "--request-id", failure, "--", "must-not-run"]).await;
+                assert_eq!(output.status.code(), Some(125), "{failure}: {}", String::from_utf8_lossy(&output.stderr));
+            }
+            assert!(json(cli(&lab.source, &["recent", "--json"]).await).as_array().unwrap().is_empty());
+            Ok::<_, anyhow::Error>(())
+        };
+        tokio::try_join!(peer, commands)?;
+        Ok::<_, anyhow::Error>(())
+    }).await?
+}
