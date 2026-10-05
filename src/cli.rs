@@ -932,14 +932,13 @@ async fn remote(cli: DeviceCli) -> Result<i32> {
         .as_ref()
         .map(|s| s.target_device_id.as_str())
         .unwrap_or(&cli.device);
-    let target: Device = net::http(
-        &id,
-        reqwest::Method::GET,
-        &format!("/devices/{selected}"),
-        None,
-    )
-    .await?;
-    let target_metadata = target.clone();
+    // The operation session authenticates the target and exchanges the latest
+    // signed roster. Only info needs a separate live state query.
+    let roster = crate::network::current(&id)?;
+    let target = roster.member(selected)?;
+    if target.revoked {
+        bail!("DEVICE_REVOKED: target has been revoked")
+    }
     let target_name = target.name.clone();
     let target = &target.device_id;
     match cli.command {
@@ -1011,6 +1010,13 @@ async fn remote(cli: DeviceCli) -> Result<i32> {
             .await
         }
         Remote::Info => {
+            let target_metadata: Device = net::http(
+                &id,
+                reqwest::Method::GET,
+                &format!("/devices/{target}"),
+                None,
+            )
+            .await?;
             print(json, &target_metadata, || {
                 println!(
                     "{}",

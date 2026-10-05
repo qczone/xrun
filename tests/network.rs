@@ -194,3 +194,108 @@ async fn registration_permissions_migration_and_manager_offline_execution() -> R
     })
     .await?
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn device_operations_connect_directly_while_info_still_queries_live_state() -> Result<()> {
+    use anyhow::Context;
+    use xrun::{
+        crypto, membership::ReceiptAck, net, network::PeerState, protocol::*, relay::RelayMessage,
+        secure,
+    };
+    tokio::time::timeout(Duration::from_secs(15), async {
+        let mut lab = Lab::new().await?;
+        let device: Device =
+            serde_json::from_value(json(cli(&lab.source, &["target1", "info", "--json"]).await))?;
+        stop_daemon(&lab.source, &mut lab.source_daemon).await?;
+        stop_daemon(&lab.target, &mut lab.daemon).await?;
+        let cache = RosterCache::open(&lab.target.join(".xrun/roster.db"))?;
+        let network = &lab.target_identity.network.as_ref().unwrap().network_id;
+        let roster = cache.load(network)?;
+        let mut control = relay_socket(
+            Some(&lab.target_identity),
+            &roster,
+            &format!("/networks/{network}/control"),
+        )
+        .await?;
+        let RelayMessage::HelloAck { generation } = net::receive(&mut control).await? else {
+            anyhow::bail!("control acknowledgement")
+        };
+        let peer = async {
+            for state_query in [false, true] {
+                let RelayMessage::Incoming { session_id } = net::receive(&mut control).await?
+                else {
+                    anyhow::bail!("incoming session")
+                };
+                let mut outer = net::websocket_at(
+                    &roster.roster.relay_addresses[0],
+                    &format!(
+                        "/networks/{network}/attach/{}/{generation}/{session_id}",
+                        lab.target_identity.device_id
+                    ),
+                    crypto::relay_tls_config(&roster.roster.relay_ca_pem)?,
+                )
+                .await?;
+                assert!(matches!(
+                    net::receive(&mut outer).await?,
+                    RelayMessage::Connected { .. }
+                ));
+                let (mut ws, certificate) = secure::server(outer, &lab.target_identity).await?;
+                let (_, source) = secure::exchange_server(
+                    &mut ws,
+                    &cache,
+                    network,
+                    &certificate.context("peer certificate")?,
+                )
+                .await?;
+                assert_eq!(source, lab.source_identity.device_id);
+                let purpose: secure::Purpose = net::receive(&mut ws).await?;
+                assert_eq!(
+                    matches!(purpose, secure::Purpose::State),
+                    state_query,
+                    "ordinary operations must not open a preliminary state session"
+                );
+                if state_query {
+                    net::send(
+                        &mut ws,
+                        &PeerState {
+                            device: device.clone(),
+                            ack: ReceiptAck::create(&lab.target_identity, &roster)?,
+                        },
+                    )
+                    .await?;
+                } else {
+                    net::send(
+                        &mut ws,
+                        &Data::Ready {
+                            version: VERSION.into(),
+                            device_id: lab.target_identity.device_id.clone(),
+                            db_id: "test-database".into(),
+                            default_cwd: lab.target.to_string_lossy().into(),
+                        },
+                    )
+                    .await?;
+                    assert!(matches!(
+                        net::receive(&mut ws).await?,
+                        Data::Request {
+                            request: Request::Jobs { .. }
+                        }
+                    ));
+                    net::send(&mut ws, &Data::Jobs { jobs: vec![] }).await?;
+                }
+                net::close(&mut ws).await;
+            }
+            Ok::<_, anyhow::Error>(())
+        };
+        let commands = async {
+            let jobs = json(cli(&lab.source, &["target1", "jobs", "--json"]).await);
+            assert_eq!(jobs, serde_json::json!([]));
+            let info = json(cli(&lab.source, &["target1", "info", "--json"]).await);
+            assert_eq!(info["online"], true);
+            assert_eq!(info["device_id"], lab.target_identity.device_id);
+            Ok::<_, anyhow::Error>(())
+        };
+        tokio::try_join!(peer, commands)?;
+        Ok::<_, anyhow::Error>(())
+    })
+    .await?
+}
