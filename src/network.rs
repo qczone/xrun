@@ -1,7 +1,7 @@
 use crate::{
     config::{self, Identity, NetworkIdentity, PendingIdentity},
     crypto, daemon,
-    membership::{Manager, Pairing, ReceiptAck, RosterCache, SignedRoster},
+    membership::{Manager, Member, Pairing, ReceiptAck, RosterCache, SignedRoster},
     net::{self, Ws},
     protocol::*,
     relay::{Proof, RelayMessage},
@@ -269,6 +269,64 @@ async fn states_for(id: &Identity, via: &SignedRoster, ids: Vec<String>) -> Resu
     }
     Ok(states)
 }
+fn listed_device(roster: &SignedRoster, member: &Member, info: Option<&Device>) -> Device {
+    let info = info.filter(|_| !member.revoked);
+    Device {
+        device_id: member.device_id.clone(),
+        name: member.name.clone(),
+        online: info.is_some(),
+        admin: member.device_id == roster.roster.manager_id,
+        revoked: member.revoked,
+        os: info.and_then(|d| d.os.clone()),
+        arch: info.and_then(|d| d.arch.clone()),
+        version: info.and_then(|d| d.version.clone()),
+        hostname: info.and_then(|d| d.hostname.clone()),
+        execution_user: info.and_then(|d| d.execution_user.clone()),
+        default_cwd: info.and_then(|d| d.default_cwd.clone()),
+        last_seen: info.and_then(|d| d.last_seen),
+    }
+}
+
+/// Relay presence is a routing hint, not proof that an endpoint can execute.
+pub async fn connected_devices(id: &Identity) -> Result<Vec<Device>> {
+    let ids = online_ids(id, &current(id)?).await?;
+    let roster = current(id)?;
+    Ok(roster
+        .roster
+        .members
+        .iter()
+        .map(|member| {
+            let mut device = listed_device(&roster, member, None);
+            device.online = !member.revoked && ids.contains(&member.device_id);
+            device
+        })
+        .collect())
+}
+
+pub async fn device(id: &Identity, selector: &str) -> Result<Device> {
+    let via = current(id)?;
+    let member = via.member(selector)?;
+    if member.revoked {
+        bail!("DEVICE_REVOKED: target has been revoked")
+    }
+    let state = peer_state(id, &member.device_id, &via).await;
+    // The peer exchange may have delivered a newer signed roster.
+    let roster = current(id)?;
+    let member = roster.member(&member.device_id)?;
+    if member.revoked {
+        bail!("DEVICE_REVOKED: target has been revoked")
+    }
+    let info = match state {
+        Ok(state) => Some(state.device),
+        Err(error) if error.to_string().starts_with("DEVICE_REVOKED") => return Err(error),
+        Err(error) => {
+            tracing::debug!(target = %member.device_id, %error, "peer state request unavailable");
+            None
+        }
+    };
+    Ok(listed_device(&roster, member, info.as_ref()))
+}
+
 pub async fn devices(id: &Identity) -> Result<(Vec<Device>, Vec<ReceiptAck>)> {
     let via = current(id)?;
     let ids = online_ids(id, &via).await?;
@@ -303,20 +361,7 @@ pub async fn devices(id: &Identity) -> Result<(Vec<Device>, Vec<ReceiptAck>)> {
         .iter()
         .map(|member| {
             let info = metadata.get(&member.device_id).filter(|_| !member.revoked);
-            Device {
-                device_id: member.device_id.clone(),
-                name: member.name.clone(),
-                online: info.is_some(),
-                admin: member.device_id == roster.roster.manager_id,
-                revoked: member.revoked,
-                os: info.and_then(|d| d.os.clone()),
-                arch: info.and_then(|d| d.arch.clone()),
-                version: info.and_then(|d| d.version.clone()),
-                hostname: info.and_then(|d| d.hostname.clone()),
-                execution_user: info.and_then(|d| d.execution_user.clone()),
-                default_cwd: info.and_then(|d| d.default_cwd.clone()),
-                last_seen: info.and_then(|d| d.last_seen),
-            }
+            listed_device(&roster, member, info)
         })
         .collect();
     Ok((devices, acks))
@@ -991,7 +1036,7 @@ pub async fn http<T: DeserializeOwned>(
     body: Option<serde_json::Value>,
 ) -> Result<T> {
     let value = match (method, path) {
-        (reqwest::Method::GET, "/devices") => serde_json::to_value(devices(id).await?.0)?,
+        (reqwest::Method::GET, "/devices") => serde_json::to_value(connected_devices(id).await?)?,
         (reqwest::Method::POST, "/invites") => {
             invite(
                 id,
@@ -1011,19 +1056,7 @@ pub async fn http<T: DeserializeOwned>(
             .await?
         }
         (reqwest::Method::GET, path) if path.starts_with("/devices/") => {
-            let selector = &path[9..];
-            let roster = current(id)?;
-            let member = roster.member(selector)?;
-            if member.revoked {
-                bail!("DEVICE_REVOKED: target has been revoked")
-            }
-            let (devices, _) = devices(id).await?;
-            serde_json::to_value(
-                devices
-                    .into_iter()
-                    .find(|d| d.device_id == member.device_id)
-                    .context("UNKNOWN_DEVICE: device is not registered")?,
-            )?
+            serde_json::to_value(device(id, &path[9..]).await?)?
         }
         _ => bail!("INVALID_REQUEST: unsupported network operation"),
     };

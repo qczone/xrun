@@ -207,9 +207,9 @@ export function Devices({
                     {device.revoked
                       ? "已撤销"
                       : device.online
-                        ? "在线"
-                        : "离线"}{" "}
-                    · {osName(device.os)}
+                        ? "中转报告已连接"
+                        : "未连接中转"}
+                    {device.os && <> · {osName(device.os)}</>}
                   </span>
                 </div>
                 <div className="device-id mono">{device.device_id}</div>

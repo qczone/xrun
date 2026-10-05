@@ -69,7 +69,7 @@ enum Local {
     DenyFrom(PermissionArgs),
     /// Revoke a device identity (manager only)
     Revoke { device: String },
-    /// Show local state and the deployment's devices
+    /// Show local state and relay-reported device connections
     Status,
     /// Show this CLI's submissions from the last 24 hours
     Recent,
@@ -551,9 +551,9 @@ async fn status(json: bool) -> Result<i32> {
                     if d.revoked {
                         "revoked"
                     } else if d.online {
-                        "online"
+                        "relay-connected"
                     } else {
-                        "offline"
+                        "disconnected"
                     }
                 );
             }

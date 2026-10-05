@@ -206,6 +206,21 @@ async fn device_operations_connect_directly_while_info_still_queries_live_state(
         let mut lab = Lab::new().await?;
         let device: Device =
             serde_json::from_value(json(cli(&lab.source, &["target1", "info", "--json"]).await))?;
+        let observer = lab.root.path().join("observer");
+        std::fs::create_dir_all(&observer)?;
+        let invite = json(cli(&lab.source, &["invite", "--json"]).await);
+        ok(cli(
+            &observer,
+            &[
+                "join",
+                invite["link"].as_str().unwrap(),
+                "--name",
+                "observer1",
+                "--no-daemon",
+            ],
+        )
+        .await);
+        let observer_id: Identity = xrun::config::read(&observer.join(".xrun/identity.toml"))?;
         stop_daemon(&lab.source, &mut lab.source_daemon).await?;
         stop_daemon(&lab.target, &mut lab.daemon).await?;
         let cache = RosterCache::open(&lab.target.join(".xrun/roster.db"))?;
@@ -220,6 +235,18 @@ async fn device_operations_connect_directly_while_info_still_queries_live_state(
         let RelayMessage::HelloAck { generation } = net::receive(&mut control).await? else {
             anyhow::bail!("control acknowledgement")
         };
+        let observer_roster =
+            RosterCache::open(&observer.join(".xrun/roster.db"))?.load(network)?;
+        let mut observer_control = relay_socket(
+            Some(&observer_id),
+            &observer_roster,
+            &format!("/networks/{network}/control"),
+        )
+        .await?;
+        assert!(matches!(
+            net::receive(&mut observer_control).await?,
+            RelayMessage::HelloAck { .. }
+        ));
         let peer = async {
             for state_query in [false, true] {
                 let RelayMessage::Incoming { session_id } = net::receive(&mut control).await?
@@ -287,14 +314,108 @@ async fn device_operations_connect_directly_while_info_still_queries_live_state(
             Ok::<_, anyhow::Error>(())
         };
         let commands = async {
+            let status = json(cli(&lab.source, &["status", "--json"]).await);
+            let connected = status["devices"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|d| d["device_id"] == lab.target_identity.device_id)
+                .unwrap();
+            assert_eq!(connected["online"], true);
+            assert!(connected["hostname"].is_null());
+            assert!(connected["version"].is_null());
             let jobs = json(cli(&lab.source, &["target1", "jobs", "--json"]).await);
             assert_eq!(jobs, serde_json::json!([]));
             let info = json(cli(&lab.source, &["target1", "info", "--json"]).await);
             assert_eq!(info["online"], true);
             assert_eq!(info["device_id"], lab.target_identity.device_id);
+            assert_eq!(info["hostname"], serde_json::to_value(&device.hostname)?);
             Ok::<_, anyhow::Error>(())
         };
         tokio::try_join!(peer, commands)?;
+        assert!(
+            tokio::time::timeout(
+                Duration::from_millis(100),
+                net::receive::<RelayMessage>(&mut observer_control)
+            )
+            .await
+            .is_err(),
+            "status and target info must not contact other peers"
+        );
+        Ok::<_, anyhow::Error>(())
+    })
+    .await?
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn status_filters_known_revocations_without_claiming_roster_synchronization() -> Result<()> {
+    use xrun::{net, relay::RelayMessage};
+    tokio::time::timeout(Duration::from_secs(25), async {
+        let mut lab = Lab::new().await?;
+        let observer = lab.root.path().join("observer");
+        std::fs::create_dir_all(&observer)?;
+        let invite = json(cli(&lab.source, &["invite", "--json"]).await);
+        ok(cli(
+            &observer,
+            &[
+                "join",
+                invite["link"].as_str().unwrap(),
+                "--name",
+                "observer1",
+                "--no-daemon",
+            ],
+        )
+        .await);
+        let network = &lab.target_identity.network.as_ref().unwrap().network_id;
+        let cache = RosterCache::open(&observer.join(".xrun/roster.db"))?;
+        let old = cache.load(network)?;
+        stop_daemon(&lab.target, &mut lab.daemon).await?;
+        let revoked = json(cli(&lab.source, &["revoke", "target1", "--json"]).await);
+        assert!(
+            revoked["undelivered"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|d| d == &old.member("observer1").unwrap().device_id)
+        );
+        // The relay has no revocation list. A certificate can still bind its own
+        // route, but a client with the signed revocation must not display it online.
+        let roster = RosterCache::open(&lab.target.join(".xrun/roster.db"))?.load(network)?;
+        let mut control = relay_socket(
+            Some(&lab.target_identity),
+            &roster,
+            &format!("/networks/{network}/control"),
+        )
+        .await?;
+        assert!(matches!(
+            net::receive(&mut control).await?,
+            RelayMessage::HelloAck { .. }
+        ));
+        let target = |status: serde_json::Value| {
+            status["devices"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|d| d["device_id"] == lab.target_identity.device_id)
+                .unwrap()
+                .clone()
+        };
+        let known = target(json(cli(&lab.source, &["status", "--json"]).await));
+        assert_eq!(known["revoked"], true);
+        assert_eq!(known["online"], false);
+        let stale = target(json(cli(&observer, &["status", "--json"]).await));
+        assert_eq!(stale["revoked"], false);
+        assert_eq!(stale["online"], true);
+        assert_eq!(cache.load(network)?.roster.version, old.roster.version);
+        // End-to-end info still synchronizes signed membership, independently of
+        // the lightweight list and without probing the revoked device.
+        let info = json(cli(&observer, &["source1", "info", "--json"]).await);
+        assert_eq!(info["online"], true);
+        assert!(cache.load(network)?.member("target1")?.revoked);
+        assert_eq!(
+            target(json(cli(&observer, &["status", "--json"]).await))["online"],
+            false
+        );
         Ok::<_, anyhow::Error>(())
     })
     .await?
