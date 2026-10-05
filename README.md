@@ -6,6 +6,8 @@ xrun 让开发者和 AI 在已授权的 macOS、Windows、Linux 设备上执行�
 
 ## 构建
 
+先安装 rustup。项目通过 [rust-toolchain.toml](rust-toolchain.toml) 固定 Rust 版本及 rustfmt、clippy 组件，本地构建、三平台 CI 和打包使用同一工具链；在项目目录运行 Cargo 时由 rustup 自动选择。
+
 ```bash
 cargo build --locked --release
 ```

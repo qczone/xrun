@@ -829,6 +829,8 @@ CLI、Rust 中转和 daemon 使用核心包中的完整发布版本，与 `xrun 
 
 ### 7.1 代码组织与打包
 
+根目录 `rust-toolchain.toml` 固定 Rust 工具链版本及 rustfmt、clippy 组件；本地开发、三平台测试和 Package 工作流统一读取该文件。升级时显式修改固定版本并重新验证，CI 保留 `-D warnings`。
+
 Rust workspace 的核心 package 提供 CLI、daemon 和 Rust 中转；桌面 package 位于 `desktop/src-tauri`。按现有职责划分：membership 管理签名清单与权威状态，network 处理创建/加入和端点同步，relay 接通外层连接，secure 建立端到端 TLS，ipc/session/pool 处理本机通信、CLI 会话与后台连接缓存，daemon/store 管理可靠任务，process 处理原生进程，transfer/screenshot/forwarding/streaming 处理相应业务，service/control/history 提供本机服务与只读历史。Cloudflare Worker、部署脚本和 workerd 测试位于 `cloudflare/`。
 
 App 使用 Tauri 2、React、TypeScript、Vite 和 Bun，生产包包含静态前端与配套 Rust helper，不包含 Bun。根目录 `bun run --cwd desktop build` 根据平台生成 macOS DMG 或 Windows 当前用户 NSIS 安装包；`--debug` 使用调试目录。macOS 本地包默认 ad-hoc 签名，正式包使用 Developer ID 签名、公证 App 与 DMG 并附票据；Windows 安装包当前未签名。服务使用固定位置的包内 helper，升级前正常停止。

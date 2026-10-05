@@ -169,7 +169,7 @@ fn tunnel(outer: Ws, flow_control: bool) -> Tunnel {
                         if bytes == 0
                             || bytes > RELAY_WINDOW
                             || outstanding
-                                .fetch_update(Ordering::AcqRel, Ordering::Acquire, |pending| {
+                                .try_update(Ordering::AcqRel, Ordering::Acquire, |pending| {
                                     pending.checked_sub(bytes)
                                 })
                                 .is_err()

@@ -36,11 +36,12 @@ jobs:
         if: runner.os == 'Windows'
         with:
           arch: x64
-      - name: Install current stable Rust
+      - name: Rust toolchain
+        id: toolchain
         shell: bash
         run: |
-          rustup update stable
-          rustup default stable
+          rustup toolchain install --no-self-update
+          echo "version=$(rustc --version)" >> "$GITHUB_OUTPUT"
       - name: Cache Cargo dependencies and release build
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
@@ -48,8 +49,8 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             target/release
-          key: xrun-${{ runner.os }}-${{ runner.arch }}-release-${{ hashFiles('Cargo.lock') }}
-          restore-keys: xrun-${{ runner.os }}-${{ runner.arch }}-release-
+          key: xrun-${{ runner.os }}-${{ runner.arch }}-release-${{ steps.toolchain.outputs.version }}-${{ hashFiles('Cargo.lock') }}
+          restore-keys: xrun-${{ runner.os }}-${{ runner.arch }}-release-${{ steps.toolchain.outputs.version }}-
       - name: Build Unix
         if: runner.os != 'Windows'
         shell: bash
