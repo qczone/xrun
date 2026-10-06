@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+import type { ApiError } from "./errors";
 
 export interface LocalStatus {
   joined: boolean;
@@ -30,7 +31,7 @@ export interface Status {
   };
   allow_from: string[];
   deny_from: string[];
-  error: string | null;
+  error: ApiError | null;
 }
 
 export interface ExecutionSettings {

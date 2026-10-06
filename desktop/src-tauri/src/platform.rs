@@ -1,3 +1,4 @@
+use super::error;
 #[cfg(windows)]
 use anyhow::Context;
 use anyhow::{Result, bail};
@@ -17,7 +18,10 @@ pub fn helper() -> Result<PathBuf> {
     let path =
         std::env::current_exe()?.with_file_name(if cfg!(windows) { "xrun.exe" } else { "xrun" });
     if !path.is_file() {
-        bail!("HELPER_NOT_FOUND: reinstall the xrun application");
+        bail!(error::failure(
+            "HELPER_NOT_FOUND",
+            "reinstall the xrun application"
+        ));
     }
     Ok(path)
 }
@@ -33,7 +37,10 @@ pub async fn check_helper() -> Result<()> {
         || String::from_utf8_lossy(&out.stdout).trim()
             != format!("xrun {}", xrun::protocol::VERSION)
     {
-        bail!("HELPER_VERSION_MISMATCH: reinstall the xrun application");
+        bail!(error::failure(
+            "HELPER_VERSION_MISMATCH",
+            "reinstall the xrun application"
+        ));
     }
     Ok(())
 }
@@ -73,7 +80,7 @@ mod mac {
         }
         fn register(&self) -> Result<()> {
             unsafe { self.registerAndReturnError() }
-                .map_err(|e| anyhow::anyhow!("SERVICE_FAILED: {e}"))
+                .map_err(|e| error::failure("SERVICE_FAILED", format!("{e}")))
         }
         fn unregister(&self) -> Result<()> {
             unsafe { self.unregisterAndReturnError() }
@@ -102,7 +109,10 @@ mod mac {
             service.register()?;
         }
         if service.state() == 2 {
-            bail!("APPROVAL_REQUIRED: allow xrun in System Settings > General > Login Items");
+            bail!(error::failure(
+                "APPROVAL_REQUIRED",
+                "allow xrun in System Settings > General > Login Items"
+            ));
         }
         Ok(())
     }
@@ -162,7 +172,10 @@ mod mac {
     pub fn register_agent() -> Result<()> {
         let exe = std::env::current_exe()?;
         if !is_bundle_executable(&exe) {
-            bail!("APP_BUNDLE_REQUIRED: run the packaged xrun.app");
+            bail!(error::failure(
+                "APP_BUNDLE_REQUIRED",
+                "run the packaged xrun.app"
+            ));
         }
         let service = unsafe {
             SMAppService::agentServiceWithPlistName(&NSString::from_str(
@@ -183,7 +196,10 @@ mod mac {
 
     pub fn autostart(enabled: bool) -> Result<()> {
         if !is_bundle_executable(&std::env::current_exe()?) {
-            bail!("APP_BUNDLE_REQUIRED: login startup requires the packaged xrun.app");
+            bail!(error::failure(
+                "APP_BUNDLE_REQUIRED",
+                "login startup requires the packaged xrun.app"
+            ));
         }
         let service = unsafe { SMAppService::mainAppService() };
         set_enabled(&*service, enabled)
@@ -224,10 +240,10 @@ mod mac {
         let started = async {
             for _ in 0..50 {
                 if let Some(code) = child.try_wait()? {
-                    bail!(
-                        "SERVICE_FAILED: daemon exited ({code}); see {}",
-                        log_path.display()
-                    );
+                    bail!(error::failure(
+                        "SERVICE_FAILED",
+                        format!("daemon exited ({code}); see {}", log_path.display())
+                    ));
                 }
                 if xrun::config::instance_running(&dir.join("daemon.lock"))?
                     && xrun::control::state(dir)?
@@ -237,7 +253,10 @@ mod mac {
                 }
                 tokio::time::sleep(Duration::from_millis(100)).await;
             }
-            bail!("DAEMON_START_TIMEOUT: see {}", log_path.display());
+            bail!(error::failure(
+                "DAEMON_START_TIMEOUT",
+                format!("see {}", log_path.display())
+            ));
         }
         .await;
         if started.is_err() {
@@ -279,7 +298,10 @@ mod mac {
                 fn register(&self) -> Result<()> {
                     self.calls.borrow_mut().push("register");
                     if self.fail {
-                        bail!("SERVICE_FAILED: simulated registration error");
+                        bail!(error::failure(
+                            "SERVICE_FAILED",
+                            "simulated registration error"
+                        ));
                     }
                     self.state.set(if self.approval { 2 } else { 1 });
                     Ok(())
@@ -287,7 +309,7 @@ mod mac {
                 fn unregister(&self) -> Result<()> {
                     self.calls.borrow_mut().push("unregister");
                     if self.fail {
-                        bail!("SERVICE_FAILED: simulated removal error");
+                        bail!(error::failure("SERVICE_FAILED", "simulated removal error"));
                     }
                     self.state.set(0);
                     Ok(())
@@ -463,7 +485,10 @@ async fn start_impl(helper: &std::path::Path) -> Result<()> {
         .output()
         .await?;
     if !out.status.success() {
-        bail!("SERVICE_FAILED: {}", String::from_utf8_lossy(&out.stderr));
+        bail!(error::failure(
+            "SERVICE_FAILED",
+            format!("{}", String::from_utf8_lossy(&out.stderr))
+        ));
     }
     Ok(())
 }
@@ -489,10 +514,13 @@ pub async fn prepare_uninstall() -> Result<()> {
         .args(["-NoProfile", "-NonInteractive", "-Command", "$ErrorActionPreference='Stop'; $t=Get-ScheduledTask | Where-Object { $_.TaskPath -eq '\\' -and $_.TaskName -eq 'xrun-daemon' }; if ($t -and $t.Actions.Execute -eq $env:XRUN_SERVICE_EXE) { Write-Output owned }; exit 0"])
         .env("XRUN_SERVICE_EXE", &helper).creation_flags(0x08000000).output().await?;
     if !output.status.success() {
-        bail!(
-            "SERVICE_FAILED: could not inspect the installed task: {}",
-            String::from_utf8_lossy(&output.stderr).trim()
-        );
+        bail!(error::failure(
+            "SERVICE_FAILED",
+            format!(
+                "could not inspect the installed task: {}",
+                String::from_utf8_lossy(&output.stderr).trim()
+            )
+        ));
     }
     if String::from_utf8_lossy(&output.stdout).trim() == "owned" {
         remove().await?;
@@ -557,7 +585,10 @@ pub fn status() -> Result<ServiceStatus> {
 }
 #[cfg(not(any(windows, target_os = "macos")))]
 async fn start_impl(_helper: &std::path::Path) -> Result<()> {
-    bail!("UNSUPPORTED_PLATFORM")
+    bail!(error::failure(
+        "UNSUPPORTED_PLATFORM",
+        "desktop App requires macOS or Windows"
+    ))
 }
 #[cfg(not(any(windows, target_os = "macos")))]
 pub async fn remove() -> Result<()> {

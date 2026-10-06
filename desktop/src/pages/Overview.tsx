@@ -273,7 +273,7 @@ export function Overview({
           joined={local.joined}
           busy={busy}
           pending={pending}
-          startFailed={!!status?.error?.startsWith("SERVICE_START_FAILED:")}
+          startFailed={status?.error?.code === "SERVICE_START_FAILED"}
           action={action}
           onCreated={() => navigate("devices")}
         />

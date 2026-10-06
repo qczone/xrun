@@ -1,3 +1,4 @@
+import { errorCode } from "./errors";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   api,
@@ -82,9 +83,8 @@ export function App() {
       const value = await api.status();
       setStatus(value);
       if (!value.error) dismissedStatusError.current = null;
-      setStatusError(
-        value.error === dismissedStatusError.current ? null : value.error,
-      );
+      const detail = value.error ? errorText(value.error) : null;
+      setStatusError(detail === dismissedStatusError.current ? null : detail);
       return value;
     } catch (e) {
       const detail = errorText(e);
@@ -174,11 +174,12 @@ export function App() {
       return await operation();
     } catch (e) {
       const detail = errorText(e);
-      const title = detail.startsWith("SERVICE_START_FAILED:")
-        ? context.name === "create_network"
-          ? "网络已创建，后台服务未启动。请启动后台服务。"
-          : "已加入网络，后台服务未启动。请启动后台服务。"
-        : context.title;
+      const title =
+        errorCode(e) === "SERVICE_START_FAILED"
+          ? context.name === "create_network"
+            ? "网络已创建，后台服务未启动。请启动后台服务。"
+            : "已加入网络，后台服务未启动。请启动后台服务。"
+          : context.title;
       setError({ page: origin, title, detail });
     } finally {
       await refreshStatus();

@@ -1,3 +1,4 @@
+import { errorCode } from "../errors";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   api,
@@ -367,7 +368,11 @@ function TaskDetail({
         if (!disposed) {
           setError(errorText(e));
           setOutputStatus("输出读取失败");
-          if (/^(DB_RESET|JOB_NOT_FOUND|DB_MISSING)/.test(errorText(e)))
+          if (
+            ["DB_RESET", "JOB_NOT_FOUND", "DB_MISSING"].includes(
+              errorCode(e) ?? "",
+            )
+          )
             finished.current = true;
         }
       } finally {

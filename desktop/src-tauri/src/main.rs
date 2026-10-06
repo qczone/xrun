@@ -1,6 +1,8 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod error;
 mod network;
+use error::CommandError;
 mod platform;
 
 use serde::{Deserialize, Serialize};
@@ -16,7 +18,7 @@ use tauri_plugin_dialog::DialogExt;
 #[derive(Default)]
 struct Desktop {
     action: tokio::sync::Mutex<()>,
-    error: Mutex<Option<String>>,
+    error: Mutex<Option<CommandError>>,
 }
 
 #[derive(Serialize)]
@@ -26,7 +28,7 @@ struct Status {
     service: platform::ServiceStatus,
     allow_from: Vec<String>,
     deny_from: Vec<String>,
-    error: Option<String>,
+    error: Option<CommandError>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -46,7 +48,7 @@ struct Settings {
 }
 
 #[tauri::command]
-fn settings() -> Result<Settings, String> {
+fn settings() -> Result<Settings, CommandError> {
     let result = (|| {
         let cfg = xrun::config::DaemonConfig::load()?;
         Ok::<_, anyhow::Error>(Settings {
@@ -70,7 +72,7 @@ fn settings() -> Result<Settings, String> {
             os: std::env::consts::OS,
         })
     })();
-    result.map_err(|e| e.to_string())
+    result.map_err(CommandError::from_error)
 }
 
 #[tauri::command]
@@ -78,7 +80,7 @@ async fn save_settings<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
     state: State<'_, Desktop>,
     execution: ExecutionSettings,
-) -> Result<(), String> {
+) -> Result<(), CommandError> {
     let _guard = state.action.lock().await;
     let result = (|| {
         xrun::config::Identity::load()?;
@@ -94,7 +96,7 @@ async fn save_settings<R: tauri::Runtime>(
 #[tauri::command]
 async fn choose_directory<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
-) -> Result<Option<String>, String> {
+) -> Result<Option<String>, CommandError> {
     let (tx, rx) = tokio::sync::oneshot::channel();
     app.dialog()
         .file()
@@ -102,11 +104,11 @@ async fn choose_directory<R: tauri::Runtime>(
         .pick_folder(move |path| {
             let _ = tx.send(path);
         });
-    let path = rx.await.map_err(|e| e.to_string())?;
+    let path = rx.await.map_err(CommandError::from_error)?;
     path.map(|p| {
         p.into_path()
             .map(|p| p.to_string_lossy().into_owned())
-            .map_err(|e| e.to_string())
+            .map_err(CommandError::from_error)
     })
     .transpose()
 }
@@ -121,7 +123,7 @@ fn local_status<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> anyhow::Result<
         match network::local_status() {
             Ok(value) => Some(value),
             Err(e) => {
-                error = Some(e.to_string());
+                error = Some(CommandError::from_error(e));
                 None
             }
         }
@@ -152,8 +154,8 @@ fn present<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
 fn record<T, R: tauri::Runtime>(
     app: &tauri::AppHandle<R>,
     result: anyhow::Result<T>,
-) -> Result<T, String> {
-    let result = result.map_err(|e| e.to_string());
+) -> Result<T, CommandError> {
+    let result = result.map_err(CommandError::from_error);
     let error = result.as_ref().err().cloned();
     *app.state::<Desktop>().error.lock().unwrap() = error.clone();
     match error {
@@ -168,28 +170,30 @@ fn record<T, R: tauri::Runtime>(
 // Joining/creation has completed at this point; the UI can offer a service retry
 // without asking the user to repeat registration or retain the invitation link.
 fn service_start_error(error: anyhow::Error) -> anyhow::Error {
-    anyhow::anyhow!("SERVICE_START_FAILED: {error:#}")
+    error::failure("SERVICE_START_FAILED", format!("{error:#}"))
 }
 
 #[tauri::command]
-fn status<R: tauri::Runtime>(app: tauri::AppHandle<R>) -> Result<Status, String> {
-    local_status(&app).map_err(|e| e.to_string())
+fn status<R: tauri::Runtime>(app: tauri::AppHandle<R>) -> Result<Status, CommandError> {
+    local_status(&app).map_err(CommandError::from_error)
 }
 
 #[tauri::command]
-async fn devices() -> Result<xrun::client::Status, String> {
-    xrun::client::status().await.map_err(|e| e.to_string())
+async fn devices() -> Result<xrun::client::Status, CommandError> {
+    xrun::client::status()
+        .await
+        .map_err(CommandError::from_error)
 }
 
 #[tauri::command]
 async fn task_history(
     before: Option<i64>,
     filter: String,
-) -> Result<xrun::history::TaskPage, String> {
+) -> Result<xrun::history::TaskPage, CommandError> {
     tauri::async_runtime::spawn_blocking(move || xrun::history::tasks(before, &filter))
         .await
-        .map_err(|e| e.to_string())?
-        .map_err(|e| e.to_string())
+        .map_err(CommandError::from_error)?
+        .map_err(CommandError::from_error)
 }
 
 #[tauri::command]
@@ -197,19 +201,19 @@ async fn task_output(
     db_id: String,
     job: String,
     after: Option<u64>,
-) -> Result<xrun::history::TaskOutput, String> {
+) -> Result<xrun::history::TaskOutput, CommandError> {
     tauri::async_runtime::spawn_blocking(move || xrun::history::output(&db_id, &job, after))
         .await
-        .map_err(|e| e.to_string())?
-        .map_err(|e| e.to_string())
+        .map_err(CommandError::from_error)?
+        .map_err(CommandError::from_error)
 }
 
 #[tauri::command]
-async fn file_history(before: Option<i64>) -> Result<xrun::history::FilePage, String> {
+async fn file_history(before: Option<i64>) -> Result<xrun::history::FilePage, CommandError> {
     tauri::async_runtime::spawn_blocking(move || xrun::history::files(before))
         .await
-        .map_err(|e| e.to_string())?
-        .map_err(|e| e.to_string())
+        .map_err(CommandError::from_error)?
+        .map_err(CommandError::from_error)
 }
 
 #[tauri::command]
@@ -217,7 +221,7 @@ async fn invite<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
     state: State<'_, Desktop>,
     allow: bool,
-) -> Result<network::Invitation, String> {
+) -> Result<network::Invitation, CommandError> {
     let _guard = state.action.lock().await;
     let result = async {
         let id = xrun::config::Identity::load()?;
@@ -234,7 +238,7 @@ async fn revoke<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
     state: State<'_, Desktop>,
     device: String,
-) -> Result<network::Revocation, String> {
+) -> Result<network::Revocation, CommandError> {
     let _guard = state.action.lock().await;
     let result = async {
         let id = xrun::config::Identity::load()?;
@@ -250,11 +254,11 @@ async fn revoke<R: tauri::Runtime>(
 fn copy_invitation<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
     link: String,
-) -> Result<(), String> {
+) -> Result<(), CommandError> {
     let result = (|| {
         anyhow::ensure!(
             link.starts_with("xrun://") && link.len() <= 4096,
-            "INVALID_LINK: expected a member invitation"
+            xrun::error::ErrorCode::InvalidLink.error("expected a member invitation")
         );
         app.clipboard().write_text(link)?;
         Ok(())
@@ -268,7 +272,7 @@ async fn create_network<R: tauri::Runtime>(
     state: State<'_, Desktop>,
     link: String,
     name: String,
-) -> Result<(), String> {
+) -> Result<(), CommandError> {
     let _guard = state.action.lock().await;
     let result = async {
         xrun::network::create(link.trim(), Some(name.trim().to_string())).await?;
@@ -285,7 +289,7 @@ async fn join<R: tauri::Runtime>(
     state: State<'_, Desktop>,
     link: String,
     name: String,
-) -> Result<(), String> {
+) -> Result<(), CommandError> {
     let _guard = state.action.lock().await;
     let result = async {
         xrun::network::join(link.trim(), name.trim().to_string()).await?;
@@ -300,7 +304,7 @@ async fn join<R: tauri::Runtime>(
 async fn start<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
     state: State<'_, Desktop>,
-) -> Result<(), String> {
+) -> Result<(), CommandError> {
     let _guard = state.action.lock().await;
     record(&app, platform::start().await)
 }
@@ -308,7 +312,7 @@ async fn start<R: tauri::Runtime>(
 async fn stop<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
     state: State<'_, Desktop>,
-) -> Result<(), String> {
+) -> Result<(), CommandError> {
     let _guard = state.action.lock().await;
     record(&app, xrun::service::stop_daemon().await)
 }
@@ -316,7 +320,7 @@ async fn stop<R: tauri::Runtime>(
 async fn remove_service<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
     state: State<'_, Desktop>,
-) -> Result<(), String> {
+) -> Result<(), CommandError> {
     let _guard = state.action.lock().await;
     record(&app, platform::remove().await)
 }
@@ -325,7 +329,7 @@ async fn autostart<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
     state: State<'_, Desktop>,
     enabled: bool,
-) -> Result<(), String> {
+) -> Result<(), CommandError> {
     let _guard = state.action.lock().await;
     record(&app, platform::autostart(enabled))
 }
@@ -335,7 +339,7 @@ async fn permission<R: tauri::Runtime>(
     state: State<'_, Desktop>,
     device: String,
     allow: bool,
-) -> Result<(), String> {
+) -> Result<(), CommandError> {
     let _guard = state.action.lock().await;
     record(
         &app,
@@ -349,26 +353,36 @@ async fn all_permissions<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
     state: State<'_, Desktop>,
     allow: bool,
-) -> Result<(), String> {
+) -> Result<(), CommandError> {
     let _guard = state.action.lock().await;
-    record(&app, xrun::config::update_all_permissions(allow))
+    let result = async {
+        xrun::config::update_all_permissions(allow)?;
+        xrun::control::refresh_access().await
+    }
+    .await;
+    record(&app, result)
 }
 #[tauri::command]
 async fn pause_access<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
     state: State<'_, Desktop>,
     paused: bool,
-) -> Result<(), String> {
+) -> Result<(), CommandError> {
     let _guard = state.action.lock().await;
-    record(&app, xrun::config::pause_remote_access(paused))
+    let result = async {
+        xrun::config::pause_remote_access(paused)?;
+        xrun::control::refresh_access().await
+    }
+    .await;
+    record(&app, result)
 }
 #[tauri::command]
-fn hide_icon<R: tauri::Runtime>(app: tauri::AppHandle<R>) -> Result<(), String> {
+fn hide_icon<R: tauri::Runtime>(app: tauri::AppHandle<R>) -> Result<(), CommandError> {
     if let Some(tray) = app.tray_by_id("xrun") {
-        tray.set_visible(false).map_err(|e| e.to_string())?;
+        tray.set_visible(false).map_err(CommandError::from_error)?;
     }
     if let Some(window) = app.get_webview_window("main") {
-        window.hide().map_err(|e| e.to_string())?;
+        window.hide().map_err(CommandError::from_error)?;
     }
     Ok(())
 }
@@ -572,7 +586,7 @@ fn main() {
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
-    use anyhow::{Context, Result};
+    use anyhow::Result;
     use serde_json::{Value, json};
     use std::{
         path::Path,
@@ -861,10 +875,8 @@ pub(crate) mod tests {
                     "permission",
                     json!({"device":"dev_invalid","allow":true})
                 )
-                .unwrap_err()
-                .as_str()
-                .unwrap()
-                .starts_with("INVALID_DEVICE_ID:")
+                .unwrap_err()["code"]
+                    == "INVALID_DEVICE_ID"
             );
             assert_eq!(
                 std::fs::read(config::device_dir()?.join("daemon.toml"))?,
@@ -956,7 +968,7 @@ pub(crate) mod tests {
                     json!({"link":"invalid","name":"local1"}),
                 )
                 .unwrap_err();
-                assert!(!error.as_str().unwrap().starts_with("SERVICE_START_FAILED:"));
+                assert!(!(error["code"] == "SERVICE_START_FAILED"));
                 assert!(Identity::load().is_err());
                 let link = xrun::relay::deployment_link(&cfg)?;
                 let error = invoke(
@@ -966,22 +978,18 @@ pub(crate) mod tests {
                 )
                 .unwrap_err();
                 assert!(
-                    error
-                        .as_str()
-                        .unwrap()
-                        .starts_with("SERVICE_START_FAILED: HELPER_NOT_FOUND:")
+                    error["code"] == "SERVICE_START_FAILED"
+                        && error["message"]
+                            .as_str()
+                            .unwrap()
+                            .contains("HELPER_NOT_FOUND:")
                 );
                 assert_eq!(Identity::load()?.name, "local1");
                 assert!(config::device_dir()?.join("daemon.initialized").exists());
                 assert!(app.state::<Desktop>().error.lock().unwrap().is_some());
                 let status = invoke(&window, "status", json!({})).unwrap();
                 assert_eq!(status["local"]["joined"], true);
-                assert!(
-                    status["error"]
-                        .as_str()
-                        .unwrap()
-                        .starts_with("SERVICE_START_FAILED:")
-                );
+                assert!(status["error"]["code"] == "SERVICE_START_FAILED");
                 retry_existing_daemon(&window)?;
                 assert!(app.state::<Desktop>().error.lock().unwrap().is_none());
                 assert!(invoke(&window, "status", json!({})).unwrap()["error"].is_null());
@@ -1055,10 +1063,11 @@ pub(crate) mod tests {
                 )
                 .unwrap_err();
                 assert!(
-                    error
-                        .as_str()
-                        .context("join error")?
-                        .starts_with("SERVICE_START_FAILED: HELPER_NOT_FOUND:")
+                    error["code"] == "SERVICE_START_FAILED"
+                        && error["message"]
+                            .as_str()
+                            .unwrap()
+                            .contains("HELPER_NOT_FOUND:")
                 );
                 let id = Identity::load()?;
                 assert_eq!(id.name, "member1");
@@ -1134,11 +1143,8 @@ pub(crate) mod tests {
                 assert_eq!(failed["jobs"].as_array().unwrap().len(), 1);
                 assert_eq!(failed["jobs"][0]["job_id"], "000055");
                 assert!(
-                    invoke(&window, "task_history", json!({"filter":"invalid"}))
-                        .unwrap_err()
-                        .as_str()
-                        .unwrap()
-                        .starts_with("INVALID_FILTER:")
+                    invoke(&window, "task_history", json!({"filter":"invalid"})).unwrap_err()["code"]
+                        == "INVALID_FILTER"
                 );
                 for _ in 0..40 {
                     tasks.append("000001", "stdout", b"output\n")?;
@@ -1174,7 +1180,7 @@ pub(crate) mod tests {
                         json!({"dbId":db,"job":job,"after":after}),
                     )
                     .unwrap_err();
-                    assert!(error.as_str().unwrap().starts_with(code), "{error}");
+                    assert!(error["code"] == code.trim_end_matches(':'), "{error}");
                 }
                 let files = invoke(&window, "file_history", json!({})).unwrap();
                 assert_eq!(files["entries"].as_array().unwrap().len(), 50);
@@ -1219,10 +1225,7 @@ pub(crate) mod tests {
                 assert!(devices["server_error"].is_null(), "{devices}");
                 assert_eq!(devices["devices"].as_array().unwrap().len(), 3);
                 let error = invoke(&window, "revoke", json!({"device":"manager1"})).unwrap_err();
-                assert!(
-                    error.as_str().unwrap().starts_with("MANAGER_PROTECTED:"),
-                    "{error}"
-                );
+                assert!((error["code"] == "MANAGER_PROTECTED"), "{error}");
                 let result = invoke(&window, "revoke", json!({"device":"reader"})).unwrap();
                 assert_eq!(result["device_id"], members[0]);
                 assert_eq!(result["revoked"], true);
@@ -1279,7 +1282,7 @@ pub(crate) mod tests {
                     json!({"link":"https://not-an-invitation"}),
                 )
                 .unwrap_err();
-                assert!(error.as_str().unwrap().starts_with("INVALID_LINK:"));
+                assert!((error["code"] == "INVALID_LINK"));
                 assert!(app.state::<Desktop>().error.lock().unwrap().is_some());
                 assert_eq!(
                     invoke(&window, "pause_access", json!({"paused":false})),
@@ -1290,12 +1293,7 @@ pub(crate) mod tests {
                 std::fs::rename(&cache, &backup)?;
                 let broken = invoke(&window, "status", json!({})).unwrap();
                 assert!(broken["network"].is_null());
-                assert!(
-                    broken["error"]
-                        .as_str()
-                        .unwrap()
-                        .starts_with("MEMBER_STATE_MISSING:")
-                );
+                assert!(broken["error"]["code"] == "MEMBER_STATE_MISSING");
                 std::fs::rename(backup, cache)?;
                 let recovered = invoke(&window, "status", json!({})).unwrap();
                 assert!(recovered["error"].is_null());
@@ -1304,11 +1302,8 @@ pub(crate) mod tests {
                 {
                     // An unbundled dev process must not register a real login item.
                     assert!(
-                        invoke(&window, "autostart", json!({"enabled":true}))
-                            .unwrap_err()
-                            .as_str()
-                            .unwrap()
-                            .starts_with("APP_BUNDLE_REQUIRED:")
+                        invoke(&window, "autostart", json!({"enabled":true})).unwrap_err()["code"]
+                            == "APP_BUNDLE_REQUIRED"
                     );
                     assert_eq!(
                         invoke(&window, "remove_service", json!({})),
@@ -1511,8 +1506,8 @@ pub(crate) mod tests {
                                     .error
                                     .lock()
                                     .unwrap()
-                                    .as_deref()
-                                    .is_some_and(|e| e.starts_with("HELPER_NOT_FOUND"))
+                                    .as_ref()
+                                    .is_some_and(|e| e.code == "HELPER_NOT_FOUND")
                                 {
                                     break;
                                 }

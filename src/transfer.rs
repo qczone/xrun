@@ -1,4 +1,4 @@
-use crate::error::ErrorCode;
+use crate::error::{ErrorCode, file_io};
 use crate::{config::sync_parent, protocol::MAX_FILE};
 use anyhow::{Context, Result, bail};
 use sha2::{Digest, Sha256};
@@ -26,6 +26,7 @@ pub fn valid_hash(hash: &str) -> bool {
 }
 fn open_file(path: &Path) -> Result<std::fs::File> {
     let metadata = std::fs::metadata(path)
+        .map_err(file_io)
         .with_context(|| format!("read file metadata: {}", path.display()))?;
     if metadata.is_dir() {
         bail!(ErrorCode::IsDirectory.error(format!("{}", path.display())))
@@ -43,7 +44,7 @@ fn open_file(path: &Path) -> Result<std::fs::File> {
         use std::os::unix::fs::OpenOptionsExt;
         options.custom_flags(libc::O_NONBLOCK);
     }
-    let file = options.open(path)?;
+    let file = options.open(path).map_err(file_io)?;
     if !file.metadata()?.is_file() {
         bail!(ErrorCode::InvalidPath.error("only regular files are supported"))
     }
@@ -52,7 +53,9 @@ fn open_file(path: &Path) -> Result<std::fs::File> {
 pub fn read_file(path: &Path) -> Result<Vec<u8>> {
     let file = open_file(path)?;
     let mut bytes = vec![];
-    file.take(MAX_FILE + 1).read_to_end(&mut bytes)?;
+    file.take(MAX_FILE + 1)
+        .read_to_end(&mut bytes)
+        .map_err(file_io)?;
     if bytes.len() as u64 > MAX_FILE {
         bail!(ErrorCode::FileTooLarge.error(format!("maximum {MAX_FILE} bytes")))
     }
@@ -92,7 +95,7 @@ fn destination(path: &Path, mkdir: bool) -> Result<PathBuf> {
     if let Ok(metadata) = std::fs::symlink_metadata(path)
         && metadata.file_type().is_symlink()
     {
-        let target = std::fs::read_link(path)?;
+        let target = std::fs::read_link(path).map_err(file_io)?;
         let target = if target.is_absolute() {
             target
         } else {
@@ -109,7 +112,7 @@ fn destination_inner(path: &Path, mkdir: bool, depth: usize) -> Result<PathBuf> 
     if let Ok(metadata) = std::fs::symlink_metadata(path)
         && metadata.file_type().is_symlink()
     {
-        let target = std::fs::read_link(path)?;
+        let target = std::fs::read_link(path).map_err(file_io)?;
         let target = if target.is_absolute() {
             target
         } else {
@@ -129,7 +132,7 @@ fn destination_inner(path: &Path, mkdir: bool, depth: usize) -> Result<PathBuf> 
         .parent()
         .context(ErrorCode::InvalidPath.error("no parent directory"))?;
     if mkdir {
-        std::fs::create_dir_all(parent)?
+        std::fs::create_dir_all(parent).map_err(file_io)?
     }
     let parent = std::fs::canonicalize(parent)
         .context(ErrorCode::ParentNotFound.error("destination directory must exist"))?;
@@ -246,7 +249,7 @@ fn save(
 }
 #[cfg(not(windows))]
 fn replace(temp: tempfile::NamedTempFile, path: &Path) -> Result<()> {
-    temp.persist(path).map_err(|e| e.error)?;
+    temp.persist(path).map_err(|e| file_io(e.error))?;
     Ok(())
 }
 #[cfg(windows)]
@@ -273,7 +276,7 @@ fn replace(temp: tempfile::NamedTempFile, path: &Path) -> Result<()> {
         )
     } == 0
     {
-        return Err(std::io::Error::last_os_error().into());
+        return Err(file_io(std::io::Error::last_os_error()).into());
     }
     Ok(())
 }
@@ -301,7 +304,8 @@ pub fn save_local_reader(path: &Path, input: &mut impl Read) -> Result<PathBuf> 
     let path = path
         .parent()
         .context(ErrorCode::InvalidPath.error("missing parent"))?
-        .canonicalize()?
+        .canonicalize()
+        .map_err(file_io)?
         .join(name);
     let metadata = local_metadata(&path)?;
     let mut temp = tempfile::NamedTempFile::new_in(path.parent().unwrap())?;
@@ -312,7 +316,9 @@ pub fn save_local_reader(path: &Path, input: &mut impl Read) -> Result<PathBuf> 
     temp.as_file().sync_all()?;
     local_metadata(&path)?;
     // MoveFileExW on Windows, rename on Unix; do not use ReplaceFileW here.
-    temp.into_temp_path().persist(&path).map_err(|e| e.error)?;
+    temp.into_temp_path()
+        .persist(&path)
+        .map_err(|e| file_io(e.error))?;
     sync_parent(&path)
         .context(ErrorCode::Unconfirmed.error("destination replaced but directory sync failed"))?;
     Ok(path)
@@ -332,6 +338,27 @@ fn local_metadata(path: &Path) -> Result<Option<std::fs::Metadata>> {
             Ok(Some(metadata))
         }
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
-        Err(error) => Err(error.into()),
+        Err(error) => Err(file_io(error).into()),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn user_paths_have_explicit_file_error_codes() -> Result<()> {
+        let dir = tempfile::tempdir()?;
+        for error in [
+            read_file(&dir.path().join("absent")).unwrap_err(),
+            prepare_upload(&dir.path().join("absent")).unwrap_err(),
+        ] {
+            assert!(crate::error::is(&error, ErrorCode::FileNotFound));
+            assert_eq!(crate::error::wire(&error).0, "FILE_NOT_FOUND");
+        }
+        assert!(crate::error::is(
+            &read_file(dir.path()).unwrap_err(),
+            ErrorCode::IsDirectory
+        ));
+        Ok(())
     }
 }

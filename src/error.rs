@@ -126,6 +126,7 @@ codes! {
     ResultLost => "RESULT_LOST",
     RosterConflict => "ROSTER_CONFLICT",
     RosterRollback => "ROSTER_ROLLBACK",
+    RosterVersionExhausted => "ROSTER_VERSION_EXHAUSTED",
     ScreenshotFailed => "SCREENSHOT_FAILED",
     ScreenshotUnavailable => "SCREENSHOT_UNAVAILABLE",
     ScreenLocked => "SCREEN_LOCKED",
@@ -260,10 +261,6 @@ pub fn wire(error: &anyhow::Error) -> (String, String) {
             .find_map(|e| e.downcast_ref::<std::io::Error>())
             .map(std::io::Error::kind)
         {
-            Some(std::io::ErrorKind::NotFound) => ErrorCode::FileNotFound,
-            Some(std::io::ErrorKind::PermissionDenied) => ErrorCode::PermissionDenied,
-            Some(std::io::ErrorKind::WouldBlock) => ErrorCode::FileBusy,
-            Some(std::io::ErrorKind::InvalidInput) => ErrorCode::InvalidPath,
             Some(_) => ErrorCode::StorageError,
             None => ErrorCode::ExecutionError,
         }
@@ -275,6 +272,18 @@ pub fn wire(error: &anyhow::Error) -> (String, String) {
         .unwrap_or(&message)
         .to_string();
     (code.as_str().to_string(), message)
+}
+
+/// Assigns path-related semantics only at an explicit user file boundary.
+pub(crate) fn file_io(error: std::io::Error) -> CodedError {
+    let code = match error.kind() {
+        std::io::ErrorKind::NotFound => ErrorCode::FileNotFound,
+        std::io::ErrorKind::PermissionDenied => ErrorCode::PermissionDenied,
+        std::io::ErrorKind::WouldBlock => ErrorCode::FileBusy,
+        std::io::ErrorKind::InvalidInput => ErrorCode::InvalidPath,
+        _ => ErrorCode::StorageError,
+    };
+    code.error(error.to_string())
 }
 
 #[cfg(test)]
@@ -326,6 +335,24 @@ mod tests {
         ))
         .context("loading input")
         .unwrap_err();
-        assert_eq!(wire(&error).0, "FILE_NOT_FOUND");
+        assert_eq!(wire(&error).0, "STORAGE_ERROR");
+        assert!(!ErrorCode::from_wire(wire(&error).0).rejects_submission());
+    }
+
+    #[test]
+    fn internal_io_never_proves_that_a_submission_was_rejected() {
+        for kind in [
+            std::io::ErrorKind::NotFound,
+            std::io::ErrorKind::PermissionDenied,
+            std::io::ErrorKind::WouldBlock,
+            std::io::ErrorKind::InvalidInput,
+        ] {
+            let error: anyhow::Error =
+                std::io::Error::new(kind, "internal database/config failure").into();
+            assert_eq!(wire(&error).0, "STORAGE_ERROR");
+            assert!(!ErrorCode::from_wire(wire(&error).0).rejects_submission());
+            let explicit: anyhow::Error = file_io(std::io::Error::new(kind, "user path")).into();
+            assert!(code(&explicit).unwrap().rejects_submission());
+        }
     }
 }

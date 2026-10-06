@@ -60,8 +60,7 @@ export function relayHost(address: string) {
   }
 }
 
-export const errorText = (error: unknown) =>
-  error instanceof Error ? error.message : String(error);
+export { errorText } from "./errors";
 
 export function taskState(job: Job): [string, string] {
   if (job.state === "exited")

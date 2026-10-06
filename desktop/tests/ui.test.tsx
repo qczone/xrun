@@ -364,7 +364,7 @@ test("late output cannot replace another task and database reset stops automatic
     task_output: ({ job }) => {
       reads++;
       if (job === "OLD") return pending;
-      throw "DB_RESET: database replaced";
+      throw { code: "DB_RESET", message: "database replaced" };
     },
   });
   page("活动记录");
@@ -887,13 +887,19 @@ test("history pages and filters retain server cursors and stop polling while hid
 
 test("recovered status errors disappear and dismissed errors do not reappear on every poll", async () => {
   const { status, poll } = await fixture();
-  status.error = "CONNECT_FAILED: temporary network failure";
+  status.error = {
+    code: "CONNECT_FAILED",
+    message: "temporary network failure",
+  };
   await poll();
   expect(screen.getByRole("alert").textContent).toContain("本机检查遇到问题");
   status.error = null;
   await poll();
   expect(screen.queryByRole("alert")).toBeNull();
-  status.error = "CONNECT_FAILED: temporary network failure";
+  status.error = {
+    code: "CONNECT_FAILED",
+    message: "temporary network failure",
+  };
   await poll();
   fireEvent.click(
     within(screen.getByRole("alert")).getByRole("button", {
@@ -904,7 +910,10 @@ test("recovered status errors disappear and dismissed errors do not reappear on 
   expect(screen.queryByRole("alert")).toBeNull();
   status.error = null;
   await poll();
-  status.error = "CONNECT_FAILED: temporary network failure";
+  status.error = {
+    code: "CONNECT_FAILED",
+    message: "temporary network failure",
+  };
   await poll();
   expect(screen.getByRole("alert")).toBeTruthy();
 });
@@ -974,7 +983,10 @@ for (const command of ["join", "create_network"] as const) {
           current.local.joined = true;
           current.local.daemon_running = false;
           current.local.daemon_connected = false;
-          current.error = "SERVICE_START_FAILED: system approval required";
+          current.error = {
+            code: "SERVICE_START_FAILED",
+            message: "system approval required",
+          };
           throw current.error;
         },
         start: () => {

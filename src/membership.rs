@@ -504,11 +504,9 @@ impl Manager {
                 [sha256(token.as_bytes())],
             )?;
             roster.roster.members.push(member.clone());
-            roster.roster.version = roster
-                .roster
-                .version
-                .checked_add(1)
-                .context("ROSTER_VERSION_EXHAUSTED")?;
+            roster.roster.version = roster.roster.version.checked_add(1).context(
+                ErrorCode::RosterVersionExhausted.error("membership version cannot be incremented"),
+            )?;
             roster = SignedRoster::signed(roster.roster, &self.ca_pem, &self.key_pem)?;
             save_state(&tx, &roster)?;
             member
@@ -559,10 +557,9 @@ impl Manager {
             .find(|m| m.device_id == id)
             .unwrap()
             .revoked = true;
-        r.version = r
-            .version
-            .checked_add(1)
-            .context("ROSTER_VERSION_EXHAUSTED")?;
+        r.version = r.version.checked_add(1).context(
+            ErrorCode::RosterVersionExhausted.error("membership version cannot be incremented"),
+        )?;
         let next = SignedRoster::signed(r, &self.ca_pem, &self.key_pem)?;
         save_state(&tx, &next)?;
         tx.commit()?;
@@ -574,10 +571,9 @@ impl Manager {
         let mut r = state(&tx)?.roster;
         r.relay_addresses = addresses;
         r.relay_ca_pem = ca_pem;
-        r.version = r
-            .version
-            .checked_add(1)
-            .context("ROSTER_VERSION_EXHAUSTED")?;
+        r.version = r.version.checked_add(1).context(
+            ErrorCode::RosterVersionExhausted.error("membership version cannot be incremented"),
+        )?;
         let next = SignedRoster::signed(r, &self.ca_pem, &self.key_pem)?;
         save_state(&tx, &next)?;
         tx.commit()?;
@@ -710,6 +706,27 @@ mod cache_tests {
         forged.roster.members[0].name = "forged".into();
         assert!(cache.observe(network, &forged).is_err());
         assert_eq!(cache.load(network)?.roster.version, 2);
+        Ok(())
+    }
+    #[test]
+    fn exhausted_roster_version_is_typed_and_rolls_back() -> Result<()> {
+        let dir = tempfile::tempdir()?;
+        let manager = Manager::create(
+            dir.path(),
+            "manager1",
+            vec!["https://relay.example.com".into()],
+            String::new(),
+        )?
+        .0;
+        let mut roster = manager.roster()?.roster;
+        roster.version = u64::MAX;
+        let signed = SignedRoster::signed(roster, &manager.ca_pem, &manager.key_pem)?;
+        save_state(&manager.db.lock().unwrap(), &signed)?;
+        let error = manager
+            .set_relay(vec!["https://other.example.com".into()], String::new())
+            .unwrap_err();
+        assert!(crate::error::is(&error, ErrorCode::RosterVersionExhausted));
+        assert_eq!(manager.roster()?.roster.version, u64::MAX);
         Ok(())
     }
 }
