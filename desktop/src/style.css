@@ -638,6 +638,10 @@ details > summary {
   box-shadow: 0 8px 28px #0002;
   z-index: 3;
 }
+.device-more[data-placement="above"] .device-more-body {
+  top: auto;
+  bottom: calc(100% + 6px);
+}
 .device-more-body code {
   display: block;
   color: var(--muted);

@@ -171,6 +171,27 @@ export function Devices({
         <details
           className="device-more"
           name="device-actions"
+          onToggle={(event) => {
+            const menu = event.currentTarget;
+            if (!menu.open) return;
+            const body = menu.querySelector<HTMLElement>(".device-more-body");
+            const summary = menu.querySelector("summary");
+            if (!body || !summary) return;
+            menu.dataset.placement = "below";
+            const bounds = body.getBoundingClientRect();
+            const trigger = summary.getBoundingClientRect();
+            const container = menu.closest("main")?.getBoundingClientRect();
+            const bottom = Math.min(
+              window.innerHeight,
+              container?.bottom ?? window.innerHeight,
+            );
+            const top = Math.max(0, container?.top ?? 0);
+            if (
+              bounds.bottom > bottom - 8 &&
+              trigger.top - bounds.height - 6 >= top + 8
+            )
+              menu.dataset.placement = "above";
+          }}
           onKeyDown={(event) => {
             if (event.key === "Escape") {
               event.currentTarget.open = false;
@@ -237,7 +258,11 @@ export function Devices({
       {!inviteOpen && feedback}
       {listError && (
         <ErrorNotice
-          title="设备列表未能刷新，已保留上次读取的结果。"
+          title={
+            devices.length
+              ? "设备列表未能刷新，已保留上次读取的结果。"
+              : "设备列表暂时不可用，请检查连接后重试。"
+          }
           detail={listError}
           retry={() => void refresh()}
         />
