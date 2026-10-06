@@ -172,7 +172,8 @@ pub(super) async fn run(cli: LocalCli) -> Result<i32> {
             Some(DaemonCommand::Pause) => config::pause_remote_access(true)?,
             Some(DaemonCommand::Resume) => config::pause_remote_access(false)?,
         },
-        Local::Guide => print!("{}", include_str!("../../README.md")),
+        Local::Doc { topic, list } => super::docs::print(topic, list),
+        Local::Help { command } => return super::help::run(&command),
     }
     Ok(0)
 }

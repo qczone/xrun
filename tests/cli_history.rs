@@ -177,10 +177,6 @@ async fn status_text_distinguishes_unjoined_paused_revoked_and_unavailable_devic
     let fresh = tempfile::tempdir()?;
     let status = ok(cli(fresh.path(), &["status"]).await);
     assert!(status.contains("local: not joined") && status.contains("daemon: stopped"));
-    assert_eq!(
-        ok(cli(fresh.path(), &["guide"]).await),
-        include_str!("../README.md")
-    );
     let mut lab = Lab::new().await?;
     let status = ok(cli(&lab.source, &["status"]).await);
     assert!(status.contains("local: source1") && status.contains("daemon: running"));

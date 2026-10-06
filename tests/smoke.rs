@@ -4,6 +4,17 @@ use common::*;
 use std::time::Duration;
 use xrun::protocol::{VERSION, sha256};
 
+#[tokio::test]
+async fn packaged_binary_contains_the_offline_manual_and_remote_help() {
+    let home = tempfile::tempdir().unwrap();
+    assert_eq!(
+        ok(cli(home.path(), &["doc"]).await),
+        include_str!("../docs/usage.md")
+    );
+    let help = ok(cli(home.path(), &["help", "push"]).await);
+    assert!(help.contains("<LOCAL> <REMOTE>") && help.contains("--expect"));
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn packaged_binary_creates_joins_executes_and_transfers_files() -> Result<()> {
     tokio::time::timeout(Duration::from_secs(45), async {

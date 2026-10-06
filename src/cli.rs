@@ -1,8 +1,10 @@
 //! CLI entry point and local/remote command dispatch.
 mod args;
+mod docs;
 mod execution;
 mod files;
 mod forward;
+mod help;
 mod jobs;
 mod local;
 mod logs;
@@ -12,7 +14,7 @@ mod support;
 
 use crate::{net, protocol::RESERVED};
 use args::{DeviceCli, LocalCli, Remote};
-use clap::Parser;
+use clap::{CommandFactory, Parser};
 use support::{diagnostic, network_error};
 
 pub async fn run() -> i32 {
@@ -30,22 +32,13 @@ pub async fn run() -> i32 {
         while args.get(position).is_some_and(|a| a == "--json") {
             position += 1;
         }
-        let ops = [
-            "start",
-            "info",
-            "jobs",
-            "wait",
-            "logs",
-            "kill",
-            "push",
-            "pull",
-            "screenshot",
-            "forward",
-        ];
-        if args
-            .get(position)
-            .is_none_or(|a| !ops.contains(&a.as_str()))
-        {
+        let explicit = args.get(position).is_some_and(|argument| {
+            matches!(
+                argument.as_str(),
+                "help" | "-h" | "--help" | "-V" | "--version"
+            ) || DeviceCli::command().find_subcommand(argument).is_some()
+        });
+        if !explicit {
             args.insert(position, "run".into())
         }
         let cli = DeviceCli::parse_from(args);

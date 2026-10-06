@@ -256,7 +256,7 @@ pub const RESERVED: &[&str] = &[
     "server",
     "relay",
     "daemon",
-    "guide",
+    "doc",
     "start",
     "info",
     "jobs",
