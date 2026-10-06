@@ -154,19 +154,46 @@ impl TestRelay {
             // same relay library with the selected device binary on both ends.
             self.task = Some(tokio::spawn(xrun::relay::run(self.config.clone())));
         }
+        let keys = xrun::crypto::load_or_create_server(&self.config)?;
+        let probe = xrun::crypto::http_client(&keys.ca_pem, None)?;
+        let url = format!("https://127.0.0.1:{}/", self.config.port);
         tokio::time::timeout(Duration::from_secs(10), async {
-            while tokio::net::TcpStream::connect(("127.0.0.1", self.config.port))
-                .await
-                .is_err()
-            {
+            loop {
                 if let Some(process) = &mut self.process {
                     anyhow::ensure!(
                         process.try_wait()?.is_none(),
                         "relay exited; see process logs"
                     );
                 }
-                if let Some(task) = &self.task {
-                    anyhow::ensure!(!task.is_finished(), "relay task exited; see process logs");
+                if self.task.as_ref().is_some_and(|task| task.is_finished()) {
+                    match self.task.take().unwrap().await? {
+                        Err(error)
+                            if error
+                                .downcast_ref::<std::io::Error>()
+                                .is_some_and(|e| e.kind() == std::io::ErrorKind::AddrInUse) =>
+                        {
+                            // Restarted listeners can race sockets still releasing the port.
+                            self.task = Some(tokio::spawn(xrun::relay::run(self.config.clone())));
+                        }
+                        Err(error) => {
+                            return Err(error.context("test relay exited before readiness"));
+                        }
+                        Ok(()) => anyhow::bail!("test relay exited before readiness"),
+                    }
+                }
+                // A TCP connect can succeed before our listener is ready. Require
+                // an HTTPS response from the relay with this fixture's pinned CA.
+                if probe
+                    .get(&url)
+                    .timeout(Duration::from_millis(500))
+                    .send()
+                    .await
+                    .is_ok()
+                {
+                    if self.task.as_ref().is_some_and(|task| task.is_finished()) {
+                        continue;
+                    }
+                    break;
                 }
                 tokio::time::sleep(Duration::from_millis(20)).await;
             }
