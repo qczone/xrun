@@ -144,16 +144,10 @@ pub(super) fn submit(
                     .remove(&saved.job_id)
                     .unwrap_or(0),
             );
-            let recorded = (|| -> Result<()> {
-                let mut job = background
-                    .store
-                    .get(&saved.job_id)?
-                    .context("missing accepted task")?;
-                job.state = JobState::Failed;
-                job.error = Some(format!("EXECUTION_ERROR: {e:#}"));
-                job.updated_at_ms = now_ms();
-                background.store.save(&job)
-            })();
+            let recorded = background
+                .store
+                .mark_failed(&saved.job_id, format!("EXECUTION_ERROR: {e:#}"))
+                .await;
             if let Err(error) = recorded {
                 tracing::error!(%error, "task result could not be saved; stopping daemon");
                 *background.fatal.lock().unwrap() = Some(error.to_string());
@@ -166,7 +160,7 @@ pub(super) fn submit(
     Ok(job)
 }
 
-async fn execute(rt: Arc<Runtime>, mut job: Job, request: Execution, input: Vec<u8>) -> Result<()> {
+async fn execute(rt: Arc<Runtime>, job: Job, request: Execution, input: Vec<u8>) -> Result<()> {
     let cfg = rt.config()?;
     let cwd = PathBuf::from(&request.cwd);
     let mut env = cfg.env;
@@ -223,29 +217,34 @@ async fn execute(rt: Arc<Runtime>, mut job: Job, request: Execution, input: Vec<
         script = Some(file.into_temp_path());
     }
     let resolved = resolve_program(&program, &cwd, &env)?;
-    let mut child = {
-        let _gate = rt.gate.lock().unwrap();
-        if rt.canceled.lock().unwrap().contains(&job.job_id) || rt.stopping.load(Ordering::SeqCst) {
-            job.state = JobState::Canceled;
-            job.updated_at_ms = now_ms();
-            rt.store.save(&job)?;
-            return Ok(());
+    let runtime = rt.clone();
+    let launching = job.job_id.clone();
+    let spawned = tokio::task::spawn_blocking(move || {
+        let _gate = runtime.gate.lock().unwrap();
+        if runtime.canceled.lock().unwrap().contains(&launching)
+            || runtime.stopping.load(Ordering::SeqCst)
+        {
+            runtime
+                .store
+                .finish_sync(&launching, outcome(JobState::Canceled))?;
+            return Ok(None);
         }
-        let child = crate::process::spawn(&resolved, &args, &cwd, &env, &job.job_id, cmd_script)?;
-        job.process = Some(ProcessIdentity {
+        let child = crate::process::spawn(&resolved, &args, &cwd, &env, &launching, cmd_script)?;
+        let process = ProcessIdentity {
             pid: child.pid,
             boot_id: boot_id(),
             start: process_start(child.pid),
-        });
-        if let Err(e) = rt.store.save(&job) {
+        };
+        if let Err(error) = runtime.store.record_process(&launching, process) {
             crate::process::force_kill(child.pid);
-            return Err(e);
+            return Err(error);
         }
-        rt.running
-            .lock()
-            .unwrap()
-            .insert(job.job_id.clone(), child.pid);
-        child
+        runtime.running.lock().unwrap().insert(launching, child.pid);
+        Ok(Some(child))
+    })
+    .await??;
+    let Some(mut child) = spawned else {
+        return Ok(());
     };
     // Remove the PID before the child can be reaped, including error paths.
     let running = RunningJob {
@@ -253,9 +252,7 @@ async fn execute(rt: Arc<Runtime>, mut job: Job, request: Execution, input: Vec<
         id: job.job_id.clone(),
     };
     let pid = child.pid;
-    job.state = JobState::Running;
-    job.updated_at_ms = now_ms();
-    rt.store.save(&job)?;
+    rt.store.mark_running(&job.job_id).await?;
     let incomplete = Arc::new(Mutex::new(None::<String>));
     let mut readers = vec![];
     for (stream, pipe) in [
@@ -272,6 +269,7 @@ async fn execute(rt: Arc<Runtime>, mut job: Job, request: Execution, input: Vec<
             )));
         }
     }
+    let mut readers = OutputReaders { tasks: readers };
     let child_stdin = child.stdin.take();
     let mut writer = tokio::spawn(async move {
         if let Some(mut pipe) = child_stdin {
@@ -289,26 +287,47 @@ async fn execute(rt: Arc<Runtime>, mut job: Job, request: Execution, input: Vec<
     let start = crate::clock::elapsed_clock_ms()?;
     let mut reason = None;
     let status = loop {
-        tokio::select! {
-            status=child.wait()=>break status?,
-            _=tokio::time::sleep(Duration::from_millis(100))=>{
-                let canceled=rt.canceled.lock().unwrap().contains(&job.job_id)||rt.stopping.load(Ordering::SeqCst);
-                let timed=request.timeout>0&&crate::clock::elapsed_clock_ms()?.saturating_sub(start)>=request.timeout.saturating_mul(1000);
-                if canceled||timed{reason=Some(if canceled{JobState::Canceled}else{JobState::TimedOut});crate::process::terminate(pid);
-                    let status=match tokio::time::timeout(Duration::from_secs(5),child.wait()).await{Ok(s)=>s?,Err(_)=>{crate::process::force_kill(pid);child.wait().await?}};break status;
+        let status = tokio::select! {
+            status = child.wait() => Some(status),
+            _ = tokio::time::sleep(CANCELLATION_SCAN_INTERVAL) => None,
+        };
+        if let Some(status) = status {
+            break status?;
+        }
+        let canceled =
+            rt.canceled.lock().unwrap().contains(&job.job_id) || rt.stopping.load(Ordering::SeqCst);
+        let timed_out = request.timeout > 0
+            && crate::clock::elapsed_clock_ms()?.saturating_sub(start)
+                >= request.timeout.saturating_mul(1000);
+        if canceled || timed_out {
+            reason = Some(if canceled {
+                JobState::Canceled
+            } else {
+                JobState::TimedOut
+            });
+            crate::process::terminate(pid);
+            break match tokio::time::timeout(PROCESS_TERMINATION_GRACE, child.wait()).await {
+                Ok(status) => status?,
+                Err(_) => {
+                    crate::process::force_kill(pid);
+                    child.wait().await?
                 }
-            }
+            };
         }
     };
     crate::process::terminate(pid);
     let drain_deadline = tokio::time::Instant::now() + Duration::from_secs(2);
-    for reader in &mut readers {
+    for reader in &mut readers.tasks {
         if tokio::time::timeout_at(drain_deadline, &mut *reader)
             .await
             .is_err()
         {
             reader.abort();
-            *incomplete.lock().unwrap() = Some("DETACHED_OUTPUT".into());
+            let _ = (&mut *reader).await;
+            crate::store::merge_incomplete(
+                &mut incomplete.lock().unwrap(),
+                Some("DETACHED_OUTPUT".into()),
+            );
         }
     }
     if tokio::time::timeout_at(drain_deadline, &mut writer)
@@ -316,25 +335,49 @@ async fn execute(rt: Arc<Runtime>, mut job: Job, request: Execution, input: Vec<
         .is_err()
     {
         writer.abort();
+        let _ = writer.await;
     }
     crate::process::force_kill(pid);
     drop(running);
     child.reap().await?;
     drop(script);
-    job.last_seq = rt.store.get(&job.job_id)?.context("job missing")?.last_seq;
-    job.state = reason.unwrap_or(JobState::Exited);
-    job.exit_code = status.code().map(i64::from);
+    rt.store.flush().await?;
+    let mut completed = outcome(reason.unwrap_or(JobState::Exited));
+    completed.exit_code = status.code().map(i64::from);
     #[cfg(unix)]
     {
         use std::os::unix::process::ExitStatusExt;
-        job.signal = status.signal();
+        completed.signal = status.signal();
     }
-    job.duration_ms = Some(crate::clock::elapsed_clock_ms()?.saturating_sub(start));
-    job.incomplete_reason = incomplete.lock().unwrap().clone();
-    job.output_complete = job.incomplete_reason.is_none();
-    job.updated_at_ms = now_ms();
-    rt.store.save(&job)?;
+    completed.duration_ms = Some(crate::clock::elapsed_clock_ms()?.saturating_sub(start));
+    completed.incomplete_reason = incomplete.lock().unwrap().clone();
+    rt.store.finish(&job.job_id, completed).await?;
     Ok(())
+}
+struct OutputReaders {
+    tasks: Vec<tokio::task::JoinHandle<()>>,
+}
+impl Drop for OutputReaders {
+    fn drop(&mut self) {
+        for task in &self.tasks {
+            task.abort();
+        }
+    }
+}
+const CANCELLATION_SCAN_INTERVAL: Duration = Duration::from_millis(100);
+const PROCESS_TERMINATION_GRACE: Duration = Duration::from_secs(5);
+const LOG_BATCH_BYTES: usize = 32 * 1024;
+const LOG_BATCH_WAIT: Duration = Duration::from_millis(50);
+fn outcome(state: JobState) -> crate::store::JobOutcome {
+    crate::store::JobOutcome {
+        state,
+        exit_code: None,
+        signal: None,
+        duration_ms: None,
+        error: None,
+        incomplete_reason: None,
+        leftover_possible: false,
+    }
 }
 async fn drain(
     store: Arc<TaskStore>,
@@ -343,21 +386,51 @@ async fn drain(
     mut pipe: Box<dyn AsyncRead + Unpin + Send>,
     incomplete: Arc<Mutex<Option<String>>>,
 ) {
-    let mut bytes = vec![0u8; LOG_CHUNK];
+    let mut bytes = vec![0u8; LOG_BATCH_BYTES];
+    let mut used = 0;
+    let mut deadline = tokio::time::Instant::now() + LOG_BATCH_WAIT;
     loop {
-        match pipe.read(&mut bytes).await {
-            Ok(0) => return,
-            Ok(n) => match store.append(&id, &stream, &bytes[..n]) {
-                Ok(Some(_)) => {}
-                Ok(None) => *incomplete.lock().unwrap() = Some("TRUNCATED".into()),
-                Err(e) => {
-                    *incomplete.lock().unwrap() = Some(format!("CAPTURE_ERROR: {e}"));
-                }
-            },
-            Err(e) => {
-                *incomplete.lock().unwrap() = Some(format!("CAPTURE_ERROR: {e}"));
-                return;
+        let result = if used == 0 {
+            Some(pipe.read(&mut bytes).await)
+        } else {
+            tokio::select! {
+                result = pipe.read(&mut bytes[used..]) => Some(result),
+                _ = tokio::time::sleep_until(deadline) => None,
             }
+        };
+        let eof = matches!(result, Some(Ok(0)) | Some(Err(_)));
+        match result {
+            Some(Ok(count)) => {
+                if used == 0 {
+                    deadline = tokio::time::Instant::now() + LOG_BATCH_WAIT;
+                }
+                used += count;
+            }
+            Some(Err(error)) => crate::store::merge_incomplete(
+                &mut incomplete.lock().unwrap(),
+                Some(format!("CAPTURE_ERROR: {error}")),
+            ),
+            None => {}
+        }
+        if used > 0 && (eof || used == LOG_BATCH_BYTES || tokio::time::Instant::now() >= deadline) {
+            match store
+                .append_async(&id, &stream, bytes[..used].to_vec())
+                .await
+            {
+                Ok(Some(_)) => {}
+                Ok(None) => crate::store::merge_incomplete(
+                    &mut incomplete.lock().unwrap(),
+                    Some("TRUNCATED".into()),
+                ),
+                Err(error) => crate::store::merge_incomplete(
+                    &mut incomplete.lock().unwrap(),
+                    Some(format!("CAPTURE_ERROR: {error}")),
+                ),
+            }
+            used = 0;
+        }
+        if eof {
+            return;
         }
     }
 }
@@ -371,6 +444,71 @@ mod tests {
     };
     use std::sync::atomic::{AtomicBool, AtomicUsize};
     use tokio::sync::{Semaphore, watch};
+
+    #[tokio::test]
+    async fn log_batches_flush_at_size_deadline_and_eof() -> Result<()> {
+        let directory = tempfile::tempdir()?;
+        let store = Arc::new(TaskStore::open(&directory.path().join("tasks.db"), true)?);
+        store.insert(&Job {
+            job_id: "BATCH1".into(),
+            request_id: "batch".into(),
+            request_hash: "hash".into(),
+            source_device_id: "source".into(),
+            target_device_id: "target".into(),
+            db_id: store.db_id.clone(),
+            program: "test".into(),
+            args: vec![],
+            cwd: "/".into(),
+            state: JobState::Running,
+            exit_code: None,
+            signal: None,
+            duration_ms: None,
+            last_seq: 0,
+            output_complete: true,
+            incomplete_reason: None,
+            error: None,
+            created_at_ms: now_ms(),
+            updated_at_ms: now_ms(),
+            leftover_possible: false,
+            process: None,
+        })?;
+        let (mut output, input) = tokio::io::duplex(2 * LOG_BATCH_BYTES);
+        let incomplete = Arc::new(Mutex::new(None));
+        let mut changes = store.subscribe();
+        let capture = tokio::spawn(drain(
+            store.clone(),
+            "BATCH1".into(),
+            "stdout".into(),
+            Box::new(input),
+            incomplete.clone(),
+        ));
+        output.write_all(&vec![b'x'; LOG_BATCH_BYTES]).await?;
+        tokio::time::timeout(Duration::from_secs(1), changes.changed()).await??;
+        assert_eq!(store.get_async("BATCH1").await?.unwrap().last_seq, 1);
+        changes.borrow_and_update();
+        output.write_all(b"timer").await?;
+        tokio::time::timeout(LOG_BATCH_WAIT + Duration::from_secs(1), changes.changed()).await??;
+        assert_eq!(store.get_async("BATCH1").await?.unwrap().last_seq, 2);
+        output.write_all(b"eof").await?;
+        drop(output);
+        capture.await?;
+        store.flush().await?;
+        assert_eq!(store.get_async("BATCH1").await?.unwrap().last_seq, 3);
+        assert!(incomplete.lock().unwrap().is_none());
+        let events = store.logs("BATCH1", 0)?;
+        use base64::Engine;
+        let bytes: Vec<_> = events
+            .iter()
+            .flat_map(|event| {
+                base64::engine::general_purpose::STANDARD
+                    .decode(&event.data_base64)
+                    .unwrap()
+            })
+            .collect();
+        assert_eq!(bytes.len(), LOG_BATCH_BYTES + 8);
+        assert!(bytes.ends_with(b"timereof"));
+        Ok(())
+    }
 
     #[test]
     fn cancellation_and_shutdown_before_first_poll_never_spawn_a_process() -> Result<()> {

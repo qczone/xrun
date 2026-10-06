@@ -22,6 +22,7 @@ pub mod store;
 pub mod streaming;
 pub mod transfer;
 
+mod database;
 mod ipc;
 mod pool;
 mod session;

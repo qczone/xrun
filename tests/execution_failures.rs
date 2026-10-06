@@ -314,31 +314,31 @@ async fn failed_process_recording_kills_the_spawned_process_and_releases_capacit
     let mut lab = Lab::new().await?;
     let program = fixture(&lab).await?;
     let db = database(&lab)?;
-    db.execute_batch("CREATE TABLE test_spawned(pid INTEGER);")?;
     for phase in ["starting", "running"] {
         let dir = lab.root.path().join(phase);
         std::fs::create_dir(&dir)?;
         db.execute_batch(&format!(
             "CREATE TRIGGER fail_process BEFORE UPDATE OF data ON jobs
-             WHEN json_extract(NEW.data,'$.state')='{phase}' AND json_extract(NEW.data,'$.process.pid') IS NOT NULL
-             BEGIN INSERT INTO test_spawned VALUES(json_extract(NEW.data,'$.process.pid'));
-             SELECT RAISE(FAIL, 'test process record failure'); END;"
+             WHEN NEW.state='{phase}' AND json_extract(NEW.data,'$.process.pid') IS NOT NULL
+             BEGIN SELECT RAISE(FAIL,
+                 'test process record failure pid=' || json_extract(NEW.data,'$.process.pid'));
+             END;"
         ))?;
         let request = execution(&lab, &program, &["wait", dir.to_str().unwrap()])?;
         let job = accepted(submit(&lab, &request, &[]).await?);
         let failed = terminal(&lab, &job.job_id).await?;
         assert_eq!(failed.state, JobState::Failed);
-        assert!(
-            failed
-                .error
-                .unwrap()
-                .contains("test process record failure")
-        );
-        let pid: u32 = db.query_row(
-            "SELECT pid FROM test_spawned ORDER BY rowid DESC LIMIT 1",
-            [],
-            |r| r.get(0),
-        )?;
+        // The failed lifecycle transaction rolls back every write, including
+        // trigger writes. Carry the PID in the injected error to prove cleanup.
+        let failure = failed.error.context("missing process recording failure")?;
+        let pid: u32 = failure
+            .split_once("test process record failure pid=")
+            .context("missing spawned PID in recording failure")?
+            .1
+            .split(|character: char| !character.is_ascii_digit())
+            .next()
+            .context("empty spawned PID")?
+            .parse()?;
         gone(pid).await?;
         assert_eq!(store(&lab)?.active_count()?, 0);
         assert!(lab.daemon.try_wait()?.is_none());
@@ -365,7 +365,7 @@ async fn unsavable_result_stops_daemon_cleans_other_jobs_and_recovers_as_lost() 
     }
     db.execute_batch(
         "CREATE TRIGGER fail_result BEFORE UPDATE OF data ON jobs
-         WHEN json_extract(NEW.data,'$.state') NOT IN ('starting','running')
+         WHEN NEW.state NOT IN ('starting','running')
          BEGIN SELECT RAISE(FAIL, 'test result write failure'); END;",
     )?;
     std::fs::write(lab.root.path().join("finishing/release"), b"")?;

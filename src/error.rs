@@ -46,6 +46,7 @@ codes! {
     DbCorrupt => "DB_CORRUPT",
     DbMissing => "DB_MISSING",
     DbReset => "DB_RESET",
+    DbSchemaMismatch => "DB_SCHEMA_MISMATCH",
     DeviceBusy => "DEVICE_BUSY",
     DeviceMismatch => "DEVICE_MISMATCH",
     DeviceOffline => "DEVICE_OFFLINE",

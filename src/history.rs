@@ -50,6 +50,10 @@ fn open(path: &Path) -> Result<Option<Connection>> {
         OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
     )?;
     db.busy_timeout(Duration::from_millis(500))?;
+    let version: i64 = db.pragma_query_value(None, "user_version", |row| row.get(0))?;
+    if version != crate::store::TASK_SCHEMA_VERSION {
+        bail!(ErrorCode::DbSchemaMismatch.error("unsupported task database schema"));
+    }
     Ok(Some(db))
 }
 
@@ -74,13 +78,14 @@ fn tasks_at(path: &Path, before: Option<i64>, filter: &str) -> Result<TaskPage> 
     };
     let tx = db.transaction()?;
     let id = db_id(&tx)?;
-    let mut stmt = tx.prepare(
-        "SELECT rowid,data FROM jobs WHERE (?1 IS NULL OR rowid<?1) AND (
-            ?2='all' OR (?2='running' AND json_extract(data,'$.state') IN ('starting','running')) OR
-            (?2='failed' AND (json_extract(data,'$.state') IN ('failed','canceled','timed_out','lost') OR
-                (json_extract(data,'$.state')='exited' AND (json_extract(data,'$.exit_code')!=0 OR json_extract(data,'$.signal') IS NOT NULL)))))
+    let mut stmt = tx.prepare(&format!(
+        "SELECT rowid,{} FROM jobs WHERE (?1 IS NULL OR rowid<?1) AND (
+            ?2='all' OR (?2='running' AND state IN ('starting','running')) OR
+            (?2='failed' AND (state IN ('failed','canceled','timed_out','lost') OR
+                (state='exited' AND (exit_code!=0 OR signal IS NOT NULL)))))
             ORDER BY rowid DESC LIMIT ?3",
-    )?;
+        crate::store::JOB_COLUMNS
+    ))?;
     let mut rows = stmt.query(params![before, filter, (PAGE_SIZE + 1) as i64])?;
     let mut jobs = Vec::new();
     let mut last_row = None;
@@ -91,7 +96,7 @@ fn tasks_at(path: &Path, before: Option<i64>, filter: &str) -> Result<TaskPage> 
             break;
         }
         last_row = Some(row.get(0)?);
-        jobs.push(serde_json::from_str(&row.get::<_, String>(1)?)?);
+        jobs.push(crate::store::read_job(row, 1)?);
     }
     Ok(TaskPage {
         db_id: Some(id),
@@ -116,11 +121,14 @@ fn output_at(path: &Path, expected_db: &str, job: &str, after: Option<u64>) -> R
     if db_id(&tx)? != expected_db {
         bail!(ErrorCode::DbReset.error("task database has been replaced; refresh the task list"));
     }
-    let value: String = tx
-        .query_row("SELECT data FROM jobs WHERE id=?1", [job], |r| r.get(0))
+    let job = tx
+        .query_row(
+            &format!("SELECT {} FROM jobs WHERE id=?1", crate::store::JOB_COLUMNS),
+            [job],
+            |row| crate::store::read_job(row, 0),
+        )
         .optional()?
         .context(ErrorCode::JobNotFound.error("task is no longer available"))?;
-    let job: Job = serde_json::from_str(&value)?;
     let after = after
         .map(i64::try_from)
         .transpose()
@@ -258,7 +266,7 @@ mod tests {
         let mut failed = job(56, &store.db_id);
         failed.state = JobState::Exited;
         failed.exit_code = Some(1);
-        store.save(&failed)?;
+        store.replace_fixture(&failed)?;
         assert_eq!(tasks_at(&path, None, "failed")?.jobs[0].job_id, "000056");
         for _ in 0..40 {
             store.append("000055", "stdout", b"hello\n")?;

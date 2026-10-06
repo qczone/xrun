@@ -284,7 +284,7 @@ fn database(path: &Path, create: bool) -> Result<Connection> {
     let parent = path.parent().context("missing database parent")?;
     std::fs::create_dir_all(parent)?;
     config::restrict_dir(parent)?;
-    let db = Connection::open(path)?;
+    let mut db = Connection::open(path)?;
     db.busy_timeout(std::time::Duration::from_secs(5))?;
     db.pragma_update(None, "journal_mode", "WAL")?;
     db.pragma_update(None, "synchronous", "FULL")?;
@@ -293,9 +293,9 @@ fn database(path: &Path, create: bool) -> Result<Connection> {
         use std::os::unix::fs::PermissionsExt;
         std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))?;
     }
-    db.execute_batch("CREATE TABLE IF NOT EXISTS state(id INTEGER PRIMARY KEY CHECK(id=1),data TEXT NOT NULL);
-        CREATE TABLE IF NOT EXISTS invitations(hash TEXT PRIMARY KEY,expires INTEGER NOT NULL,allow INTEGER NOT NULL);
-        CREATE TABLE IF NOT EXISTS receipts(device TEXT PRIMARY KEY,data TEXT NOT NULL);")?;
+    crate::database::initialize(&mut db, "membership", 1, "CREATE TABLE state(id INTEGER PRIMARY KEY CHECK(id=1),data TEXT NOT NULL);
+        CREATE TABLE invitations(hash TEXT PRIMARY KEY,expires INTEGER NOT NULL,allow INTEGER NOT NULL);
+        CREATE TABLE receipts(device TEXT PRIMARY KEY,data TEXT NOT NULL);")?;
     Ok(db)
 }
 fn state(db: &Connection) -> Result<SignedRoster> {

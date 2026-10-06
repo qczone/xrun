@@ -166,6 +166,7 @@ mod tests {
                 value: serde_json::json!({"op":"screenshot"}),
                 completed: false,
                 stream_counts: None,
+                persisted: false,
             });
             let capture = crate::screenshot::Capture {
                 bytes: png.clone(),
@@ -205,6 +206,7 @@ mod tests {
             }
             assert_eq!(audit.as_ref().unwrap().value["size"], png.len());
             drop(audit);
+            store.flush().await?;
         }
         let db = rusqlite::Connection::open(temp.path().join("tasks.db"))?;
         let results = db

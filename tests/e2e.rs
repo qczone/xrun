@@ -475,7 +475,7 @@ fn main() {
     let tasks = xrun::store::TaskStore::open(&target.join(".xrun/daemon.db"), false)?;
     let mut expired = tasks.get(id)?.unwrap();
     expired.updated_at_ms = now_ms() - 8 * 86_400_000;
-    tasks.save(&expired)?;
+    tasks.replace_fixture(&expired)?;
     tasks.prune()?;
     let unavailable = cli(&source, &["runner1", "logs", id]).await;
     assert_eq!(unavailable.status.code(), Some(1));
@@ -489,14 +489,14 @@ fn main() {
     ] {
         let mut partial = expired_logs.clone();
         partial.incomplete_reason = Some(reason.into());
-        tasks.save(&partial)?;
+        tasks.replace_fixture(&partial)?;
         let result = cli(&source, &["runner1", "logs", id, "--json"]).await;
         assert_eq!(result.status.code(), Some(1));
         let diagnostic: Value = serde_json::from_slice(&result.stderr)?;
         assert_eq!(diagnostic["code"], code);
         assert_eq!(diagnostic["message"], reason);
     }
-    tasks.save(&expired_logs)?;
+    tasks.replace_fixture(&expired_logs)?;
     let waited = json(cli(&source, &["runner1", "wait", id, "--json"]).await);
     assert_eq!(waited["job"]["state"], "exited");
     assert!(

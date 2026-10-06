@@ -126,9 +126,10 @@ struct FileAudit {
     value: serde_json::Value,
     completed: bool,
     stream_counts: Option<Arc<crate::streaming::Counts>>,
+    persisted: bool,
 }
-impl Drop for FileAudit {
-    fn drop(&mut self) {
+impl FileAudit {
+    fn snapshot(&mut self) -> serde_json::Value {
         self.value["ended_at_ms"] = serde_json::json!(now_ms());
         if let Some(counts) = &self.stream_counts {
             self.value["bytes"] = counts.snapshot();
@@ -138,8 +139,22 @@ impl Drop for FileAudit {
         } else {
             "failed_or_disconnected"
         });
-        if let Err(error) = self.store.audit(self.value.clone()) {
-            tracing::error!(%error,"operation audit could not be saved");
+        self.value.clone()
+    }
+    async fn persist(&mut self) -> Result<()> {
+        let value = self.snapshot();
+        self.store.audit_async(value).await?;
+        self.persisted = true;
+        Ok(())
+    }
+}
+impl Drop for FileAudit {
+    fn drop(&mut self) {
+        if !self.persisted {
+            let value = self.snapshot();
+            if let Err(error) = self.store.audit_detached(value) {
+                tracing::error!(%error, "operation audit could not be queued");
+            }
         }
     }
 }
@@ -183,10 +198,11 @@ impl Runtime {
     fn cwd(&self) -> Result<PathBuf> {
         Ok(self.config()?.default_cwd.unwrap_or(config::home_dir()?))
     }
-    fn owned_job(&self, source: &str, id: &str) -> Result<Job> {
+    async fn owned_job(&self, source: &str, id: &str) -> Result<Job> {
         let job = self
             .store
-            .get(id)?
+            .get_async(id)
+            .await?
             .context(ErrorCode::JobNotFound.error("unknown or expired job"))?;
         if job.source_device_id != source {
             bail!(ErrorCode::SourceNotAllowed.error("job belongs to another source"))
@@ -245,7 +261,18 @@ pub async fn run() -> Result<()> {
             job.state = JobState::Lost;
             job.error = Some("RESULT_LOST: daemon stopped before recording result".into());
             job.updated_at_ms = now_ms();
-            store.save(&job)?;
+            store.finish_sync(
+                &job.job_id,
+                crate::store::JobOutcome {
+                    state: job.state,
+                    exit_code: None,
+                    signal: None,
+                    duration_ms: None,
+                    error: job.error,
+                    incomplete_reason: Some("DETACHED_OUTPUT".into()),
+                    leftover_possible: job.leftover_possible,
+                },
+            )?;
         }
     }
     let (stop, _) = watch::channel(false);
@@ -294,7 +321,7 @@ pub async fn run() -> Result<()> {
     rt.stopping.store(true, Ordering::SeqCst);
     let _ = control.connected(false);
     let _ = rt.stop.send(true);
-    if let Ok(jobs) = rt.store.all() {
+    if let Ok(jobs) = rt.store.all_async().await {
         for job in jobs {
             if !job.state.terminal() {
                 rt.canceled.lock().unwrap().insert(job.job_id.clone());

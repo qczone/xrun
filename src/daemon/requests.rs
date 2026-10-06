@@ -26,19 +26,24 @@ pub(super) async fn serve(
         value: serde_json::json!({"source_device_id":source,"op":op,"path":path,"size":null,"started_at_ms":now_ms()}),
         completed: false,
         stream_counts: None,
+        persisted: false,
     });
-    match request {
+    let result = match request {
         request @ (Request::StreamExec { .. } | Request::Forward { .. }) => {
-            streams::serve(rt, source, generation, ws, request, &mut audit).await?
+            streams::serve(rt, source, generation, ws, request, &mut audit).await
         }
         request @ (Request::Push { .. } | Request::Pull { .. } | Request::Screenshot) => {
-            files::serve(rt, source, generation, ws, request, &mut audit).await?
+            files::serve(rt, source, generation, ws, request, &mut audit).await
         }
         request @ (Request::Exec { .. }
         | Request::Jobs { .. }
         | Request::Kill { .. }
         | Request::Wait { .. }
-        | Request::Logs { .. }) => jobs::serve(rt, source, generation, ws, request).await?,
+        | Request::Logs { .. }) => jobs::serve(rt, source, generation, ws, request).await,
+    };
+    if let Some(audit) = audit.as_mut() {
+        audit.persist().await?;
     }
+    result?;
     Ok(())
 }

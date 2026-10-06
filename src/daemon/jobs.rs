@@ -32,7 +32,12 @@ pub(super) async fn serve(
             )
             .await?;
             rt.check_session(source, generation)?;
-            let job = submit(rt.clone(), source, execution, input)?;
+            let runtime = rt.clone();
+            let source_device = source.to_owned();
+            let job = tokio::task::spawn_blocking(move || {
+                submit(runtime, &source_device, execution, input)
+            })
+            .await??;
             let id = job.job_id.clone();
             net::send(ws, &Data::Job { job }).await?;
             if following {
@@ -47,19 +52,20 @@ pub(super) async fn serve(
             offset,
         } => {
             if let Some(id) = id {
-                let job = rt.owned_job(source, &id)?;
+                let job = rt.owned_job(source, &id).await?;
                 net::send(ws, &Data::Job { job }).await?
             } else {
                 let jobs = rt
                     .store
-                    .page(source, running, request_id.as_deref(), limit, offset)?;
+                    .page_async(source, running, request_id.as_deref(), limit, offset)
+                    .await?;
                 net::send(ws, &Data::Jobs { jobs }).await?
             }
         }
         Request::Kill { id } => {
             {
+                let job = rt.owned_job(source, &id).await?;
                 let _gate = rt.gate.lock().unwrap();
-                let job = rt.owned_job(source, &id)?;
                 if !job.state.terminal() {
                     rt.canceled.lock().unwrap().insert(id.clone());
                 }
@@ -91,16 +97,16 @@ async fn follow(
     let snapshot = if following {
         None
     } else {
-        Some(rt.owned_job(source, id)?.last_seq)
+        Some(rt.owned_job(source, id).await?.last_seq)
     };
     loop {
         // Mark the notification before reading so a concurrent write cannot
         // be lost between the database snapshot and the wait below.
         changes.borrow_and_update();
         rt.allow(source)?;
-        let job = rt.owned_job(source, id)?;
+        let job = rt.owned_job(source, id).await?;
         let mut events = if logs {
-            rt.store.logs(id, after)?
+            rt.store.logs_async(id, after).await?
         } else {
             vec![]
         };

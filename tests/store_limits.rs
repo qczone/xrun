@@ -71,9 +71,14 @@ impl Store {
             } else {
                 JobState::Running
             };
-            self.job(&id, state, n)?;
+            self.job(&id, JobState::Running, n)?;
             self.tasks.append(&id, "stdout", b"retained log")?;
             self.account(&id, MAX_FILE)?;
+            if state.terminal() {
+                let mut job = self.tasks.get(&id)?.unwrap();
+                job.state = state;
+                self.tasks.replace_fixture(&job)?;
+            }
         }
         assert_eq!(self.total()?, 1024 * 1024 * 1024);
         Ok(())
@@ -166,7 +171,7 @@ fn global_limit_never_evicts_running_jobs_and_can_resume_after_one_finishes() ->
     }
     let mut finished = s.tasks.get("job-0")?.unwrap();
     finished.state = JobState::Exited;
-    s.tasks.save(&finished)?;
+    s.tasks.replace_fixture(&finished)?;
     assert_eq!(s.tasks.append("new", "stdout", b"resumed")?, Some(1));
     // Later output must not hide that an earlier chunk was lost.
     assert!(!s.tasks.get("new")?.unwrap().output_complete);

@@ -39,19 +39,28 @@ pub(super) async fn serve(
             }
             let program = resolve_program(&execution.program, &cwd, &env)?;
             let id = format!("stream_{}", uuid::Uuid::new_v4());
-            let child = {
-                let _gate = rt.gate.lock().unwrap();
-                rt.check_session(source, generation)?;
-                if rt.stopping.load(Ordering::SeqCst) {
+            let runtime = rt.clone();
+            let source_device = source.to_owned();
+            let process_id = id.clone();
+            let arguments = execution.args.clone();
+            let child = tokio::task::spawn_blocking(move || {
+                let _gate = runtime.gate.lock().unwrap();
+                runtime.check_session(&source_device, generation)?;
+                if runtime.stopping.load(Ordering::SeqCst) {
                     bail!(ErrorCode::DaemonStopping.error("daemon shutting down"))
                 }
-                check_capacity(&rt)?;
+                check_capacity(&runtime)?;
                 let child =
-                    crate::process::spawn(&program, &execution.args, &cwd, &env, &id, false)?;
-                rt.running.lock().unwrap().insert(id.clone(), child.pid);
-                rt.streams.fetch_add(1, Ordering::SeqCst);
-                child
-            };
+                    crate::process::spawn(&program, &arguments, &cwd, &env, &process_id, false)?;
+                runtime
+                    .running
+                    .lock()
+                    .unwrap()
+                    .insert(process_id.clone(), child.pid);
+                runtime.streams.fetch_add(1, Ordering::SeqCst);
+                Ok::<_, anyhow::Error>(child)
+            })
+            .await??;
             let running = RunningStream { rt: rt.clone(), id };
             if let Some(a) = audit.as_mut() {
                 a.value["args"] = serde_json::json!(execution.args);

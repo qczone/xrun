@@ -169,12 +169,10 @@ fn main() {
         lab.relay.stop().await?;
         std::fs::write(finish, b"finish")?;
         // Observe completion in target-local storage with the relay still down.
-        let db = rusqlite::Connection::open(lab.target.join(".xrun/daemon.db"))?;
+        let storage = xrun::store::TaskStore::open(&lab.target.join(".xrun/daemon.db"), false)?;
         tokio::time::timeout(Duration::from_secs(10), async {
             loop {
-                let value: String =
-                    db.query_row("SELECT data FROM jobs WHERE id=?1", [id], |r| r.get(0))?;
-                let value: xrun::protocol::Job = serde_json::from_str(&value)?;
+                let value = storage.get(id)?.context("accepted task missing")?;
                 if value.state.terminal() {
                     assert_eq!(value.state, xrun::protocol::JobState::Exited);
                     assert_eq!(value.exit_code, Some(0));
