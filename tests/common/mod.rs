@@ -147,6 +147,9 @@ impl TestRelay {
             "relay already started"
         );
         library_logs()?;
+        let ca_pem = std::fs::read_to_string(self.config.data_dir.join("ca.pem"))?;
+        let probe = xrun::crypto::http_client(&ca_pem, None)?;
+        let url = format!("https://127.0.0.1:{}/", self.config.port);
         if cfg!(target_os = "linux") {
             self.process = Some(logged(&self.home, &["relay", "run"], "relay")?.spawn()?);
         } else {
@@ -154,9 +157,6 @@ impl TestRelay {
             // same relay library with the selected device binary on both ends.
             self.task = Some(tokio::spawn(xrun::relay::run(self.config.clone())));
         }
-        let keys = xrun::crypto::load_or_create_server(&self.config)?;
-        let probe = xrun::crypto::http_client(&keys.ca_pem, None)?;
-        let url = format!("https://127.0.0.1:{}/", self.config.port);
         tokio::time::timeout(Duration::from_secs(10), async {
             loop {
                 if let Some(process) = &mut self.process {
