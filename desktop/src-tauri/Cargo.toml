@@ -5,7 +5,7 @@ edition = "2024"
 
 [[test]]
 name = "native_ui"
-path = "src/ui_test.rs"
+path = "tests/native_ui.rs"
 harness = false
 
 [build-dependencies]

@@ -2,7 +2,7 @@
 // does not provide. Each scenario launches in its own temporary home.
 #[cfg(target_os = "macos")]
 #[allow(dead_code, unused_imports)]
-#[path = "main.rs"]
+#[path = "../src/main.rs"]
 mod desktop;
 
 fn main() {

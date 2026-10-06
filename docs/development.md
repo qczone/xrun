@@ -57,6 +57,8 @@ macOS 开发模式可在界面中启动和停止后台 daemon，无需先打包 
 
 ## 验证
 
+Rust 模块内部测试统一放在对应源码末尾的 `#[cfg(test)] mod tests` 中，平台限定条件按需保留。集成测试放在 `tests/`。桌面端原生 UI 测试需要在进程主线程运行，独立入口保留在 `desktop/src-tauri/tests/native_ui.rs`，使用 `harness = false`。
+
 ```bash
 cargo fmt --all -- --check
 cargo clippy --locked --all-targets -- -D warnings
