@@ -17,6 +17,9 @@ jobs:
     name: ${{ matrix.runner }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 45
+    defaults:
+      run:
+        shell: ${{ matrix.shell }}
     strategy:
       fail-fast: false
       matrix:
@@ -62,10 +65,8 @@ jobs:
         with:
           bun-version-file: desktop/package.json
       - name: Measure idle sessions and dense logs
-        shell: ${{ matrix.shell }}
         run: bun desktop/scripts/benchmark-core.ts
       - name: Measure burst logs and concurrent queries
-        shell: ${{ matrix.shell }}
         env:
           XRUN_BENCH_LOG_MODE: bursts
         run: bun desktop/scripts/benchmark-core.ts
