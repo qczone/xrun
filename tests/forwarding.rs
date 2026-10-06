@@ -1,5 +1,5 @@
 mod common;
-use anyhow::Result;
+use anyhow::{Context, Result};
 use common::*;
 use std::{process::Stdio, time::Duration};
 use tokio::{
@@ -7,6 +7,27 @@ use tokio::{
     net::{TcpListener, TcpStream},
     process::Child,
 };
+
+async fn stop_forwarding(child: &mut Child) -> Result<()> {
+    #[cfg(unix)]
+    {
+        let pid = child.id().expect("forwarding is running");
+        assert_eq!(unsafe { libc::kill(pid as i32, libc::SIGTERM) }, 0);
+        let status = tokio::time::timeout(Duration::from_secs(5), child.wait())
+            .await
+            .context("forwarding did not stop after SIGTERM")??;
+        assert!(
+            status.success(),
+            "forwarding must close its connections on termination"
+        );
+    }
+    #[cfg(not(unix))]
+    {
+        child.start_kill()?;
+        child.wait().await?;
+    }
+    Ok(())
+}
 
 async fn forward(lab: &Lab, port: u16) -> Result<(Child, String)> {
     let mut child = logged(
@@ -18,7 +39,9 @@ async fn forward(lab: &Lab, port: u16) -> Result<(Child, String)> {
     .spawn()?;
     let mut reader = BufReader::new(child.stdout.take().unwrap());
     let mut line = String::new();
-    tokio::time::timeout(Duration::from_secs(5), reader.read_line(&mut line)).await??;
+    tokio::time::timeout(Duration::from_secs(5), reader.read_line(&mut line))
+        .await
+        .context("forwarding did not announce its listener")??;
     let value: serde_json::Value = serde_json::from_str(&line)?;
     let address = value["local_address"].as_str().unwrap().to_string();
     assert!(address.starts_with("127.0.0.1:"));
@@ -28,7 +51,7 @@ async fn forward(lab: &Lab, port: u16) -> Result<(Child, String)> {
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn loopback_forwarding_handles_http_half_close_concurrency_and_pause() -> Result<()> {
     tokio::time::timeout(Duration::from_secs(40), async {
-        let lab = Lab::new().await?;
+        let mut lab = Lab::new().await?;
         for invalid in ["0", "65536", "abc", "1:0", "1:2:3"] {
             assert_eq!(
                 cli(&lab.source, &["target1", "forward", invalid])
@@ -170,8 +193,9 @@ async fn loopback_forwarding_handles_http_half_close_concurrency_and_pause() -> 
         ok(cli(&lab.source, &["revoke", "target1"]).await);
         let mut bytes = vec![];
         let _ = active.read_to_end(&mut bytes).await;
-        forwarding.start_kill()?;
-        forwarding.wait().await?;
+        stop_forwarding(&mut forwarding).await?;
+        stop_daemon(&lab.target, &mut lab.daemon).await?;
+        stop_daemon(&lab.source, &mut lab.source_daemon).await?;
 
         let db = rusqlite::Connection::open(lab.target.join(".xrun/daemon.db"))?;
         let count: i64 = db.query_row(
@@ -189,7 +213,7 @@ async fn loopback_forwarding_handles_http_half_close_concurrency_and_pause() -> 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn forwarding_falls_back_to_ipv6_loopback() -> Result<()> {
     tokio::time::timeout(Duration::from_secs(20), async {
-        let lab = Lab::new().await?;
+        let mut lab = Lab::new().await?;
         let backend = TcpListener::bind("[::1]:0").await?;
         let (mut forwarding, address) = forward(&lab, backend.local_addr()?.port()).await?;
         let mut client = TcpStream::connect(address).await?;
@@ -200,8 +224,9 @@ async fn forwarding_falls_back_to_ipv6_loopback() -> Result<()> {
         let mut received = vec![];
         client.read_to_end(&mut received).await?;
         assert_eq!(received, b"ipv6");
-        forwarding.start_kill()?;
-        forwarding.wait().await?;
+        stop_forwarding(&mut forwarding).await?;
+        stop_daemon(&lab.target, &mut lab.daemon).await?;
+        stop_daemon(&lab.source, &mut lab.source_daemon).await?;
         Ok::<_, anyhow::Error>(())
     })
     .await??;

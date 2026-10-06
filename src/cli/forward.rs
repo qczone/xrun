@@ -18,6 +18,11 @@ pub(super) async fn run(id: Identity, target: &str, ports: (u16, u16), json: boo
     );
     let mut connections = tokio::task::JoinSet::new();
     let target = target.to_owned();
+    // Retain signal receivers across connection events so a signal delivered
+    // between select iterations is not lost when a fresh receiver subscribes.
+    let interrupt = tokio::signal::ctrl_c();
+    let terminated = termination();
+    tokio::pin!(interrupt, terminated);
     loop {
         tokio::select! {
             result = listener.accept() => {
@@ -45,8 +50,8 @@ pub(super) async fn run(id: Identity, target: &str, ports: (u16, u16), json: boo
                     Some(Err(error)) => diagnostic(json, &anyhow::anyhow!(error)),
                 }
             },
-            _ = tokio::signal::ctrl_c() => break,
-            _ = termination() => break,
+            _ = &mut interrupt => break,
+            _ = &mut terminated => break,
         }
     }
     connections.shutdown().await;
