@@ -15,6 +15,9 @@ use super::process_identity::{boot_id, process_start};
 use super::program::resolve_program;
 use super::{RunningJob, Runtime};
 
+#[cfg(test)]
+mod tests;
+
 fn short_id() -> String {
     const ABC: &[u8] = b"0123456789ABCDEFGHJKMNPQRSTVWXYZ";
     let mut bytes = [0u8; 6];
@@ -161,6 +164,7 @@ pub(super) fn submit(
                 let _ = background.stop.send(true);
             }
         }
+        background.canceled.lock().unwrap().remove(&saved.job_id);
     });
     Ok(job)
 }
@@ -320,7 +324,6 @@ async fn execute(rt: Arc<Runtime>, mut job: Job, request: Execution, input: Vec<
     drop(running);
     child.reap().await?;
     drop(script);
-    rt.canceled.lock().unwrap().remove(&job.job_id);
     job.last_seq = rt.store.get(&job.job_id)?.context("job missing")?.last_seq;
     job.state = reason.unwrap_or(JobState::Exited);
     job.exit_code = status.code().map(i64::from);
