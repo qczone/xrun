@@ -181,13 +181,13 @@ async fn registration_permissions_migration_and_manager_offline_execution() -> R
             &["target1", "--", env!("CARGO_BIN_EXE_xrun"), "--version"],
         )
         .await);
-        assert!(version.contains("0.0.1-beta.2"));
+        assert!(version.contains(xrun::protocol::VERSION));
         let version = ok(cli(
             &lab.target,
             &["ordinary1", "--", env!("CARGO_BIN_EXE_xrun"), "--version"],
         )
         .await);
-        assert!(version.contains("0.0.1-beta.2"));
+        assert!(version.contains(xrun::protocol::VERSION));
         daemon.start_kill()?;
         daemon.wait().await?;
         Ok::<_, anyhow::Error>(())

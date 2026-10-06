@@ -22,7 +22,7 @@
 
 ## 安装
 
-CLI 和 daemon 是同一个 Rust 二进制，运行已构建程序不需要 Rust、Node.js 或 Bun。桌面 App 管理网络、授权与服务，远程执行和文件传输使用 CLI。所有组件必须使用相同的完整发布版本，当前为 `0.0.1-beta.2`。
+CLI 和 daemon 是同一个 Rust 二进制，运行已构建程序不需要 Rust、Node.js 或 Bun。桌面 App 管理网络、授权与服务，远程执行和文件传输使用 CLI。所有组件必须使用相同的完整发布版本，当前为 `0.0.1-beta.3`。
 
 | 平台 | 安装方式 |
 | --- | --- |
@@ -39,13 +39,13 @@ CLI 可放在 `~/.local/bin/xrun`，Windows 可用 `%LOCALAPPDATA%\xrun\bin\xrun
 先下载发布附件中的安装脚本，再执行：
 
 ```bash
-bash install.sh --version 0.0.1-beta.2
-bash install.sh --version 0.0.1-beta.2 --component cli
+bash install.sh --version 0.0.1-beta.3
+bash install.sh --version 0.0.1-beta.3 --component cli
 ```
 
 ```powershell
-powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File .\install.ps1 -Version 0.0.1-beta.2
-powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File .\install.ps1 -Version 0.0.1-beta.2 -Component cli
+powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File .\install.ps1 -Version 0.0.1-beta.3
+powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File .\install.ps1 -Version 0.0.1-beta.3 -Component cli
 ```
 
 默认下载地址是 `https://github.com/qczone/xrun/releases/download/v<完整版本>/`。`--base-url`／`-BaseUrl` 可指定其他 HTTPS 产物目录。每个目录需包含对应的 `xrun-darwin-arm64.json` 或 `xrun-windows-x86_64.json` 清单及其引用的文件。安装时不需要 Bun；产物准备见 [开发与发布](development.md#发布与内置文档)。
@@ -53,7 +53,7 @@ powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File .\instal
 离线安装或验收本地打包产物时，用 `--source-dir`／`-SourceDir` 指定产物目录。例如 macOS：
 
 ```bash
-bash install.sh --version 0.0.1-beta.2 --source-dir ./dist
+bash install.sh --version 0.0.1-beta.3 --source-dir ./dist
 ```
 
 默认 macOS App 安装到 `~/Applications/xrun.app`，CLI 安装到 `~/.local/bin/xrun`；Windows App 安装到 `%LOCALAPPDATA%\Programs\xrun`，CLI 安装到 `%LOCALAPPDATA%\xrun\bin`。`--install-dir`／`-InstallDir` 可指定父目录，AI 可直接使用 JSON 返回的 `executable` 路径调用程序。脚本只安装程序；网络加入、设备授权和后台服务的启用继续使用现有 App 或 CLI 命令。
@@ -396,7 +396,7 @@ xrun daemon start
 xrun status
 ```
 
-跨版本需单独处理数据兼容。持久成员清单、配对回执等记录的签名包含完整发布版本，没有签名迁移或旧协议兼容层；直接保留旧记录可能报 INVALID_SIGNATURE。beta.1 → beta.2 需要重新创建网络、加入并授权。清理数据会删除身份、任务与日志，应在明确不需要这些数据后进行，不能当作普通重启。
+跨版本需单独处理数据兼容。持久成员清单、配对回执等记录的签名包含完整发布版本，没有签名迁移或旧协议兼容层；直接保留旧记录可能报 INVALID_SIGNATURE。beta.2 → beta.3 需要重新创建网络、加入并授权。清理数据会删除身份、任务与日志，应在明确不需要这些数据后进行，不能当作普通重启。
 
 移除本机服务保留数据使用 `down`，清理本机数据使用 `down --purge`，需要交互终端确认：
 

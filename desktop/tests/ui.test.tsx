@@ -22,7 +22,7 @@ async function fixture(handlers: Record<string, Handler> = {}, joined = true) {
       joined,
       device_id: "self",
       name: "mac1",
-      version: "0.0.1-beta.2",
+      version: "0.0.1-beta.3",
       daemon_running: true,
       daemon_connected: true,
       remote_access_paused: false,
