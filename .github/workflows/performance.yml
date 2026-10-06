@@ -20,7 +20,13 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        runner: [ubuntu-24.04, macos-15, windows-2022]
+        include:
+          - runner: ubuntu-24.04
+            shell: bash
+          - runner: macos-15
+            shell: bash
+          - runner: windows-2022
+            shell: pwsh
     env:
       XRUN_BASELINE_REF: ${{ inputs.baseline }}
       XRUN_BENCH_OUTPUT_DIR: output/benchmarks
@@ -56,13 +62,13 @@ jobs:
         with:
           bun-version-file: desktop/package.json
       - name: Measure idle sessions and dense logs
-        shell: bash
-        run: bun desktop/scripts/benchmark-core.ts "$XRUN_BASELINE_REF"
+        shell: ${{ matrix.shell }}
+        run: bun desktop/scripts/benchmark-core.ts
       - name: Measure burst logs and concurrent queries
-        shell: bash
+        shell: ${{ matrix.shell }}
         env:
           XRUN_BENCH_LOG_MODE: bursts
-        run: bun desktop/scripts/benchmark-core.ts "$XRUN_BASELINE_REF"
+        run: bun desktop/scripts/benchmark-core.ts
       - name: Count file reads and database sync calls separately
         if: runner.os == 'Linux'
         shell: bash

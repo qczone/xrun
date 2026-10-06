@@ -13,7 +13,7 @@ import { join, resolve } from "node:path";
 // Each ref uses its own test harness and wire contract in separate temporary homes.
 // CPU timings never run under syscall tracing; output chunks are not fsync counts.
 const root = resolve(import.meta.dir, "../..");
-const baseline = process.argv[2];
+const baseline = process.argv[2] || process.env.XRUN_BASELINE_REF;
 if (!baseline)
   throw new Error(
     "Usage: bun desktop/scripts/benchmark-core.ts <baseline git ref>",

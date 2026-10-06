@@ -118,6 +118,9 @@ pub struct TestRelay {
     process: Option<Child>,
     task: Option<tokio::task::JoinHandle<Result<()>>>,
 }
+// Selecting a free port closes its temporary socket before the relay can bind.
+// Keep parallel labs from selecting the same port during that handoff.
+static RELAY_START: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 impl Drop for TestRelay {
     fn drop(&mut self) {
         if let Some(child) = &mut self.process {
@@ -130,9 +133,9 @@ impl Drop for TestRelay {
 }
 impl TestRelay {
     pub async fn new(home: &Path) -> Result<(Self, String)> {
-        let port = std::net::TcpListener::bind("127.0.0.1:0")?
-            .local_addr()?
-            .port();
+        let _starting = RELAY_START.lock().await;
+        let reservation = std::net::TcpListener::bind("127.0.0.1:0")?;
+        let port = reservation.local_addr()?.port();
         let config = ServerConfig {
             port,
             addresses: vec![format!("127.0.0.1:{port}")],
@@ -148,6 +151,7 @@ impl TestRelay {
             process: None,
             task: None,
         };
+        drop(reservation);
         relay.start().await?;
         Ok((relay, link))
     }
