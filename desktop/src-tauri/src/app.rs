@@ -98,7 +98,7 @@ pub(super) fn run_event<R: tauri::Runtime>(app: &tauri::AppHandle<R>, event: tau
     let _ = (app, event);
 }
 
-#[cfg(test)]
+#[cfg(all(test, target_os = "macos"))]
 pub(crate) mod tests {
     use super::super::{
         commands::tests::{relay_config, seed},
