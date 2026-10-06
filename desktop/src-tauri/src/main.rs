@@ -3,7 +3,7 @@
 mod network;
 mod platform;
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;
 
 use serde::{Deserialize, Serialize};
 use std::sync::Mutex;
@@ -375,7 +375,32 @@ fn hide_icon<R: tauri::Runtime>(app: tauri::AppHandle<R>) -> Result<(), String> 
     Ok(())
 }
 
-fn tray(app: &tauri::App) -> tauri::Result<MenuItem<tauri::Wry>> {
+fn menu_event<R: tauri::Runtime>(app: &tauri::AppHandle<R>, event: tauri::menu::MenuEvent) {
+    match event.id.as_ref() {
+        "show" => present(app),
+        "hide" => {
+            let _ = hide_icon(app.clone());
+        }
+        "quit" => app.exit(0),
+        "start" | "stop" => {
+            let app = app.clone();
+            let start = event.id.as_ref() == "start";
+            tauri::async_runtime::spawn(async move {
+                let state = app.state::<Desktop>();
+                let _guard = state.action.lock().await;
+                let result = if start {
+                    platform::start().await
+                } else {
+                    xrun::service::stop_daemon().await
+                };
+                let _ = record(&app, result);
+            });
+        }
+        _ => {}
+    }
+}
+
+fn tray<R: tauri::Runtime>(app: &tauri::App<R>) -> tauri::Result<MenuItem<R>> {
     let state = MenuItem::with_id(app, "state", "xrun · 检查状态…", false, None::<&str>)?;
     let show = MenuItem::with_id(app, "show", "打开 xrun", true, None::<&str>)?;
     let start = MenuItem::with_id(app, "start", "启动后台服务", true, None::<&str>)?;
@@ -399,28 +424,7 @@ fn tray(app: &tauri::App) -> tauri::Result<MenuItem<tauri::Wry>> {
         .tooltip("xrun")
         .menu(&menu)
         .show_menu_on_left_click(true)
-        .on_menu_event(|app, event| match event.id.as_ref() {
-            "show" => present(app),
-            "hide" => {
-                let _ = hide_icon(app.clone());
-            }
-            "quit" => app.exit(0),
-            "start" | "stop" => {
-                let app = app.clone();
-                let start = event.id.as_ref() == "start";
-                tauri::async_runtime::spawn(async move {
-                    let state = app.state::<Desktop>();
-                    let _guard = state.action.lock().await;
-                    let result = if start {
-                        platform::start().await
-                    } else {
-                        xrun::service::stop_daemon().await
-                    };
-                    let _ = record(&app, result);
-                });
-            }
-            _ => {}
-        })
+        .on_menu_event(menu_event)
         .on_tray_icon_event(|tray, event| {
             if matches!(
                 event,
@@ -482,6 +486,50 @@ fn tray_text(status: anyhow::Result<Status>) -> &'static str {
     }
 }
 
+fn app_builder<R: tauri::Runtime>(
+    builder: tauri::Builder<R>,
+    background: bool,
+) -> tauri::Builder<R> {
+    commands(builder)
+        .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_clipboard_manager::init())
+        .setup(move |app| {
+            #[cfg(target_os = "macos")]
+            app.set_activation_policy(tauri::ActivationPolicy::Accessory);
+            let item = tray(app)?;
+            let handle = app.handle().clone();
+            tauri::async_runtime::spawn(async move {
+                loop {
+                    let text = tray_text(local_status(&handle));
+                    let _ = item.set_text(text);
+                    if let Some(icon) = handle.tray_by_id("xrun") {
+                        let _ = icon.set_tooltip(Some(text));
+                    }
+                    tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+                }
+            });
+            if !background && !xrun::client::local_status()?.joined {
+                present(app.handle());
+            }
+            Ok(())
+        })
+        .on_window_event(|window, event| {
+            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                api.prevent_close();
+                let _ = window.hide();
+            }
+        })
+}
+
+fn run_event<R: tauri::Runtime>(app: &tauri::AppHandle<R>, event: tauri::RunEvent) {
+    #[cfg(target_os = "macos")]
+    if let tauri::RunEvent::Reopen { .. } = event {
+        present(app);
+    }
+    #[cfg(not(target_os = "macos"))]
+    let _ = (app, event);
+}
+
 fn main() {
     if std::env::args().any(|arg| arg == "--self-check") {
         let result = tauri::async_runtime::block_on(platform::check_helper()).and_then(|()| {
@@ -513,44 +561,12 @@ fn main() {
         return;
     }
     let background = std::env::args().any(|arg| arg == "--background");
-    commands(tauri::Builder::default())
-        .plugin(tauri_plugin_single_instance::init(|app, _, _| present(app)))
-        .plugin(tauri_plugin_dialog::init())
-        .plugin(tauri_plugin_clipboard_manager::init())
-        .setup(move |app| {
-            #[cfg(target_os = "macos")]
-            app.set_activation_policy(tauri::ActivationPolicy::Accessory);
-            let item = tray(app)?;
-            let handle = app.handle().clone();
-            tauri::async_runtime::spawn(async move {
-                loop {
-                    let text = tray_text(local_status(&handle));
-                    let _ = item.set_text(text);
-                    if let Some(icon) = handle.tray_by_id("xrun") {
-                        let _ = icon.set_tooltip(Some(text));
-                    }
-                    tokio::time::sleep(std::time::Duration::from_secs(2)).await;
-                }
-            });
-            if !background && !xrun::client::local_status()?.joined {
-                present(app.handle());
-            }
-            Ok(())
-        })
-        .on_window_event(|window, event| {
-            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
-                api.prevent_close();
-                let _ = window.hide();
-            }
-        })
-        .build(tauri::generate_context!())
-        .expect("failed to initialize xrun desktop")
-        .run(|app, event| {
-            #[cfg(target_os = "macos")]
-            if let tauri::RunEvent::Reopen { .. } = event {
-                present(app);
-            }
-            #[cfg(not(target_os = "macos"))]
-            let _ = (app, event);
-        });
+    app_builder(
+        tauri::Builder::default()
+            .plugin(tauri_plugin_single_instance::init(|app, _, _| present(app))),
+        background,
+    )
+    .build(tauri::generate_context!())
+    .expect("failed to initialize xrun desktop")
+    .run(run_event);
 }

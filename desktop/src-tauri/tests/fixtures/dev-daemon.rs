@@ -3,6 +3,13 @@
 use std::{fs, thread, time::Duration};
 
 fn main() -> std::io::Result<()> {
+    if std::env::args().nth(1).as_deref() == Some("--version") {
+        println!(
+            "xrun {}",
+            option_env!("XRUN_FIXTURE_VERSION").unwrap_or("fixture")
+        );
+        return Ok(());
+    }
     assert_eq!(std::env::args().nth(1).as_deref(), Some("daemon"));
     let lock = fs::OpenOptions::new()
         .create(true)

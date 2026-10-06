@@ -210,7 +210,7 @@ async fn x11_primary_display_png() {
     assert_eq!(info.color_type, png::ColorType::Rgb);
     assert_eq!(&pixels[..3], &[0, 0, 0]);
 
-    let lab = Lab::new().await.unwrap();
+    let mut lab = Lab::new().await.unwrap();
     let destination = lab.source.join("display.png");
     let output = json(
         cli(
@@ -233,6 +233,10 @@ async fn x11_primary_display_png() {
     let mut pixels = vec![0; reader.output_buffer_size().unwrap()];
     reader.next_frame(&mut pixels).unwrap();
     assert_eq!(&pixels[..3], &[0, 0, 0]);
+    stop_daemon(&lab.target, &mut lab.daemon).await.unwrap();
+    stop_daemon(&lab.source, &mut lab.source_daemon)
+        .await
+        .unwrap();
 }
 
 #[cfg(target_os = "linux")]
@@ -269,5 +273,7 @@ async fn headless_and_wayland_errors_reach_the_cli_without_creating_files() -> R
         );
         assert!(!path.exists());
     }
+    stop_daemon(&lab.target, &mut lab.daemon).await?;
+    stop_daemon(&lab.source, &mut lab.source_daemon).await?;
     Ok(())
 }

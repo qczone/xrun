@@ -9,6 +9,9 @@ use std::{path::PathBuf, sync::Arc};
 
 use super::{FileAudit, Runtime};
 
+#[cfg(test)]
+mod tests;
+
 pub(super) async fn serve(
     rt: Arc<Runtime>,
     source: &str,
@@ -95,28 +98,37 @@ pub(super) async fn serve(
                 .try_acquire_owned()
                 .context(ErrorCode::DeviceBusy.error("too many file operations"))?;
             let capture = crate::screenshot::capture().await?;
-            if let Some(a) = audit.as_mut() {
-                a.value["size"] = serde_json::json!(capture.bytes.len());
-                a.value["captured_at"] = serde_json::json!(capture.at);
-            }
-            net::send(
-                ws,
-                &Data::File {
-                    path: String::new(),
-                    size: capture.bytes.len() as u64,
-                    sha256: sha256(&capture.bytes),
-                    width: Some(capture.width),
-                    height: Some(capture.height),
-                    captured_at: Some(capture.at),
-                },
-            )
-            .await?;
-            net::send_bytes(ws, &capture.bytes).await?;
-            if let Some(a) = audit.as_mut() {
-                a.completed = true;
-            }
+            send_capture(ws, capture, audit).await?;
         }
         _ => bail!(ErrorCode::InvalidRequest.error("operation dispatched to the wrong handler")),
+    }
+    Ok(())
+}
+
+async fn send_capture(
+    ws: &mut Ws,
+    capture: crate::screenshot::Capture,
+    audit: &mut Option<FileAudit>,
+) -> Result<()> {
+    if let Some(a) = audit.as_mut() {
+        a.value["size"] = serde_json::json!(capture.bytes.len());
+        a.value["captured_at"] = serde_json::json!(capture.at);
+    }
+    net::send(
+        ws,
+        &Data::File {
+            path: String::new(),
+            size: capture.bytes.len() as u64,
+            sha256: sha256(&capture.bytes),
+            width: Some(capture.width),
+            height: Some(capture.height),
+            captured_at: Some(capture.at),
+        },
+    )
+    .await?;
+    net::send_bytes(ws, &capture.bytes).await?;
+    if let Some(a) = audit.as_mut() {
+        a.completed = true;
     }
     Ok(())
 }

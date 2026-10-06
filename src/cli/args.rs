@@ -3,6 +3,9 @@ use crate::protocol::*;
 use clap::{Args, Parser, Subcommand};
 use std::path::PathBuf;
 
+#[cfg(test)]
+mod tests;
+
 #[derive(Parser)]
 #[command(
     name = "xrun",

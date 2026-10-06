@@ -12,6 +12,50 @@ use xrun::{
     membership::{Manager as NetworkManager, RosterCache},
 };
 
+#[cfg(target_os = "macos")]
+#[allow(dead_code)] // Called by the native_ui target, which runs on the process main thread.
+pub(crate) mod native_ui;
+
+#[cfg(target_os = "macos")]
+#[test]
+fn start_initializes_and_stops_a_development_helper_without_service_registration() -> Result<()> {
+    isolated(
+        "start_initializes_and_stops_a_development_helper_without_service_registration",
+        || {
+            let root = config::home_dir()?;
+            seed(&relay_config(&root)?)?;
+            let source = root.join("helper.rs");
+            std::fs::write(&source, include_str!("../tests/fixtures/dev-daemon.rs"))?;
+            let helper = std::env::current_exe()?.with_file_name("xrun");
+            let build = Command::new("rustc")
+                .arg(source)
+                .arg("-o")
+                .arg(&helper)
+                .env("XRUN_FIXTURE_VERSION", xrun::protocol::VERSION)
+                .output()?;
+            anyhow::ensure!(
+                build.status.success(),
+                "{}",
+                String::from_utf8_lossy(&build.stderr)
+            );
+            let (_app, window) = build_app();
+            assert_eq!(invoke(&window, "start", json!({})), Ok(Value::Null));
+            let dir = config::device_dir()?;
+            assert!(config::instance_running(&dir.join("daemon.lock"))?);
+            assert_eq!(xrun::control::state(&dir)?.unwrap().generation, "fixture");
+            assert!(
+                !root
+                    .join("Library/LaunchAgents/com.xrun.daemon.plist")
+                    .exists()
+            );
+            assert_eq!(invoke(&window, "stop", json!({})), Ok(Value::Null));
+            assert!(!config::instance_running(&dir.join("daemon.lock"))?);
+            assert!(Identity::load()?.network.is_some());
+            Ok(())
+        },
+    )
+}
+
 // Each case gets its own process, home and executable directory. No global
 // environment mutation or installed helper/service can leak into these tests.
 fn isolated(name: &str, test: impl FnOnce() -> Result<()>) -> Result<()> {

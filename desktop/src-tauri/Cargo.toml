@@ -3,6 +3,11 @@ name = "xrun-desktop"
 version = "0.0.1-beta.2"
 edition = "2024"
 
+[[test]]
+name = "native_ui"
+path = "src/ui_test.rs"
+harness = false
+
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
 

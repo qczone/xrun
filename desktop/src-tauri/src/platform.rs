@@ -59,6 +59,63 @@ mod mac {
 
     pub const LABEL: &str = xrun::service::APP_DAEMON_LABEL;
 
+    // Keep native calls at this boundary so approval and failure handling can be
+    // verified without registering a service in the test user's login session.
+    trait AppService {
+        fn state(&self) -> isize;
+        fn register(&self) -> Result<()>;
+        fn unregister(&self) -> Result<()>;
+    }
+
+    impl AppService for SMAppService {
+        fn state(&self) -> isize {
+            unsafe { self.status() }.0
+        }
+        fn register(&self) -> Result<()> {
+            unsafe { self.registerAndReturnError() }
+                .map_err(|e| anyhow::anyhow!("SERVICE_FAILED: {e}"))
+        }
+        fn unregister(&self) -> Result<()> {
+            unsafe { self.unregisterAndReturnError() }
+                .map_err(|e| anyhow::anyhow!("SERVICE_FAILED: {e}"))
+        }
+    }
+
+    fn service_state(
+        agent: &impl AppService,
+        main: &impl AppService,
+        legacy_installed: bool,
+    ) -> ServiceStatus {
+        let agent_status = agent.state();
+        let main_status = main.state();
+        ServiceStatus {
+            installed: matches!(agent_status, 1 | 2),
+            approval_required: agent_status == 2 || main_status == 2,
+            app_at_login: matches!(main_status, 1 | 2),
+            legacy_installed,
+            development: false,
+        }
+    }
+
+    fn enable_agent(service: &impl AppService) -> Result<()> {
+        if service.state() != 1 {
+            service.register()?;
+        }
+        if service.state() == 2 {
+            bail!("APPROVAL_REQUIRED: allow xrun in System Settings > General > Login Items");
+        }
+        Ok(())
+    }
+
+    fn set_enabled(service: &impl AppService, enabled: bool) -> Result<()> {
+        if enabled && !matches!(service.state(), 1 | 2) {
+            service.register()?;
+        } else if !enabled && matches!(service.state(), 1 | 2) {
+            service.unregister()?;
+        }
+        Ok(())
+    }
+
     fn is_bundle_executable(exe: &std::path::Path) -> bool {
         let Some(macos) = exe.parent() else {
             return false;
@@ -95,14 +152,11 @@ mod mac {
             ))
         };
         let main = unsafe { SMAppService::mainAppService() };
-        let agent_status = unsafe { agent.status() }.0;
-        Ok(ServiceStatus {
-            installed: matches!(agent_status, 1 | 2),
-            approval_required: agent_status == 2 || unsafe { main.status() }.0 == 2,
-            app_at_login: matches!(unsafe { main.status() }.0, 1 | 2),
-            legacy_installed: xrun::service::cli_daemon_installed().unwrap_or(false),
-            development: false,
-        })
+        Ok(service_state(
+            &*agent,
+            &*main,
+            xrun::service::cli_daemon_installed().unwrap_or(false),
+        ))
     }
 
     pub fn register_agent() -> Result<()> {
@@ -115,14 +169,7 @@ mod mac {
                 "dev.qczone.xrun.daemon.plist",
             ))
         };
-        if unsafe { service.status() }.0 != 1 {
-            unsafe { service.registerAndReturnError() }
-                .map_err(|e| anyhow::anyhow!("SERVICE_FAILED: {e}"))?;
-        }
-        if unsafe { service.status() }.0 == 2 {
-            bail!("APPROVAL_REQUIRED: allow xrun in System Settings > General > Login Items");
-        }
-        Ok(())
+        enable_agent(&*service)
     }
 
     pub fn unregister_agent() -> Result<()> {
@@ -131,11 +178,7 @@ mod mac {
                 "dev.qczone.xrun.daemon.plist",
             ))
         };
-        if matches!(unsafe { service.status() }.0, 1 | 2) {
-            unsafe { service.unregisterAndReturnError() }
-                .map_err(|e| anyhow::anyhow!("SERVICE_FAILED: {e}"))?;
-        }
-        Ok(())
+        set_enabled(&*service, false)
     }
 
     pub fn autostart(enabled: bool) -> Result<()> {
@@ -143,14 +186,7 @@ mod mac {
             bail!("APP_BUNDLE_REQUIRED: login startup requires the packaged xrun.app");
         }
         let service = unsafe { SMAppService::mainAppService() };
-        if enabled && !matches!(unsafe { service.status() }.0, 1 | 2) {
-            unsafe { service.registerAndReturnError() }
-                .map_err(|e| anyhow::anyhow!("SERVICE_FAILED: {e}"))?;
-        } else if !enabled && matches!(unsafe { service.status() }.0, 1 | 2) {
-            unsafe { service.unregisterAndReturnError() }
-                .map_err(|e| anyhow::anyhow!("SERVICE_FAILED: {e}"))?;
-        }
-        Ok(())
+        set_enabled(&*service, enabled)
     }
 
     pub async fn start_dev_daemon(helper: &std::path::Path, dir: &std::path::Path) -> Result<()> {
@@ -215,6 +251,10 @@ mod mac {
     mod tests {
         use super::*;
         use std::{os::unix::fs::PermissionsExt, time::Duration};
+
+        mod service_policy {
+            include!("../tests/fixtures/service_policy.rs");
+        }
 
         #[tokio::test]
         async fn dev_daemon_starts_detached_and_accepts_graceful_stop() -> Result<()> {
