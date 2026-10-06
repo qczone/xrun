@@ -846,7 +846,7 @@ Rust 与 Cloudflare 中转使用同一套连接认证和端到端会话协议，
 - Linux、macOS、Windows 的测试工作流分别运行格式检查、clippy 和原生核心测试，覆盖配对、TLS、成员签名、授权、可靠任务、传输、流式执行、端口转发与故障恢复。测试直接调用中转库，不开放非 Linux 的中转部署命令。
 - 核心测试包含前台提交与日志共用会话，以及独立 CLI 进程之间的缓存复用、配置更新、授权变化、数据库重建、并发请求隔离、私有 IPC 认证、提前归还、缓存上限、证书过期和上传期间源文件变化。
 - Linux 使用 Xvfb 验证 X11 PNG，并以 1 MiB 主线程栈检查命令和取消路径。
-- Linux 工作流另在 workerd 中运行 Cloudflare 中转测试，验证证书挑战、连接数量限制、一次性接入、断线清理和密文窗口。随后运行 `cloudflare` 的 `bun run test:interop`：本地 workerd 使用临时 HTTPS 证书和固定证书指纹，真实 Rust CLI/daemon 完成创建、配对、证书签名、可靠任务、64 MiB 文件往返、二进制流、TCP 半关闭、管理设备离线、空闲恢复与撤销。两组验证均无需 Cloudflare 凭证。互通脚本显式运行 Cargo 中标为 ignore 的 Cloudflare 测试；普通 `cargo test` 不要求 workerd。相同测试也可通过私有 `XRUN_TEST_CF_LINK_FILE` 对已部署中转运行。
+- Linux 工作流另在 workerd 中运行 Cloudflare 中转测试，验证证书挑战、连接数量限制、一次性接入、断线清理和密文窗口。随后运行 `cloudflare` 的 `bun run test:interop`：本地 workerd 使用临时 HTTPS 证书和固定证书指纹，真实 Rust CLI/daemon 完成创建、配对、证书签名、可靠任务、64 MiB 文件往返、二进制流、TCP 半关闭、管理设备离线、空闲恢复与撤销。两组验证均无需 Cloudflare 凭证。互通脚本先用 Cargo 构建 CLI 和 Cloudflare 测试，复制到独立临时目录，再显式运行标为 ignore 的测试，避免运行期间被其他构建替换；普通 `cargo test` 不要求 workerd。相同测试也可通过私有 `XRUN_TEST_CF_LINK_FILE` 对已部署中转运行。
 - macOS/Windows 运行前端类型检查与 UI 测试、desktop Rust 检查，生成调试安装包并检查 App/helper。macOS 挂载 DMG 后使用其中 helper 跑 smoke；Windows 安装 NSIS 后使用安装目录 helper 跑 smoke。
 - Cargo 与 Bun 缓存按系统/架构、工具链或锁文件区分。失败时上传测试子进程日志。正式签名、公证与发布产物由独立 Package 工作流处理。
 

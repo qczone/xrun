@@ -1,5 +1,5 @@
 import "reflect-metadata";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { chmod, copyFile, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import {
@@ -43,6 +43,31 @@ const stop = () => { child?.kill("SIGTERM"); };
 process.on("SIGINT", stop);
 process.on("SIGTERM", stop);
 try {
+  // Keep every process on one immutable build even if another workspace build
+  // updates target/debug while these tests are running.
+  const repository = resolve(import.meta.dir, "../..");
+  const build = Bun.spawn(["cargo", "test", "--locked", "--test", "cloudflare", "--no-run", "--message-format=json-render-diagnostics"], {
+    cwd: repository, stdin: "ignore", stdout: "pipe", stderr: "inherit",
+  });
+  child = build;
+  const output = await new Response(build.stdout).text();
+  if (await build.exited !== 0) throw new Error("Could not build Rust interoperability tests");
+  const artifacts = output.trim().split("\n").map((line) => JSON.parse(line) as {
+    reason: string; target?: { name: string; kind: string[] }; executable?: string;
+  });
+  const artifact = (name: string, kind: string) => artifacts.find((item) =>
+    item.reason === "compiler-artifact" && item.target?.name === name && item.target.kind.includes(kind) && item.executable,
+  )?.executable;
+  const binary = process.env.XRUN_TEST_BINARY || artifact("xrun", "bin");
+  const tests = artifact("cloudflare", "test");
+  if (!binary || !tests) throw new Error("Cargo did not report the CLI and test executables");
+  const suffix = process.platform === "win32" ? ".exe" : "";
+  const binarySnapshot = join(directory, `xrun${suffix}`);
+  const testSnapshot = join(directory, `cloudflare-test${suffix}`);
+  await copyFile(resolve(repository, binary), binarySnapshot);
+  await copyFile(tests, testSnapshot);
+  await chmod(binarySnapshot, 0o700);
+  await chmod(testSnapshot, 0o700);
   runtime = new Miniflare(convertV4MiniflareOptions({
     host: "127.0.0.1", port: 0, https: true, httpsKey: pemKey,
     httpsCert: `${server.toString("pem")}\n${ca.toString("pem")}`,
@@ -56,10 +81,10 @@ try {
   const linkFile = join(directory, "relay-link");
   // Exercise normal production pin, chain, validity and hostname verification.
   await writeFile(linkFile, `xrun-relay://${address.host}/${pin}#${route}\n`, { mode: 0o600 });
-  child = Bun.spawn(["cargo", "test", "--locked", "--test", "cloudflare", "--", "--ignored", "--nocapture", "--test-threads=1"], {
-    cwd: resolve(import.meta.dir, "../.."),
+  child = Bun.spawn([testSnapshot, "--ignored", "--nocapture", "--test-threads=1"], {
+    cwd: repository,
     env: {
-      ...process.env, XRUN_TEST_CF_LINK_FILE: linkFile,
+      ...process.env, XRUN_TEST_CF_LINK_FILE: linkFile, XRUN_TEST_BINARY: binarySnapshot,
       XRUN_TEST_LOG_DIR: process.env.XRUN_TEST_LOG_DIR || resolve(import.meta.dir, "../../target/test-logs"),
     },
     stdin: "ignore", stdout: "inherit", stderr: "inherit",
