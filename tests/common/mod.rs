@@ -121,6 +121,42 @@ pub struct TestRelay {
 // Selecting a free port closes its temporary socket before the relay can bind.
 // Keep parallel labs from selecting the same port during that handoff.
 static RELAY_START: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
+fn reserve_relay_port() -> Result<std::net::TcpListener> {
+    let address = std::net::Ipv4Addr::UNSPECIFIED;
+    #[cfg(not(target_os = "linux"))]
+    return Ok(std::net::TcpListener::bind((address, 0))?);
+
+    #[cfg(target_os = "linux")]
+    {
+        // Match the relay's wildcard bind and stay outside the range used by
+        // outbound connections, which can claim a port during the handoff.
+        let bounds = std::fs::read_to_string("/proc/sys/net/ipv4/ip_local_port_range")?
+            .split_whitespace()
+            .map(str::parse::<u16>)
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+        anyhow::ensure!(
+            bounds.len() == 2 && bounds[0] <= bounds[1],
+            "invalid local port range"
+        );
+        let ephemeral = bounds[0]..=bounds[1];
+        let seed = uuid::Uuid::new_v4();
+        let first = u16::from_le_bytes([seed.as_bytes()[0], seed.as_bytes()[1]]);
+        for offset in 0..=u16::MAX {
+            let port = first.wrapping_add(offset);
+            if port < 1024 || ephemeral.contains(&port) {
+                continue;
+            }
+            match std::net::TcpListener::bind((address, port)) {
+                Ok(listener) => return Ok(listener),
+                Err(error) if error.kind() == std::io::ErrorKind::AddrInUse => continue,
+                Err(error) => return Err(error.into()),
+            }
+        }
+        anyhow::bail!("no free relay port outside the local port range")
+    }
+}
+
 impl Drop for TestRelay {
     fn drop(&mut self) {
         if let Some(child) = &mut self.process {
@@ -134,7 +170,7 @@ impl Drop for TestRelay {
 impl TestRelay {
     pub async fn new(home: &Path) -> Result<(Self, String)> {
         let _starting = RELAY_START.lock().await;
-        let reservation = std::net::TcpListener::bind("127.0.0.1:0")?;
+        let reservation = reserve_relay_port()?;
         let port = reservation.local_addr()?.port();
         let config = ServerConfig {
             port,
