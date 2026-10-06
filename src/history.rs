@@ -101,15 +101,21 @@ fn tasks_at(path: &Path, before: Option<i64>, filter: &str) -> Result<TaskPage> 
     };
     let tx = db.transaction()?;
     let id = db_id(&tx)?;
+    let selection = match filter {
+        "running" => "state IN ('starting','running')",
+        "failed" => {
+            "(state IN ('failed','canceled','timed_out','lost') OR
+            (state='exited' AND (exit_code!=0 OR signal IS NOT NULL)))"
+        }
+        _ => "1",
+    };
+    let cursor = if before.is_some() { "AND rowid<?1" } else { "" };
     let mut stmt = tx.prepare(&format!(
-        "SELECT rowid,{} FROM jobs WHERE (?1 IS NULL OR rowid<?1) AND (
-            ?2='all' OR (?2='running' AND state IN ('starting','running')) OR
-            (?2='failed' AND (state IN ('failed','canceled','timed_out','lost') OR
-                (state='exited' AND (exit_code!=0 OR signal IS NOT NULL)))))
-            ORDER BY rowid DESC LIMIT ?3",
+        "SELECT rowid,{} FROM jobs WHERE {selection} {cursor}
+            ORDER BY rowid DESC LIMIT ?2",
         crate::store::JOB_COLUMNS
     ))?;
-    let mut rows = stmt.query(params![before, filter, (PAGE_SIZE + 1) as i64])?;
+    let mut rows = stmt.query(params![before, (PAGE_SIZE + 1) as i64])?;
     let mut jobs = Vec::new();
     let mut last_row = None;
     let mut more = false;

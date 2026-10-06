@@ -82,8 +82,11 @@ impl TaskStore {
     pub fn all(&self) -> Result<Vec<Job>> {
         self.worker.call(|db| db.all())
     }
-    pub(crate) async fn all_async(&self) -> Result<Vec<Job>> {
-        self.worker.query(|db| db.all()).await
+    pub(crate) fn unfinished(&self) -> Result<Vec<Job>> {
+        self.worker.call(|db| db.unfinished())
+    }
+    pub(crate) async fn unfinished_ids(&self) -> Result<Vec<String>> {
+        self.worker.query(|db| db.unfinished_ids()).await
     }
     pub fn active_count(&self) -> Result<usize> {
         self.worker.call(|db| db.active_count())

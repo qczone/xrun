@@ -239,41 +239,39 @@ pub async fn run() -> Result<()> {
     let members = network::cache()?;
     let store = Arc::new(TaskStore::open(&dir.join("daemon.db"), false)?);
     store.prune()?;
-    for mut job in store.all()? {
-        if !job.state.terminal() {
-            job.leftover_possible = true;
-            if let Some(p) = &job.process {
-                if !p.boot_id.is_empty()
-                    && p.boot_id == boot_id()
-                    && p.start.is_some()
-                    && p.start == process_start(p.pid)
-                {
-                    crate::process::force_kill(p.pid);
-                    job.leftover_possible = false;
-                } else if p.boot_id != boot_id() {
-                    job.leftover_possible = false;
-                }
-            }
-            #[cfg(windows)]
+    for mut job in store.unfinished()? {
+        job.leftover_possible = true;
+        if let Some(p) = &job.process {
+            if !p.boot_id.is_empty()
+                && p.boot_id == boot_id()
+                && p.start.is_some()
+                && p.start == process_start(p.pid)
             {
+                crate::process::force_kill(p.pid);
+                job.leftover_possible = false;
+            } else if p.boot_id != boot_id() {
                 job.leftover_possible = false;
             }
-            job.state = JobState::Lost;
-            job.error = Some("RESULT_LOST: daemon stopped before recording result".into());
-            job.updated_at_ms = now_ms();
-            store.finish_sync(
-                &job.job_id,
-                crate::store::JobOutcome {
-                    state: job.state,
-                    exit_code: None,
-                    signal: None,
-                    duration_ms: None,
-                    error: job.error,
-                    incomplete_reason: Some("DETACHED_OUTPUT".into()),
-                    leftover_possible: job.leftover_possible,
-                },
-            )?;
         }
+        #[cfg(windows)]
+        {
+            job.leftover_possible = false;
+        }
+        job.state = JobState::Lost;
+        job.error = Some("RESULT_LOST: daemon stopped before recording result".into());
+        job.updated_at_ms = now_ms();
+        store.finish_sync(
+            &job.job_id,
+            crate::store::JobOutcome {
+                state: job.state,
+                exit_code: None,
+                signal: None,
+                duration_ms: None,
+                error: job.error,
+                incomplete_reason: Some("DETACHED_OUTPUT".into()),
+                leftover_possible: job.leftover_possible,
+            },
+        )?;
     }
     let (stop, _) = watch::channel(false);
     let initial_access = Arc::new(access::Authorization {
@@ -321,12 +319,8 @@ pub async fn run() -> Result<()> {
     rt.stopping.store(true, Ordering::SeqCst);
     let _ = control.connected(false);
     let _ = rt.stop.send(true);
-    if let Ok(jobs) = rt.store.all_async().await {
-        for job in jobs {
-            if !job.state.terminal() {
-                rt.canceled.lock().unwrap().insert(job.job_id.clone());
-            }
-        }
+    if let Ok(ids) = rt.store.unfinished_ids().await {
+        rt.canceled.lock().unwrap().extend(ids);
     }
     let deadline = tokio::time::Instant::now() + Duration::from_secs(8);
     while !rt.running.lock().unwrap().is_empty() && tokio::time::Instant::now() < deadline {

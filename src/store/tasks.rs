@@ -184,6 +184,22 @@ impl Database {
         )?;
         Ok(count.try_into()?)
     }
+    pub(super) fn unfinished(&self) -> Result<Vec<Job>> {
+        let mut statement = self.db.prepare(&format!(
+            "SELECT {JOB_COLUMNS} FROM jobs WHERE state IN ('starting','running')"
+        ))?;
+        Ok(statement
+            .query_map([], |row| read_job(row, 0))?
+            .collect::<rusqlite::Result<_>>()?)
+    }
+    pub(super) fn unfinished_ids(&self) -> Result<Vec<String>> {
+        let mut statement = self
+            .db
+            .prepare("SELECT id FROM jobs WHERE state IN ('starting','running')")?;
+        Ok(statement
+            .query_map([], |row| row.get(0))?
+            .collect::<rusqlite::Result<_>>()?)
+    }
     pub(super) fn page(
         &self,
         source: &str,
@@ -201,14 +217,20 @@ impl Database {
                 .take(limit.min(1000))
                 .collect());
         }
-        let sql = format!("SELECT {JOB_COLUMNS} FROM jobs WHERE source=?1 AND (?2=0 OR state IN ('starting','running'))
-            ORDER BY rowid DESC LIMIT ?3 OFFSET ?4");
+        let active = if running {
+            "AND state IN ('starting','running')"
+        } else {
+            ""
+        };
+        let sql = format!(
+            "SELECT {JOB_COLUMNS} FROM jobs WHERE source=?1 {active}
+            ORDER BY rowid DESC LIMIT ?2 OFFSET ?3"
+        );
         let mut statement = self.db.prepare(&sql)?;
         Ok(statement
             .query_map(
                 params![
                     source,
-                    running,
                     limit.min(1000) as i64,
                     i64::try_from(offset).unwrap_or(i64::MAX)
                 ],
@@ -337,6 +359,75 @@ mod tests {
             incomplete_reason: reason.map(str::to_owned),
             leftover_possible: false,
         }
+    }
+    #[tokio::test]
+    async fn recovery_and_shutdown_skip_terminal_history_and_keep_old_unfinished_jobs() -> Result<()>
+    {
+        let directory = tempfile::tempdir()?;
+        let store = TaskStore::open(&directory.path().join("tasks.db"), true)?;
+        let mut pending = job(&store);
+        pending.state = JobState::Starting;
+        pending.created_at_ms = 1;
+        pending.updated_at_ms = 1;
+        store.insert(&pending)?;
+        let mut running = pending.clone();
+        running.job_id = "TEST02".into();
+        running.request_id = "running".into();
+        running.state = JobState::Running;
+        store.insert(&running)?;
+        store.worker.call(|database| {
+            // Invalid historical payloads prove recovery never decodes terminal rows.
+            database.db.execute_batch(
+                "WITH RECURSIVE history(n) AS (
+                    SELECT 1 UNION ALL SELECT n+1 FROM history WHERE n<100000
+                ) INSERT INTO jobs
+                SELECT printf('old-%d',n),'source',printf('old-%d',n),'not JSON',
+                    'exited',0,1,NULL,1,0,NULL FROM history;",
+            )?;
+            for sql in [
+                "SELECT id FROM jobs WHERE state IN ('starting','running')",
+                "SELECT COUNT(*) FROM jobs WHERE state IN ('starting','running')",
+            ] {
+                let mut statement = database.db.prepare(&format!("EXPLAIN QUERY PLAN {sql}"))?;
+                let plan = statement
+                    .query_map([], |row| row.get::<_, String>(3))?
+                    .collect::<rusqlite::Result<Vec<_>>>()?;
+                assert!(
+                    plan.iter().any(|detail| detail.contains("jobs_active")),
+                    "{plan:?}"
+                );
+            }
+            Ok(())
+        })?;
+        assert_eq!(store.active_count()?, 2);
+        let mut recovered = store.unfinished()?;
+        recovered.sort_by(|left, right| left.job_id.cmp(&right.job_id));
+        assert_eq!(recovered.len(), 2);
+        assert_eq!(recovered[0].state, JobState::Starting);
+        assert_eq!(recovered[1].state, JobState::Running);
+        assert!(recovered.iter().all(|job| job.created_at_ms == 1));
+        let mut ids = store.unfinished_ids().await?;
+        ids.sort();
+        assert_eq!(ids, ["TEST01", "TEST02"]);
+        store.finish_sync("TEST01", outcome(JobState::Lost, None))?;
+        store.prune()?;
+        assert_eq!(
+            store
+                .by_request(&pending.source_device_id, &pending.request_id)?
+                .unwrap()
+                .job_id,
+            "TEST01"
+        );
+        assert_eq!(store.unfinished_ids().await?, ["TEST02"]);
+        assert_eq!(
+            store.worker.call(|database| Ok(database.db.query_row(
+                "SELECT COUNT(*) FROM jobs",
+                [],
+                |row| row.get::<_, i64>(0)
+            )?))?,
+            100002
+        );
+        Ok(())
     }
     #[test]
     fn lifecycle_preserves_sequences_loss_and_terminal_states() -> Result<()> {
