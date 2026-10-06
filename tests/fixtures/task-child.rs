@@ -29,6 +29,14 @@ fn main() {
                 .to_string_lossy()
         ),
         "sleep" => std::thread::sleep(Duration::from_secs(30)),
+        "log-gate" => {
+            let mut gate = std::net::TcpStream::connect(&a[1]).unwrap();
+            let mut command = [0];
+            while gate.read_exact(&mut command).is_ok() {
+                println!("gated output");
+                std::io::stdout().flush().unwrap();
+            }
+        }
         "finish-later" => {
             std::thread::sleep(Duration::from_secs(1));
             print!("completed");

@@ -58,6 +58,11 @@ jobs:
           mkdir -p "$XRUN_TEST_LOG_DIR"
           trap 'journalctl --user -u xrun-daemon.service --no-pager > "$XRUN_TEST_LOG_DIR/systemd.log" || true' EXIT
           cargo test --locked --test service -- --ignored --nocapture
+      - name: Verify established-session latency budgets
+        shell: bash
+        env:
+          XRUN_LATENCY_OUTPUT: target/latency.json
+        run: cargo test --locked --test latency -- --ignored --nocapture --test-threads=1
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
         with:
           bun-version-file: cloudflare/package.json
