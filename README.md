@@ -14,7 +14,7 @@ cargo build --locked --release
 
 将 `target/release/xrun`（Windows 为 `xrun.exe`）放到固定目录并加入 PATH，再安装服务。CLI、daemon 和 Linux Rust 中转使用同一个二进制；Cloudflare 中转单独部署。参与调用的 CLI、daemon 和中转必须使用相同的完整发布版本。开发构建应使用同一份源码成套更新，发布要求见 [design.md 的版本说明](design.md#63-版本和限制)。
 
-GitHub Actions 的 `Package` 工作流可手动构建三个平台的 CLI 压缩包，以及 macOS Apple Silicon DMG 和 Windows x86_64 用户级 NSIS 安装包；macOS App 和 DMG 的签名、公证需要配置工作流列出的凭据。
+GitHub Actions 的 `Package` 工作流可手动构建三个平台的 CLI 压缩包，以及 macOS Apple Silicon DMG、App ZIP 和 Windows x86_64 用户级 NSIS 安装包；macOS App 和 DMG 的签名、公证需要配置工作流列出的凭据。每个平台的产物还包含版本和 SHA-256 清单，macOS、Windows 同时提供自动安装脚本。
 
 ## 桌面 App
 
@@ -48,10 +48,10 @@ bun run --cwd desktop build
 
 | 平台 | 安装包 | 默认产物位置（相对项目根目录） |
 | --- | --- | --- |
-| macOS | DMG，拖入“应用程序”安装 | `target/release/bundle/dmg/` 下的 `.dmg` |
+| macOS | DMG，或包含完整 App 的 ZIP | `target/release/bundle/dmg/` 下的 `.dmg`，`target/release/bundle/macos/xrun.app.zip` |
 | Windows | 当前用户的 NSIS 安装程序 | `target/release/bundle/nsis/` 下的安装 `.exe` |
 
-macOS 构建同时保留 `target/release/bundle/macos/xrun.app`，用于签名检查和调试；发布时分发 DMG。
+macOS 构建同时保留 `target/release/bundle/macos/xrun.app`；签名检查通过后，用 `ditto` 将同一份 App 打包为 ZIP。正式工作流会先完成 App 公证及票据附加，再生成 ZIP。
 
 本机调试时添加 `--debug`，产物改为 `target/debug/bundle/`：
 
@@ -70,6 +70,34 @@ bun run --cwd desktop build:ui  # 只构建前端
 macOS 开发模式可在界面中启动和停止后台 daemon，无需先打包 App；它复用本机身份与配置，退出开发界面后仍会运行，不设置登录启动。daemon 的运行日志写入 `~/.xrun/daemon-dev.log`。App 的登录启动需要使用打包后的 `xrun.app`。
 
 桌面入口为 `desktop/scripts/desktop.ts`，先编译配套 daemon，再调用 Tauri；打包时自动构建前端，两者完整版本必须一致。平台配置 `tauri.macos.conf.json` 和 `tauri.windows.conf.json` 分别指定 DMG 和 NSIS。默认构建目录是项目根目录的 `target/`；如果设置了 `CARGO_TARGET_DIR`，构建缓存和产物会使用指定目录。前端源代码在 `desktop/src/`，构建输出在 `desktop/dist/`。macOS 本地包默认对整个 App 和内嵌程序做 ad-hoc 签名，打包后校验签名；正式发布需要 Developer ID 签名和公证，可通过 `APPLE_SIGNING_IDENTITY` 指定签名身份，GitHub Actions 会对包内 App 和最终 DMG 分别公证并附加公证票据。Windows 安装包目前未签名。
+
+### AI 和命令行自动安装
+
+[install.sh](install.sh) 支持 macOS Apple Silicon，[install.ps1](install.ps1) 支持 Windows x86_64。指定完整发布版本，默认安装桌面 App；`--component cli`／`-Component cli` 只安装 CLI。脚本校验平台、版本、SHA-256 和安装后的程序；macOS App 另检查签名。整个过程通过 stdout 返回一条 JSON，失败时 `ok` 为 `false`、包含 `error.code` 和 `error.message`，进程退出码为 1；成功返回版本、安装路径、可执行文件路径、`changed` 和自检结果。重复安装相同产物时返回 `changed: false`。
+
+先下载发布附件中的安装脚本，再执行：
+
+```bash
+bash install.sh --version 0.0.1-beta.2
+bash install.sh --version 0.0.1-beta.2 --component cli
+```
+
+```powershell
+powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File .\install.ps1 -Version 0.0.1-beta.2
+powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File .\install.ps1 -Version 0.0.1-beta.2 -Component cli
+```
+
+默认下载地址是 `https://github.com/qczone/xrun/releases/download/v<完整版本>/`。发布者需要把 `Package` 工作流的产物作为对应 Release 的附件上传；运行打包工作流本身不会创建 Release。`--base-url`／`-BaseUrl` 可指定其他 HTTPS 产物目录。每个目录需包含对应的 `xrun-darwin-arm64.json` 或 `xrun-windows-x86_64.json` 清单及其引用的文件。清单由 [desktop/scripts/package-manifest.ts](desktop/scripts/package-manifest.ts) 使用项目现有的 Bun 生成，安装时不需要 Bun。
+
+离线安装或验收本地打包产物时，用 `--source-dir`／`-SourceDir` 指定产物目录。例如 macOS：
+
+```bash
+bash install.sh --version 0.0.1-beta.2 --source-dir ./dist
+```
+
+默认 macOS App 安装到 `~/Applications/xrun.app`，CLI 安装到 `~/.local/bin/xrun`；Windows App 安装到 `%LOCALAPPDATA%\Programs\xrun`，CLI 安装到 `%LOCALAPPDATA%\xrun\bin`。`--install-dir`／`-InstallDir` 可指定父目录，AI 可直接使用 JSON 返回的 `executable` 路径调用程序。脚本只安装程序；网络加入、设备授权和后台服务的启用继续使用现有 App 或 CLI 命令。
+
+macOS 更新前需关闭已安装的 App，脚本会正常停止旧 daemon，再替换文件；CLI 更新也会先停止 daemon。相同产物的重复安装不停止服务。macOS App 和 CLI、Windows CLI 的替换或自检失败会恢复旧文件。Windows App 使用 NSIS 静默安装；服务准备失败时不会弹窗或替换程序，返回 32（更新）或 33（卸载），诊断保存在安装目录的 `xrun-install-error.log`。
 
 ## 部署和加入
 
@@ -284,7 +312,7 @@ cargo test --locked
 xvfb-run -a -s '-screen 0 1024x768x24' cargo test --locked --test screenshot -- --ignored
 ```
 
-[Test Linux](.github/workflows/test-linux.yml)、[Test macOS](.github/workflows/test-macos.yml) 和 [Test Windows](.github/workflows/test-windows.yml) 分别在对应平台原生运行核心测试，覆盖配对、授权、执行、任务、文件传输、流式执行、端口转发、会话缓存和故障恢复。测试直接调用 Rust 中转库，`xrun relay` 部署命令仍仅支持 Linux。Linux 工作流另运行 Xvfb 截图测试和 Cloudflare workerd 测试；macOS、Windows 还检查桌面端和安装包内的 helper。每次提交是否通过，以对应的 Actions 结果为准。
+[Test Linux](.github/workflows/test-linux.yml)、[Test macOS](.github/workflows/test-macos.yml) 和 [Test Windows](.github/workflows/test-windows.yml) 分别在对应平台原生运行核心测试，覆盖配对、授权、执行、任务、文件传输、流式执行、端口转发、会话缓存和故障恢复。测试直接调用 Rust 中转库，`xrun relay` 部署命令仍仅支持 Linux。Linux 工作流另运行 Xvfb 截图测试和 Cloudflare workerd 测试；macOS、Windows 还检查桌面端、安装包内的 helper 和自动安装脚本，覆盖中文及空格路径、重复安装、损坏产物、版本不符，以及 macOS 回滚和 Windows 静默升级／卸载失败。每次提交是否通过，以对应的 Actions 结果为准。
 
 Cloudflare 中转的本地检查无需云端凭证：
 

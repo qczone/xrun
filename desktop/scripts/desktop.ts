@@ -67,6 +67,8 @@ if (
     debug ? "debug" : "release",
     "bundle/macos/xrun.app",
   );
-  if (existsSync(app))
+  if (existsSync(app)) {
     run("codesign", ["--verify", "--deep", "--strict", "--verbose=2", app]);
+    run("ditto", ["-c", "-k", "--keepParent", app, `${app}.zip`]);
+  }
 }

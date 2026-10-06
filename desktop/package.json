@@ -10,8 +10,8 @@
     "dev:ui": "bun --bun vite",
     "build:ui": "bun run --bun tsc --noEmit && bun run --bun vite build",
     "test": "bun test",
-    "format": "bun run --bun prettier --write src tests scripts/desktop.ts vite.config.ts tsconfig.json index.html package.json",
-    "format:check": "bun run --bun prettier --check src tests scripts/desktop.ts vite.config.ts tsconfig.json index.html package.json",
+    "format": "bun run --bun prettier --write src tests scripts/*.ts vite.config.ts tsconfig.json index.html package.json",
+    "format:check": "bun run --bun prettier --check src tests scripts/*.ts vite.config.ts tsconfig.json index.html package.json",
     "check": "bun run format:check && bun run --bun tsc --noEmit && bun test"
   },
   "devDependencies": {
