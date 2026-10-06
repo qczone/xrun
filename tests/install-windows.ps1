@@ -20,6 +20,8 @@ function Invoke-Process([string]$File, [string]$Arguments, [int]$Timeout = 12000
     $info.RedirectStandardOutput = $true
     $info.RedirectStandardError = $true
     $info.EnvironmentVariables['HOME'] = $sandboxHome
+    # Process.Start bypasses PowerShell 7's Windows PowerShell module-path handling.
+    $info.EnvironmentVariables.Remove('PSModulePath')
     $process = New-Object Diagnostics.Process
     $process.StartInfo = $info
     try {

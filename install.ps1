@@ -32,6 +32,8 @@ function Invoke-Native([string]$File, [string]$Arguments, [int]$Timeout = 30000)
     $info.CreateNoWindow = $true
     $info.RedirectStandardOutput = $true
     $info.RedirectStandardError = $true
+    # Native children can start Windows PowerShell 5.1, which needs its own modules.
+    $info.EnvironmentVariables.Remove('PSModulePath')
     $process = New-Object System.Diagnostics.Process
     $process.StartInfo = $info
     try {
