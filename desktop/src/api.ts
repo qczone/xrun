@@ -114,9 +114,20 @@ export type ActionRequest =
   | { command: "pause_access"; args: { paused: boolean } }
   | { command: "save_settings"; args: { execution: ExecutionSettings } };
 export type Action = (request: ActionRequest) => Promise<boolean>;
-export type Confirm = (title: string, message: string) => Promise<boolean>;
+export interface ConfirmOptions {
+  label: string;
+  tone?: "danger";
+}
+export type Confirm = (
+  title: string,
+  message: string,
+  options: ConfirmOptions,
+) => Promise<boolean>;
+export type PendingOperation =
+  ActionRequest["command"] | "invite" | "copy_invitation" | "revoke";
 export type Operation = <T>(
   operation: () => Promise<T>,
+  context: { name: PendingOperation; title: string },
 ) => Promise<T | undefined>;
 
 export interface Invitation {

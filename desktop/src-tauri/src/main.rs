@@ -160,6 +160,12 @@ fn record<T>(app: &tauri::AppHandle, result: anyhow::Result<T>) -> Result<T, Str
     }
 }
 
+// Joining/creation has completed at this point; the UI can offer a service retry
+// without asking the user to repeat registration or retain the invitation link.
+fn service_start_error(error: anyhow::Error) -> anyhow::Error {
+    anyhow::anyhow!("SERVICE_START_FAILED: {error:#}")
+}
+
 #[tauri::command]
 fn status(app: tauri::AppHandle) -> Result<Status, String> {
     local_status(&app).map_err(|e| e.to_string())
@@ -258,8 +264,8 @@ async fn create_network(
     let _guard = state.action.lock().await;
     let result = async {
         xrun::network::create(link.trim(), Some(name.trim().to_string())).await?;
-        xrun::daemon::init()?;
-        platform::start().await
+        xrun::daemon::init().map_err(service_start_error)?;
+        platform::start().await.map_err(service_start_error)
     }
     .await;
     record(&app, result)
@@ -274,8 +280,9 @@ async fn join(
 ) -> Result<(), String> {
     let _guard = state.action.lock().await;
     let result = async {
-        xrun::client::join(link.trim(), Some(name.trim().to_string())).await?;
-        platform::start().await
+        xrun::network::join(link.trim(), name.trim().to_string()).await?;
+        xrun::daemon::init().map_err(service_start_error)?;
+        platform::start().await.map_err(service_start_error)
     }
     .await;
     record(&app, result)

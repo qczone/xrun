@@ -26,13 +26,42 @@ export function serviceLabel(status: Status | null): [string, string] {
   if (!local.daemon_running)
     return ["已停止", "后台服务已停止，其他设备暂时无法访问本机。"];
   if (local.remote_access_paused)
-    return ["访问已暂停", "远程访问已暂停；已受理的后台任务继续运行。"];
+    return ["访问已暂停", "已受理的可靠任务继续运行；流式执行和转发连接关闭。"];
   if (local.daemon_connected === true)
     return ["已连接", "后台服务运行中，已连接到中转。"];
   if (local.daemon_connected === null)
     return ["运行中", "旧版后台服务正在运行，更新后可查看实时连接状态。"];
   return ["连接中", "正在尝试连接中转，网络恢复后会自动重连。"];
 }
+
+export function serviceState(status: Status | null): [string, string] {
+  if (!status) return ["检查中", "neutral"];
+  if (status.service.approval_required) return ["等待系统授权", "warning"];
+  return status.local.daemon_running
+    ? ["运行中", "online"]
+    : ["已停止", "neutral"];
+}
+
+export function relayState(status: Status | null): [string, string] {
+  if (!status) return ["检查中", "neutral"];
+  if (!status.local.joined) return ["尚未加入网络", "neutral"];
+  if (!status.local.daemon_running) return ["服务未运行", "neutral"];
+  if (status.local.daemon_connected === null) return ["状态不可用", "neutral"];
+  return status.local.daemon_connected
+    ? ["已连接", "online"]
+    : ["正在重连", "warning"];
+}
+
+export function relayHost(address: string) {
+  try {
+    return new URL(address).host;
+  } catch {
+    return "查看中转详情";
+  }
+}
+
+export const errorText = (error: unknown) =>
+  error instanceof Error ? error.message : String(error);
 
 export function taskState(job: Job): [string, string] {
   if (job.state === "exited")

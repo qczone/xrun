@@ -1,178 +1,314 @@
-import type { Action, Status } from "../api";
+import type { ReactNode } from "react";
+import type { Action, PendingOperation, Status } from "../api";
 import { Icon } from "../components/Icon";
 import { NetworkSetup } from "../components/NetworkSetup";
-import { osName, serviceLabel } from "../format";
+import { relayHost, relayState, serviceState } from "../format";
 
 interface Props {
   status: Status | null;
   busy: boolean;
+  pending: PendingOperation | null;
+  feedback: ReactNode;
   action: Action;
   stop: () => Promise<void>;
   navigate: (page: "devices" | "settings" | "history") => void;
 }
 
-export function Overview({ status, busy, action, stop, navigate }: Props) {
-  const [badge, summary] = serviceLabel(status);
+export function Overview({
+  status,
+  busy,
+  pending,
+  feedback,
+  action,
+  stop,
+  navigate,
+}: Props) {
   const local = status?.local;
   const service = status?.service;
   const network = status?.network;
+  const [serviceText, serviceTone] = serviceState(status);
+  const [relayText, relayTone] = relayState(status);
+  const allowed =
+    status?.allow_from.filter((id) => !status.deny_from.includes(id)).length ||
+    0;
+  const paused = !!local?.remote_access_paused;
+  const accessText = !local
+    ? "检查中"
+    : paused
+      ? "已暂停"
+      : local.allow_all
+        ? "全体成员可访问"
+        : "按设备授权";
+
   return (
     <>
       <div className="page-heading">
         <div>
-          <h1>{local && !local.joined ? "连接你的设备" : "本机状态"}</h1>
+          <h1>{local && !local.joined ? "连接你的设备" : "本机概览"}</h1>
           <p>
             {local && !local.joined
-              ? "创建或加入网络，让你的设备互相连接。"
-              : "查看连接状态，管理这台设备的后台服务。"}
+              ? "加入网络，让你的设备通过 xrun 互相连接。"
+              : "查看本机连接与访问状态，管理后台服务。"}
           </p>
         </div>
       </div>
+      {feedback}
       {(!local || local.joined) && (
-        <article className="device-hero">
-          <div className="hero-top">
+        <section className="panel overview-status" aria-label="本机运行状态">
+          <div className="overview-device">
             <div className="device-avatar">
               <Icon name="monitor" />
             </div>
-            <span
-              className={`badge ${local?.daemon_connected ? "online" : ""}`}
-            >
-              {badge}
-            </span>
-          </div>
-          <h2>{local?.name || "连接你的设备"}</h2>
-          <p>{summary}</p>
-          {local?.joined && (
-            <div className="hero-actions">
-              <button
-                className="primary"
-                disabled={busy || local.daemon_running}
-                onClick={() => void action({ command: "start" })}
-              >
-                启动后台服务
-              </button>
-              <button
-                disabled={busy || !local.daemon_running}
-                onClick={() => void stop()}
-              >
-                停止服务
-              </button>
-              <button
-                disabled={busy}
-                onClick={() =>
-                  void action({
-                    command: "pause_access",
-                    args: { paused: !local.remote_access_paused },
-                  })
-                }
-              >
-                {local.remote_access_paused ? "恢复远程访问" : "暂停远程访问"}
-              </button>
+            <div className="overview-identity">
+              <h2>{local?.name || "正在读取本机…"}</h2>
+              <span className="muted">
+                {network
+                  ? network.is_manager
+                    ? "管理设备"
+                    : "普通设备"
+                  : "本机设备"}
+              </span>
             </div>
-          )}
-        </article>
+            {local?.joined && (
+              <div className="overview-actions">
+                {!local.daemon_running ? (
+                  <button
+                    className="primary"
+                    disabled={busy}
+                    onClick={() => void action({ command: "start" })}
+                  >
+                    {pending === "start" ? "正在启动…" : "启动后台服务"}
+                  </button>
+                ) : paused ? (
+                  <button
+                    className="primary"
+                    disabled={busy}
+                    onClick={() =>
+                      void action({
+                        command: "pause_access",
+                        args: { paused: false },
+                      })
+                    }
+                  >
+                    {pending === "pause_access" ? "正在恢复…" : "恢复远程访问"}
+                  </button>
+                ) : (
+                  <>
+                    <button
+                      className="primary"
+                      onClick={() => navigate("devices")}
+                    >
+                      谁能访问本机
+                    </button>
+                    <button
+                      disabled={busy}
+                      onClick={() =>
+                        void action({
+                          command: "pause_access",
+                          args: { paused: true },
+                        })
+                      }
+                    >
+                      {pending === "pause_access"
+                        ? "正在暂停…"
+                        : "暂停远程访问"}
+                    </button>
+                  </>
+                )}
+              </div>
+            )}
+          </div>
+          <div className="status-grid">
+            <div>
+              <span className="status-label">后台服务</span>
+              <strong className={`status-value ${serviceTone}`}>
+                <span className={`dot ${serviceTone}`} />
+                {serviceText}
+              </strong>
+              <small>
+                {service?.approval_required
+                  ? "请在系统设置中允许后台运行"
+                  : local?.daemon_running
+                    ? "独立于 App 运行"
+                    : "启动后才可接受远程操作"}
+              </small>
+            </div>
+            <div>
+              <span className="status-label">中转连接</span>
+              <strong className={`status-value ${relayTone}`}>
+                <span className={`dot ${relayTone}`} />
+                {relayText}
+              </strong>
+              <small>
+                {local?.daemon_connected === null
+                  ? "更新后台服务后可查看"
+                  : local?.daemon_running && local.daemon_connected === false
+                    ? "网络恢复后自动重连"
+                    : "用于设备发现与连接"}
+              </small>
+            </div>
+            <div>
+              <span className="status-label">远程访问</span>
+              <strong className={`status-value ${paused ? "warning" : ""}`}>
+                <Icon name="shield" />
+                {accessText}
+              </strong>
+              <small>
+                {paused
+                  ? "恢复后沿用已有授权"
+                  : local?.allow_all
+                    ? "单独拒绝的设备除外"
+                    : `已单独授权 ${allowed} 台设备`}
+              </small>
+            </div>
+          </div>
+        </section>
       )}
       {service?.approval_required && (
         <div className="notice">
           <Icon name="shield" />
           <div>
             <strong>需要系统授权</strong>
-            <p>在系统设置 → 通用 → 登录项中允许 xrun，然后启动服务。</p>
+            <p>在系统设置 → 通用 → 登录项中允许 xrun，然后启动后台服务。</p>
+          </div>
+        </div>
+      )}
+      {local?.joined && paused && (
+        <div className="notice">
+          <Icon name="shield" />
+          <div>
+            <strong>远程访问已暂停</strong>
+            <p>
+              已受理的可靠任务继续运行；流式执行和转发连接关闭。恢复访问后沿用已有授权。
+            </p>
+            {!local.daemon_running && (
+              <button
+                className="text-button"
+                disabled={busy}
+                onClick={() =>
+                  void action({
+                    command: "pause_access",
+                    args: { paused: false },
+                  })
+                }
+              >
+                {pending === "pause_access" ? "正在恢复…" : "恢复远程访问"}
+              </button>
+            )}
           </div>
         </div>
       )}
       {local?.joined && (
-        <section className="panel">
-          <div className="panel-row">
-            <span>本机角色</span>
-            <strong>
-              {network
-                ? network.is_manager
-                  ? "管理设备"
-                  : "普通设备"
-                : "网络信息不可用"}
-            </strong>
+        <section className="panel network-summary">
+          <div className="panel-heading">
+            <h2>网络信息</h2>
+            <span className="muted">
+              {network ? "端到端加密" : "暂时不可用"}
+            </span>
           </div>
           {network && (
-            <>
-              <div className="panel-row">
+            <div className="network-facts">
+              <div>
                 <span>管理设备</span>
-                <span>{network.manager_name}</span>
+                <strong>{network.manager_name}</strong>
               </div>
+              <div>
+                <span>中转</span>
+                <strong>
+                  {network.relay_addresses.map(relayHost).join(" · ")}
+                </strong>
+              </div>
+            </div>
+          )}
+          <details className="overview-details">
+            <summary>设备与网络详情</summary>
+            <div className="panel-row">
+              <span>设备 ID</span>
+              <code>{local.device_id}</code>
+            </div>
+            {network && (
               <div className="panel-row">
-                <span>中转地址</span>
+                <span>完整中转地址</span>
                 <div className="relay-addresses">
                   {network.relay_addresses.map((address) => (
                     <code key={address}>{address}</code>
                   ))}
                 </div>
               </div>
-            </>
-          )}
-          <div className="panel-row">
-            <span>设备名称</span>
-            <strong>{local.name}</strong>
-          </div>
-          <div className="panel-row">
-            <span>设备 ID</span>
-            <code>{local.device_id}</code>
-          </div>
-          <div className="panel-row">
-            <span>系统</span>
-            <span>
-              {osName(
-                navigator.platform.startsWith("Mac")
-                  ? "macos"
-                  : navigator.platform.startsWith("Win")
-                    ? "windows"
-                    : "linux",
+            )}
+            <div className="panel-row">
+              <span>服务安装</span>
+              <span>
+                {service?.development
+                  ? "开发模式"
+                  : service?.legacy_installed
+                    ? "CLI 安装的服务"
+                    : service?.installed
+                      ? "App 后台服务"
+                      : "尚未安装服务"}
+              </span>
+            </div>
+            <div className="details-actions">
+              <button
+                className="text-button"
+                onClick={() => navigate("settings")}
+              >
+                后台服务设置
+              </button>
+              {local.daemon_running && (
+                <button
+                  className="danger-button"
+                  disabled={busy}
+                  onClick={() => void stop()}
+                >
+                  {pending === "stop" ? "正在停止…" : "停止后台服务…"}
+                </button>
               )}
-            </span>
-          </div>
-          <div className="panel-row">
-            <span>安装方式</span>
-            <span>
-              {service?.legacy_installed
-                ? "CLI 安装的服务"
-                : service?.installed
-                  ? "App 后台服务"
-                  : "尚未安装服务"}
-            </span>
-          </div>
+            </div>
+          </details>
         </section>
       )}
       {local && (
         <NetworkSetup
           joined={local.joined}
           busy={busy}
+          pending={pending}
+          startFailed={!!status?.error?.startsWith("SERVICE_START_FAILED:")}
           action={action}
           onCreated={() => navigate("devices")}
         />
       )}
-      <div className="quick-links">
-        <button onClick={() => navigate("devices")}>
-          <Icon name="shield" />
-          <span>
-            <strong>管理设备权限</strong>
-            <small>选择可以访问本机的设备</small>
-          </span>
-          <Icon name="arrow" className="arrow" />
-        </button>
-        <button onClick={() => navigate("settings")}>
-          <Icon name="settings" />
-          <span>
-            <strong>配置执行环境</strong>
-            <small>工作目录、工具路径与并发</small>
-          </span>
-          <Icon name="arrow" className="arrow" />
-        </button>
-      </div>
-      <button className="history-shortcut" onClick={() => navigate("history")}>
-        <Icon name="terminal" />
-        查看本机任务与日志
-        <Icon name="arrow" className="arrow" />
-      </button>
-      <p className="footnote">关闭窗口或退出 App，后台服务会继续运行。</p>
+      {local?.joined && (
+        <>
+          <div className="quick-links">
+            <button onClick={() => navigate("devices")}>
+              <Icon name="shield" />
+              <span>
+                <strong>谁能访问本机</strong>
+                <small>查看设备，管理访问授权</small>
+              </span>
+              <Icon name="arrow" className="arrow" />
+            </button>
+            <button onClick={() => navigate("settings")}>
+              <Icon name="settings" />
+              <span>
+                <strong>执行环境</strong>
+                <small>工作目录、工具路径与任务数量</small>
+              </span>
+              <Icon name="arrow" className="arrow" />
+            </button>
+          </div>
+          <button
+            className="history-shortcut"
+            onClick={() => navigate("history")}
+          >
+            <Icon name="terminal" />
+            查看本机活动记录
+            <Icon name="arrow" className="arrow" />
+          </button>
+          <p className="footnote">关闭窗口或退出 App，后台服务会继续运行。</p>
+        </>
+      )}
     </>
   );
 }

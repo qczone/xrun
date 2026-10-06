@@ -1,28 +1,40 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
 import {
   api,
   type Action,
   type Confirm,
   type ExecutionSettings,
+  type PendingOperation,
   type Settings,
   type Status,
 } from "../api";
 import { Icon } from "../components/Icon";
-import { serviceLabel } from "../format";
+import { ErrorNotice } from "../components/ErrorNotice";
+import { errorText, osName, serviceState } from "../format";
 
 interface Props {
   status: Status | null;
   busy: boolean;
+  pending: PendingOperation | null;
+  feedback: ReactNode;
   action: Action;
   stop: () => Promise<void>;
   confirm: Confirm;
   notify: (message: string) => void;
-  onError: (error: unknown) => void;
+  onError: (error: unknown, title?: string) => void;
 }
 
 export function SettingsPage({
   status,
   busy,
+  pending,
+  feedback,
   action,
   stop,
   confirm,
@@ -33,25 +45,31 @@ export function SettingsPage({
   const [cwd, setCwd] = useState("");
   const [concurrency, setConcurrency] = useState("4");
   const [path, setPath] = useState("");
+  const [loadError, setLoadError] = useState<string | null>(null);
   const loadRequest = useRef(0);
   const joined = !!status?.local.joined;
   const loadSettings = useCallback(async () => {
     const request = ++loadRequest.current;
-    const value = await api.settings();
-    if (request !== loadRequest.current) return;
-    setSettings(value);
-    setCwd(value.execution.default_cwd || "");
-    setConcurrency(String(value.execution.max_concurrent_jobs));
-    setPath(value.execution.path || "");
+    try {
+      const value = await api.settings();
+      if (request !== loadRequest.current) return;
+      setSettings(value);
+      setCwd(value.execution.default_cwd || "");
+      setConcurrency(String(value.execution.max_concurrent_jobs));
+      setPath(value.execution.path || "");
+      setLoadError(null);
+    } catch (error) {
+      if (request === loadRequest.current) setLoadError(errorText(error));
+    }
   }, []);
 
   useEffect(() => {
-    void loadSettings().catch(onError);
+    void loadSettings();
     return () => {
       loadRequest.current++;
     };
     // Status polling must not overwrite the user's unsaved inputs.
-  }, [joined, loadSettings, onError]);
+  }, [joined, loadSettings]);
 
   const execution: ExecutionSettings = {
     default_cwd: cwd.trim() ? cwd : null,
@@ -62,7 +80,7 @@ export function SettingsPage({
     settings !== null &&
     JSON.stringify(execution) !== JSON.stringify(settings.execution);
   const disabled = busy || !joined || !settings;
-  const [badge] = serviceLabel(status);
+  const [badge, serviceTone] = serviceState(status);
   const local = status?.local;
   const service = status?.service;
 
@@ -74,12 +92,13 @@ export function SettingsPage({
           <p>配置启动方式和本机执行环境。</p>
         </div>
       </div>
+      {feedback}
       <div className="settings-section">
         <h2>启动与显示</h2>
         <section className="panel">
           <label className="setting-row" htmlFor="autostart">
             <span>
-              <strong>登录时打开 App</strong>
+              <strong>登录时显示 xrun 图标</strong>
               <small>
                 {service?.development
                   ? "开发模式下不设置 App 的登录启动"
@@ -112,13 +131,20 @@ export function SettingsPage({
               disabled={busy}
               onClick={() => void action({ command: "hide_icon" })}
             >
-              隐藏图标
+              {pending === "hide_icon" ? "正在隐藏…" : "隐藏图标"}
             </button>
           </div>
         </section>
       </div>
       <div className="settings-section">
         <h2>执行环境</h2>
+        {loadError && (
+          <ErrorNotice
+            title="执行环境未能读取，请重试。"
+            detail={loadError}
+            retry={() => void loadSettings()}
+          />
+        )}
         <form
           id="execution-form"
           className="panel padded"
@@ -156,7 +182,7 @@ export function SettingsPage({
                   const selected = await api.chooseDirectory();
                   if (selected) setCwd(selected);
                 } catch (e) {
-                  onError(e);
+                  onError(e, "无法选择工作目录，请重试。");
                 }
               }}
             >
@@ -165,12 +191,12 @@ export function SettingsPage({
             </button>
           </div>
           <p className="field-help">
-            未指定远端工作目录时使用此路径；留空使用用户主目录。
+            其他设备未指定工作目录时，使用此目录。留空使用用户主目录。
           </p>
           <div className="concurrency-row">
             <div>
-              <label htmlFor="concurrency">任务并发上限</label>
-              <p className="field-help">同时运行的任务数，范围 1–64</p>
+              <label htmlFor="concurrency">同时运行的任务数</label>
+              <p className="field-help">范围 1–64，仅影响新任务</p>
             </div>
             <input
               id="concurrency"
@@ -211,11 +237,11 @@ export function SettingsPage({
               className="primary"
               disabled={disabled || !dirty}
             >
-              保存更改
+              {pending === "save_settings" ? "正在保存…" : "保存更改"}
             </button>
           </div>
           {!joined && (
-            <p className="field-help">加入部署后，即可配置执行环境。</p>
+            <p className="field-help">加入网络后，即可配置执行环境。</p>
           )}
         </form>
       </div>
@@ -226,11 +252,7 @@ export function SettingsPage({
             <span>
               <strong>
                 运行状态
-                <span
-                  className={`inline-status ${local?.daemon_connected ? "online" : ""}`}
-                >
-                  {badge}
-                </span>
+                <span className={`inline-status ${serviceTone}`}>{badge}</span>
               </strong>
               <small>
                 {service?.development
@@ -247,7 +269,13 @@ export function SettingsPage({
                   : void action({ command: "start" })
               }
             >
-              {local?.daemon_running ? "停止服务" : "启动服务"}
+              {pending === "start"
+                ? "正在启动…"
+                : pending === "stop"
+                  ? "正在停止…"
+                  : local?.daemon_running
+                    ? "停止服务"
+                    : "启动服务"}
             </button>
           </div>
           {service?.legacy_installed && !service.development && (
@@ -269,12 +297,13 @@ export function SettingsPage({
                     await confirm(
                       "移除后台服务？",
                       "这会停止服务和运行中的任务，并取消服务的登录启动。设备身份和数据会保留。",
+                      { label: "移除后台服务", tone: "danger" },
                     )
                   )
                     await action({ command: "remove_service" });
                 }}
               >
-                移除…
+                {pending === "remove_service" ? "正在移除…" : "移除…"}
               </button>
             </div>
           )}
@@ -292,6 +321,12 @@ export function SettingsPage({
               </span>
             </div>
             <span className="mono muted">{local?.version}</span>
+          </div>
+          <div className="setting-row">
+            <span>
+              <strong>系统</strong>
+              <small>{settings ? osName(settings.os) : "正在读取…"}</small>
+            </span>
           </div>
           <div className="setting-row data-row">
             <span>

@@ -8,9 +8,11 @@ import {
   type TaskFilter,
 } from "../api";
 import { Icon } from "../components/Icon";
+import { ErrorNotice } from "../components/ErrorNotice";
 import {
   commandText,
   duration,
+  errorText,
   fileSize,
   isRunning,
   recordTime,
@@ -74,7 +76,7 @@ export function History({ active, paused, status, devices }: Props) {
         }
         setError(null);
       } catch (e) {
-        if (!disposed && token === request.current) setError(String(e));
+        if (!disposed && token === request.current) setError(errorText(e));
       } finally {
         pending = false;
         if (!disposed) setLoading(false);
@@ -97,44 +99,31 @@ export function History({ active, paused, status, devices }: Props) {
     [status, devices],
   );
   const reset = () => {
+    setSelected(null);
     setPagination({ cursors: [null], index: 0 });
     setNext(null);
     setError(null);
   };
+  const refreshRecords = () => setRefresh((value) => value + 1);
   const records = tab === "tasks" ? jobs : files;
 
   return (
     <>
       <div className="page-heading">
         <div>
-          <h1>任务与日志</h1>
-          <p>查看在本机执行的任务与文件操作，服务停止后也可查询。</p>
+          <h1>本机活动记录</h1>
+          <p>在这台设备执行的任务、文件操作和截图；后台服务停止后也可查看。</p>
         </div>
         <button
           disabled={selected ? outputLoading : loading}
-          onClick={() => setRefresh((value) => value + 1)}
+          onClick={refreshRecords}
         >
           <Icon name="refresh" />
-          刷新
+          {(selected ? outputLoading : loading) ? "正在刷新…" : "刷新"}
         </button>
       </div>
-      {selected ? (
-        <TaskDetail
-          key={`${selected.dbId}:${selected.job.job_id}`}
-          selection={selected}
-          active={active}
-          paused={paused}
-          refresh={refresh}
-          status={status}
-          deviceLabel={deviceLabel}
-          onLoading={setOutputLoading}
-          back={() => {
-            setSelected(null);
-            setError(null);
-          }}
-        />
-      ) : (
-        <div>
+      <div className={`history-layout ${selected ? "has-selection" : ""}`}>
+        <div className="history-list">
           <div className="history-toolbar">
             <div className="segmented" role="group" aria-label="记录类型">
               <button
@@ -176,13 +165,14 @@ export function History({ active, paused, status, devices }: Props) {
               </label>
             )}
           </div>
-          <section className="panel">
+          <section className="panel history-record-panel">
             <div id="history-records">
               {tab === "tasks"
                 ? jobs.map((job) => (
                     <button
-                      className="task-record"
+                      className={`task-record ${selected?.job.job_id === job.job_id ? "selected" : ""}`}
                       key={job.job_id}
+                      aria-pressed={selected?.job.job_id === job.job_id}
                       onClick={() => {
                         setLoading(false);
                         setError(null);
@@ -190,20 +180,20 @@ export function History({ active, paused, status, devices }: Props) {
                       }}
                     >
                       <span className="record-header">
-                        <strong className="mono">{job.job_id}</strong>
+                        <strong className="record-command mono">
+                          {commandText(job)}
+                        </strong>
                         <StateChip job={job} />
-                        <span className="record-time">
-                          {recordTime(job.created_at_ms)}
-                        </span>
-                      </span>
-                      <span className="record-command mono">
-                        {commandText(job)}
                       </span>
                       <span className="record-meta">
                         来源：{deviceLabel(job.source_device_id)} ·{" "}
                         {job.duration_ms === null
                           ? "点击查看输出"
                           : `耗时 ${duration(job.duration_ms)}`}
+                      </span>
+                      <span className="record-secondary">
+                        <code>{job.job_id}</code>
+                        <span>{recordTime(job.created_at_ms)}</span>
                       </span>
                     </button>
                   ))
@@ -227,9 +217,6 @@ export function History({ active, paused, status, devices }: Props) {
                         >
                           {record.result === "ok" ? "已完成" : "失败或中断"}
                         </span>
-                        <span className="record-time">
-                          {recordTime(record.time_ms)}
-                        </span>
                       </div>
                       {record.path && (
                         <p className="record-command mono">{record.path}</p>
@@ -238,6 +225,9 @@ export function History({ active, paused, status, devices }: Props) {
                         来源：{deviceLabel(record.source_device_id)}
                         {fileSize(record.size)}
                       </p>
+                      <span className="record-secondary">
+                        {recordTime(record.time_ms)}
+                      </span>
                     </article>
                   ))}
             </div>
@@ -255,7 +245,7 @@ export function History({ active, paused, status, devices }: Props) {
           </section>
           <div className="history-pagination">
             <button
-              disabled={loading || pagination.index === 0}
+              disabled={loading || pagination.index === 0 || selected !== null}
               onClick={() =>
                 setPagination((value) => ({ ...value, index: value.index - 1 }))
               }
@@ -264,7 +254,7 @@ export function History({ active, paused, status, devices }: Props) {
             </button>
             <span className="muted">第 {pagination.index + 1} 页</span>
             <button
-              disabled={loading || next === null}
+              disabled={loading || next === null || selected !== null}
               onClick={() => {
                 if (next !== null)
                   setPagination((value) => ({
@@ -276,16 +266,36 @@ export function History({ active, paused, status, devices }: Props) {
               下一页
             </button>
           </div>
-          <p className="footnote">
-            任务结果会保留，已结束任务的输出和文件操作记录按现有规则保留 7 天。
-          </p>
+          {error && (
+            <ErrorNotice
+              title="活动记录未能读取，请重试。"
+              detail={error}
+              retry={refreshRecords}
+              dismiss={() => setError(null)}
+            />
+          )}
         </div>
-      )}
-      {error && (
-        <p className="history-error" role="alert">
-          {error}
-        </p>
-      )}
+        {selected && (
+          <TaskDetail
+            key={`${selected.dbId}:${selected.job.job_id}`}
+            selection={selected}
+            active={active}
+            paused={paused}
+            refresh={refresh}
+            status={status}
+            deviceLabel={deviceLabel}
+            onLoading={setOutputLoading}
+            retry={refreshRecords}
+            back={() => {
+              setSelected(null);
+              setError(null);
+            }}
+          />
+        )}
+      </div>
+      <p className="footnote">
+        任务结果会保留，已结束任务的输出和文件操作记录按现有规则保留 7 天。
+      </p>
     </>
   );
 }
@@ -298,6 +308,7 @@ interface DetailProps {
   status: Status | null;
   deviceLabel: (id: string) => string;
   onLoading: (value: boolean) => void;
+  retry: () => void;
   back: () => void;
 }
 
@@ -309,6 +320,7 @@ function TaskDetail({
   status,
   deviceLabel,
   onLoading,
+  retry,
   back,
 }: DetailProps) {
   const [job, setJob] = useState(selection.job);
@@ -320,6 +332,7 @@ function TaskDetail({
   const buffer = useRef(new OutputBuffer());
   const finished = useRef(false);
   const log = useRef<HTMLPreElement>(null);
+  const lastScrollTop = useRef(0);
   const {
     dbId,
     job: { job_id: jobId },
@@ -352,9 +365,9 @@ function TaskDetail({
         );
       } catch (e) {
         if (!disposed) {
-          setError(String(e));
+          setError(errorText(e));
           setOutputStatus("输出读取失败");
-          if (/^(DB_RESET|JOB_NOT_FOUND|DB_MISSING)/.test(String(e)))
+          if (/^(DB_RESET|JOB_NOT_FOUND|DB_MISSING)/.test(errorText(e)))
             finished.current = true;
         }
       } finally {
@@ -377,7 +390,10 @@ function TaskDetail({
   }, [active, paused, refresh, dbId, jobId, onLoading]);
 
   useEffect(() => {
-    if (follow && log.current) log.current.scrollTop = log.current.scrollHeight;
+    if (follow && log.current) {
+      log.current.scrollTop = log.current.scrollHeight;
+      lastScrollTop.current = log.current.scrollTop;
+    }
   }, [revision, follow, stream]);
 
   const source = deviceLabel(job.source_device_id);
@@ -397,59 +413,51 @@ function TaskDetail({
   if (job.leftover_possible) warnings.push("可能仍有未清理的子进程。");
   if (isRunning(job) && status && !status.local.daemon_running)
     warnings.push("后台服务已停止，记录中的任务状态可能尚未更新。");
+  const elapsed =
+    job.duration_ms !== null
+      ? duration(job.duration_ms)
+      : isRunning(job)
+        ? `约 ${duration(Math.max(0, Date.now() - job.created_at_ms))}`
+        : "—";
+  const result = job.signal
+    ? `信号 ${job.signal}`
+    : job.exit_code !== null
+      ? `退出码 ${job.exit_code}`
+      : isRunning(job)
+        ? "尚未结束"
+        : "无退出码";
 
   return (
     <section id="task-detail">
       <button className="history-back" onClick={back}>
         ← 返回任务列表
       </button>
-      <article className="panel padded task-heading">
-        <div>
-          <h2 className="mono">任务 {job.job_id}</h2>
+      <article className="panel task-heading">
+        <div className="task-title">
+          <h2 className="mono">{commandText(job)}</h2>
           <StateChip job={job} />
         </div>
-        <p className="mono">{commandText(job)}</p>
+        <div className="task-summary-meta">
+          <span>来源：{source}</span>
+          <span>耗时 {elapsed}</span>
+          <span>{result}</span>
+        </div>
+        <details className="task-facts">
+          <summary>任务 {job.job_id} · 查看详情</summary>
+          <div className="panel-row">
+            <span>来源设备 ID</span>
+            <code>{job.source_device_id}</code>
+          </div>
+          <div className="panel-row">
+            <span>工作目录</span>
+            <code>{job.cwd}</code>
+          </div>
+          <div className="panel-row">
+            <span>开始时间</span>
+            <span>{recordTime(job.created_at_ms)}</span>
+          </div>
+        </details>
       </article>
-      <section className="panel task-facts">
-        <div className="panel-row">
-          <span>来源设备</span>
-          <span>
-            {source === job.source_device_id
-              ? source
-              : `${source} · ${job.source_device_id}`}
-          </span>
-        </div>
-        <div className="panel-row">
-          <span>工作目录</span>
-          <code>{job.cwd}</code>
-        </div>
-        <div className="panel-row">
-          <span>开始时间</span>
-          <span>{recordTime(job.created_at_ms)}</span>
-        </div>
-        <div className="panel-row">
-          <span>运行耗时</span>
-          <span>
-            {job.duration_ms !== null
-              ? duration(job.duration_ms)
-              : isRunning(job)
-                ? `约 ${duration(Math.max(0, Date.now() - job.created_at_ms))}`
-                : "—"}
-          </span>
-        </div>
-        <div className="panel-row">
-          <span>退出结果</span>
-          <span>
-            {job.signal
-              ? `信号 ${job.signal}`
-              : job.exit_code !== null
-                ? `退出码 ${job.exit_code}`
-                : isRunning(job)
-                  ? "尚未结束"
-                  : "无退出码"}
-          </span>
-        </div>
-      </section>
       {!!warnings.length && (
         <p id="task-warning" className="inline-notice" role="status">
           {warnings.join(" ")}
@@ -466,9 +474,9 @@ function TaskDetail({
             value={stream}
             onChange={(event) => setStream(event.target.value)}
           >
-            <option value="all">stdout + stderr</option>
-            <option value="stdout">stdout</option>
-            <option value="stderr">stderr</option>
+            <option value="all">全部输出</option>
+            <option value="stdout">标准输出（stdout）</option>
+            <option value="stderr">错误输出（stderr）</option>
           </select>
           <label className="follow-output">
             <input
@@ -476,7 +484,7 @@ function TaskDetail({
               checked={follow}
               onChange={(event) => setFollow(event.target.checked)}
             />
-            跟随输出
+            自动滚动到底部
           </label>
         </div>
         <pre
@@ -486,6 +494,17 @@ function TaskDetail({
           data-filter={stream}
           tabIndex={0}
           aria-label="任务输出"
+          onScroll={(event) => {
+            const node = event.currentTarget;
+            const movingUp = node.scrollTop < lastScrollTop.current;
+            lastScrollTop.current = node.scrollTop;
+            if (
+              follow &&
+              movingUp &&
+              node.scrollHeight - node.clientHeight - node.scrollTop > 24
+            )
+              setFollow(false);
+          }}
         >
           {buffer.current.chunks.length ? (
             buffer.current.chunks.map((chunk) => (
@@ -504,12 +523,20 @@ function TaskDetail({
         <div className="output-footer">
           <span>{outputStatus}</span>
           {buffer.current.truncated && <span>仅显示最近的输出</span>}
+          {!follow && (
+            <button className="text-button" onClick={() => setFollow(true)}>
+              回到最新输出
+            </button>
+          )}
         </div>
       </section>
       {error && (
-        <p className="history-error" role="alert">
-          {error}
-        </p>
+        <ErrorNotice
+          title="任务输出未能读取，请重试。"
+          detail={error}
+          retry={retry}
+          dismiss={() => setError(null)}
+        />
       )}
     </section>
   );

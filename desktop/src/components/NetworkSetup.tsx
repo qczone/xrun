@@ -1,20 +1,36 @@
-import { useState } from "react";
-import type { Action } from "../api";
+import { useEffect, useRef, useState } from "react";
+import type { Action, PendingOperation } from "../api";
 import { Icon } from "./Icon";
 
 interface Props {
   joined: boolean;
   busy: boolean;
+  pending: PendingOperation | null;
+  startFailed: boolean;
   action: Action;
   onCreated: () => void;
 }
 
-export function NetworkSetup({ joined, busy, action, onCreated }: Props) {
+export function NetworkSetup({
+  joined,
+  busy,
+  pending,
+  startFailed,
+  action,
+  onCreated,
+}: Props) {
   const [mode, setMode] = useState<"join" | "create">("join");
   const [link, setLink] = useState("");
   const [name, setName] = useState("");
   const [retry, setRetry] = useState(false);
+  const submitting = useRef(false);
   const creating = mode === "create";
+  useEffect(() => {
+    if (joined && startFailed) {
+      setLink("");
+      setRetry(false);
+    }
+  }, [joined, retry, startFailed]);
   if (joined && !retry) return null;
 
   return (
@@ -43,8 +59,7 @@ export function NetworkSetup({ joined, busy, action, onCreated }: Props) {
         <p>
           {creating ? (
             <>
-              粘贴 Cloudflare 部署输出的 HTTPS 地址，或 Linux
-              中转输出的部署链接。
+              粘贴中转部署完成后提供的 HTTPS 地址或部署链接。
               创建后，本机成为管理设备，负责邀请和撤销成员。
             </>
           ) : (
@@ -57,6 +72,8 @@ export function NetworkSetup({ joined, busy, action, onCreated }: Props) {
         id={creating ? "create-network-form" : "join-form"}
         onSubmit={async (event) => {
           event.preventDefault();
+          if (busy || submitting.current) return;
+          submitting.current = true;
           const success = await action({
             command: creating ? "create_network" : "join",
             args: { link, name },
@@ -69,6 +86,7 @@ export function NetworkSetup({ joined, busy, action, onCreated }: Props) {
             // Creation may save the identity before starting the service.
             setRetry(true);
           }
+          submitting.current = false;
         }}
       >
         <label htmlFor="setup-link">
@@ -89,7 +107,7 @@ export function NetworkSetup({ joined, busy, action, onCreated }: Props) {
         <input
           id="setup-name"
           type="text"
-          placeholder="mac1 或 win1"
+          placeholder="例如 mac1 或 win1"
           pattern="[a-z][a-z0-9-]{0,31}"
           maxLength={32}
           autoComplete="off"
@@ -99,14 +117,21 @@ export function NetworkSetup({ joined, busy, action, onCreated }: Props) {
           value={name}
           onChange={(event) => setName(event.target.value)}
         />
-        <p className="field-help">小写字母、数字和短横线，以字母开头。</p>
+        <p className="field-help">
+          1–32 位小写字母、数字和短横线，以字母开头。
+        </p>
+        <p className="setup-help">完成后自动启动本机后台服务。</p>
         <div className="hero-actions">
           <button className="primary" type="submit" disabled={busy}>
-            {creating
-              ? retry
-                ? "重试创建并启动"
-                : "创建并启动服务"
-              : "加入并启动服务"}
+            {pending === "create_network"
+              ? "正在创建…"
+              : pending === "join"
+                ? "正在加入…"
+                : creating
+                  ? retry
+                    ? "重试创建网络"
+                    : "创建网络"
+                  : "加入网络"}
             <Icon name="arrow" />
           </button>
           {joined && retry && (
