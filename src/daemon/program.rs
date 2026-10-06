@@ -2,6 +2,8 @@
 use crate::error::ErrorCode;
 use crate::protocol::*;
 use anyhow::{Result, bail};
+#[cfg(windows)]
+use std::collections::HashSet;
 use std::{
     collections::BTreeMap,
     path::{Path, PathBuf},

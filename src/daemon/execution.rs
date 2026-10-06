@@ -2,6 +2,8 @@
 use crate::error::ErrorCode;
 use crate::{config, protocol::*, store::TaskStore};
 use anyhow::{Context, Result, bail};
+#[cfg(windows)]
+use std::collections::HashSet;
 use std::{
     path::{Path, PathBuf},
     sync::{Arc, Mutex, atomic::Ordering},

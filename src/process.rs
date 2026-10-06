@@ -1,5 +1,3 @@
-#[cfg(windows)]
-use crate::error::ErrorCode;
 use anyhow::Result;
 use std::{collections::BTreeMap, path::Path};
 use tokio::io::{AsyncRead, AsyncWrite};
@@ -205,6 +203,7 @@ pub fn gone(_pid: u32) -> bool {
 
 #[cfg(windows)]
 mod windows {
+    use crate::error::ErrorCode;
     use anyhow::{Result, bail};
     use std::{
         collections::{BTreeMap, HashMap},
