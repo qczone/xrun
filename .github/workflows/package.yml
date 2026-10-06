@@ -123,15 +123,20 @@ jobs:
         if: runner.os != 'Windows'
         shell: bash
         run: |
-          mkdir -p dist/package
-          cp "target/release/${{ matrix.binary }}" LICENSE README.md dist/package/
+          mkdir -p dist/package/docs dist/package/cloudflare
+          cp "target/release/${{ matrix.binary }}" LICENSE README.md install.sh install.ps1 rust-toolchain.toml dist/package/
+          cp docs/*.md dist/package/docs/
+          cp cloudflare/README.md dist/package/cloudflare/
           tar -C dist/package -czf "dist/xrun-${{ matrix.platform }}.tar.gz" .
       - name: Package Windows
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force dist/package | Out-Null
-          Copy-Item "target/release/${{ matrix.binary }}", LICENSE, README.md -Destination dist/package
+          New-Item -ItemType Directory -Force dist/package/cloudflare | Out-Null
+          Copy-Item "target/release/${{ matrix.binary }}", LICENSE, README.md, install.sh, install.ps1, rust-toolchain.toml -Destination dist/package
+          Copy-Item docs -Destination dist/package -Recurse
+          Copy-Item cloudflare/README.md -Destination dist/package/cloudflare
           Compress-Archive -Path dist/package/* -DestinationPath "dist/xrun-${{ matrix.platform }}.zip"
       - name: Test the Unix CLI archive
         if: runner.os != 'Windows'

@@ -4,6 +4,8 @@
 对应一个 Durable Object，保存在线连接与临时配对关系并转发密文。
 成员清单、授权、撤销、任务、日志和文件由端点处理。
 
+设备使用与中转操作见 [使用手册](../docs/usage.md#中转部署)，项目开发和发布说明见 [开发文档](../docs/development.md)。
+
 ## 部署
 
 本机需要 Bun，并已通过 Wrangler 登录 Cloudflare。在项目根目录执行：
