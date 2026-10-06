@@ -55,7 +55,8 @@ async fn submission_rejection_and_uncertainty_keep_distinct_exit_codes() -> Resu
                     }
                 };
                 net::send(&mut ws, &Data::error(&error.context("request handling"))).await?;
-                ws.close(None).await?;
+                // The CLI may have closed already after consuming the error.
+                let _ = ws.close(None).await;
             }
             Ok::<_, anyhow::Error>(())
         };
