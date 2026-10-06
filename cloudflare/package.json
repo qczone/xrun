@@ -6,6 +6,7 @@
     "check": "tsc --noEmit && tsc --project scripts/tsconfig.json",
     "test": "bun scripts/build.ts && bun test",
     "test:interop": "bun scripts/build.ts && bun scripts/interop.ts",
+    "benchmark": "bun scripts/benchmark-relay.ts",
     "deploy": "bun scripts/deploy.ts",
     "remove": "bun scripts/remove.ts"
   },
