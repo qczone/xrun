@@ -1,3 +1,4 @@
+use crate::error::ErrorCode;
 use crate::{
     config::{self, Identity, NetworkIdentity, PendingIdentity},
     crypto, daemon,
@@ -16,10 +17,11 @@ use std::{collections::HashMap, time::Duration};
 
 pub fn authority(id: &Identity) -> Result<&NetworkIdentity> {
     let network = id.network.as_ref().context(
-        "MIGRATION_REQUIRED: stop old services, then create or join an end-to-end network",
+        ErrorCode::MigrationRequired
+            .error("stop old services, then create or join an end-to-end network"),
     )?;
     if network.network_id != format!("net_{}", crypto::ca_spki_pin(&id.ca_pem)?) {
-        bail!("NETWORK_MISMATCH: identity root differs from its network ID")
+        bail!(ErrorCode::NetworkMismatch.error("identity root differs from its network ID"))
     }
     Ok(network)
 }
@@ -30,35 +32,40 @@ pub fn current(id: &Identity) -> Result<SignedRoster> {
     let network = authority(id)?;
     let path = config::device_dir()?.join("roster.db");
     if !path.exists() {
-        bail!("MEMBER_STATE_MISSING: refusing to discard the highest known roster version")
+        bail!(
+            ErrorCode::MemberStateMissing
+                .error("refusing to discard the highest known roster version")
+        )
     }
     let value = RosterCache::open(&path)?.load(&network.network_id)?;
     if value.roster.manager_id != network.manager_id {
-        bail!("IDENTITY_MISMATCH: network manager differs from the identity")
+        bail!(ErrorCode::IdentityMismatch.error("network manager differs from the identity"))
     }
     let self_member = value.member(&id.device_id)?;
     if self_member.key_fp != crypto::peer_identity(&crypto::cert_der(&id.cert_pem)?)?.1 {
-        bail!("IDENTITY_MISMATCH: local key differs from its membership")
+        bail!(ErrorCode::IdentityMismatch.error("local key differs from its membership"))
     }
     if self_member.revoked {
-        bail!("DEVICE_REVOKED: local identity has been revoked")
+        bail!(ErrorCode::DeviceRevoked.error("local identity has been revoked"))
     }
     Ok(value)
 }
 pub fn observe(id: &Identity, value: &SignedRoster) -> Result<()> {
     let network = authority(id)?;
     if value.roster.manager_id != network.manager_id {
-        bail!("IDENTITY_MISMATCH: signed roster names another manager")
+        bail!(ErrorCode::IdentityMismatch.error("signed roster names another manager"))
     }
     match cache()?.observe(&network.network_id, value) {
         Ok(()) => Ok(()),
-        Err(e) if e.to_string().starts_with("ROSTER_ROLLBACK") => Ok(()),
+        Err(e) if crate::error::is(&e, ErrorCode::RosterRollback) => Ok(()),
         Err(e) => Err(e),
     }
 }
 pub async fn receive(ws: &mut Ws) -> Result<RelayMessage> {
     match net::receive::<RelayMessage>(ws).await? {
-        RelayMessage::Error { code, message } => bail!("{code}: {message}"),
+        RelayMessage::Error { code, message } => {
+            bail!(crate::error::CodedError::from_wire(code, message))
+        }
         message => Ok(message),
     }
 }
@@ -83,10 +90,15 @@ async fn open_via(id: &Identity, roster: &SignedRoster, path: &str) -> Result<(W
             }
             Ok(Err(e)) if net::explicit(&e) => return Err(e),
             Ok(Err(e)) => error = Some(e),
-            Err(_) => error = Some(anyhow::anyhow!("CONNECT_TIMEOUT: relay did not respond")),
+            Err(_) => {
+                error = Some(anyhow::anyhow!(
+                    ErrorCode::ConnectTimeout.error("relay did not respond")
+                ))
+            }
         }
     }
-    Err(error.unwrap_or_else(|| anyhow::anyhow!("CONNECT_FAILED: no configured relay")))
+    Err(error
+        .unwrap_or_else(|| anyhow::anyhow!(ErrorCode::ConnectFailed.error("no configured relay"))))
 }
 pub async fn open(id: &Identity, path: &str) -> Result<(Ws, String)> {
     open_via(id, &current(id)?, path).await
@@ -101,7 +113,7 @@ pub async fn authenticate(
     root: Option<&Manager>,
 ) -> Result<()> {
     let RelayMessage::Challenge { nonce } = receive(ws).await? else {
-        bail!("INVALID_MESSAGE: expected a relay challenge")
+        bail!(ErrorCode::InvalidMessage.error("expected a relay challenge"))
     };
     let proof = id
         .map(|id| Proof::create(id, network, path, &nonce, root))
@@ -134,7 +146,7 @@ pub async fn attach(
     );
     let mut ws = open_at(&roster, address, &path).await?;
     let RelayMessage::Connected { flow_control } = receive(&mut ws).await? else {
-        bail!("INVALID_MESSAGE: expected attached tunnel")
+        bail!(ErrorCode::InvalidMessage.error("expected attached tunnel"))
     };
     Ok((ws, flow_control))
 }
@@ -149,7 +161,7 @@ async fn peer_session(
     let (mut outer, address) = open_via(id, via, &path).await?;
     authenticate(&mut outer, Some(id), &network.network_id, &path, None).await?;
     let RelayMessage::Connected { flow_control } = receive(&mut outer).await? else {
-        bail!("INVALID_MESSAGE: expected an encrypted tunnel")
+        bail!(ErrorCode::InvalidMessage.error("expected an encrypted tunnel"))
     };
     let (mut ws, cert) = tokio::time::timeout(
         Duration::from_secs(10),
@@ -169,8 +181,9 @@ async fn peer_session(
     )
     .await??;
     current(id)?;
-    let (_, peer) = x509_parser::parse_x509_certificate(&cert)
-        .map_err(|_| anyhow::anyhow!("INVALID_CERTIFICATE: malformed target certificate"))?;
+    let (_, peer) = x509_parser::parse_x509_certificate(&cert).map_err(|_| {
+        anyhow::anyhow!(ErrorCode::InvalidCertificate.error("malformed target certificate"))
+    })?;
     let expires = peer
         .validity()
         .not_after
@@ -186,7 +199,7 @@ pub async fn session(id: &Identity, target: &str) -> Result<(Ws, String)> {
 pub(crate) async fn session_with_expiry(id: &Identity, target: &str) -> Result<(Ws, String, i64)> {
     let roster = current(id)?;
     if roster.member(target)?.revoked {
-        bail!("DEVICE_REVOKED: target has been revoked")
+        bail!(ErrorCode::DeviceRevoked.error("target has been revoked"))
     }
     peer_session(id, target, &roster, secure::Purpose::Execute).await
 }
@@ -228,17 +241,17 @@ async fn peer_state(id: &Identity, target: &str, via: &SignedRoster) -> Result<P
         let (mut ws, _, _) = peer_session(id, target, via, secure::Purpose::State).await?;
         let value: serde_json::Value = net::receive(&mut ws).await?;
         if let Ok(Data::Error { code, message }) = serde_json::from_value(value.clone()) {
-            bail!("{code}: {message}")
+            bail!(crate::error::CodedError::from_wire(code, message))
         }
         let state: PeerState = serde_json::from_value(value)?;
         if state.device.device_id != target || state.ack.device_id != target {
-            bail!("IDENTITY_MISMATCH: state belongs to another device")
+            bail!(ErrorCode::IdentityMismatch.error("state belongs to another device"))
         }
         state.ack.verify(&current(id)?)?;
         Ok::<_, anyhow::Error>(state)
     })
     .await
-    .context("CONNECT_TIMEOUT: peer state request timed out")?
+    .context(ErrorCode::ConnectTimeout.error("peer state request timed out"))?
 }
 async fn online_ids(id: &Identity, via: &SignedRoster) -> Result<Vec<String>> {
     let network = &authority(id)?.network_id;
@@ -246,10 +259,10 @@ async fn online_ids(id: &Identity, via: &SignedRoster) -> Result<Vec<String>> {
     let (mut ws, _) = open_via(id, via, &path).await?;
     authenticate(&mut ws, Some(id), network, &path, None).await?;
     let RelayMessage::Status { mut devices } = receive(&mut ws).await? else {
-        bail!("INVALID_MESSAGE: expected relay routes")
+        bail!(ErrorCode::InvalidMessage.error("expected relay routes"))
     };
     if devices.len() > 256 {
-        bail!("INVALID_MESSAGE: invalid relay routes")
+        bail!(ErrorCode::InvalidMessage.error("invalid relay routes"))
     }
     devices.retain(|d| crate::membership::device_name(d).is_ok());
     devices.sort();
@@ -277,7 +290,7 @@ async fn states_for(id: &Identity, via: &SignedRoster, ids: Vec<String>) -> Resu
         match answer {
             Ok(state) => states.push(state),
             Err(error)
-                if error.to_string().starts_with("DEVICE_REVOKED")
+                if crate::error::is(&error, ErrorCode::DeviceRevoked)
                     && current.member(&target).is_ok_and(|m| !m.revoked) =>
             {
                 return Err(error);
@@ -325,18 +338,18 @@ pub async fn device(id: &Identity, selector: &str) -> Result<Device> {
     let via = current(id)?;
     let member = via.member(selector)?;
     if member.revoked {
-        bail!("DEVICE_REVOKED: target has been revoked")
+        bail!(ErrorCode::DeviceRevoked.error("target has been revoked"))
     }
     let state = peer_state(id, &member.device_id, &via).await;
     // The peer exchange may have delivered a newer signed roster.
     let roster = current(id)?;
     let member = roster.member(&member.device_id)?;
     if member.revoked {
-        bail!("DEVICE_REVOKED: target has been revoked")
+        bail!(ErrorCode::DeviceRevoked.error("target has been revoked"))
     }
     let info = match state {
         Ok(state) => Some(state.device),
-        Err(error) if error.to_string().starts_with("DEVICE_REVOKED") => return Err(error),
+        Err(error) if crate::error::is(&error, ErrorCode::DeviceRevoked) => return Err(error),
         Err(error) => {
             tracing::debug!(target = %member.device_id, %error, "peer state request unavailable");
             None
@@ -414,19 +427,19 @@ pub async fn refresh_one(id: &Identity, cursor: &mut usize) -> Result<()> {
 pub async fn synchronize(roster: &SignedRoster) -> Result<()> {
     let id = Identity::load()?;
     if authority(&id)?.network_id != roster.roster.network_id {
-        bail!("NETWORK_MISMATCH: local identity differs from the signed roster")
+        bail!(ErrorCode::NetworkMismatch.error("local identity differs from the signed roster"))
     }
     observe(&id, roster)?;
     refresh(&id).await
 }
 pub fn manager(id: &Identity) -> Result<Manager> {
     if authority(id)?.manager_id != id.device_id {
-        bail!("NOT_MANAGER: only the network manager can change membership")
+        bail!(ErrorCode::NotManager.error("only the network manager can change membership"))
     }
     let manager = Manager::open(&config::device_dir()?.join("manager"))?;
     let r = manager.roster()?;
     if r.roster.network_id != authority(id)?.network_id || r.roster.manager_id != id.device_id {
-        bail!("MANAGER_STATE_MISMATCH: authority does not belong to this identity")
+        bail!(ErrorCode::ManagerStateMismatch.error("authority does not belong to this identity"))
     }
     current(id)?.check_successor(&r)?;
     Ok(manager)
@@ -438,7 +451,7 @@ pub fn invitation_link(roster: &SignedRoster, token: &str) -> Result<String> {
         .iter()
         .map(|s| {
             s.strip_prefix("https://")
-                .context("INVALID_RELAY: HTTPS required")
+                .context(ErrorCode::InvalidRelay.error("HTTPS required"))
         })
         .collect::<Result<Vec<_>>>()?
         .join(",");
@@ -502,14 +515,14 @@ struct Invitation {
 fn parse_link(link: &str) -> Result<Invitation> {
     let rest = link
         .strip_prefix("xrun://")
-        .context("INVALID_LINK: expected xrun://")?;
+        .context(ErrorCode::InvalidLink.error("expected xrun://"))?;
     let (rest, token) = rest
         .split_once('#')
-        .context("INVALID_LINK: missing token")?;
+        .context(ErrorCode::InvalidLink.error("missing token"))?;
     let mut parts: Vec<_> = rest.rsplitn(5, '/').collect();
     parts.reverse();
     if parts.len() != 5 {
-        bail!("INVALID_LINK: expected an end-to-end network invitation")
+        bail!(ErrorCode::InvalidLink.error("expected an end-to-end network invitation"))
     }
     let pin_valid = |s: &str, n| {
         s.len() == n
@@ -521,7 +534,7 @@ fn parse_link(link: &str) -> Result<Invitation> {
         || !pin_valid(token, 26)
         || parts[1] != format!("net_{}", parts[3])
     {
-        bail!("INVALID_LINK: malformed network fingerprint or token")
+        bail!(ErrorCode::InvalidLink.error("malformed network fingerprint or token"))
     }
     crate::membership::device_name(parts[2])?;
     let addresses = parts[0]
@@ -532,16 +545,16 @@ fn parse_link(link: &str) -> Result<Invitation> {
             }
             let (host, route) = a
                 .split_once('/')
-                .context("INVALID_LINK: missing relay route")?;
+                .context(ErrorCode::InvalidLink.error("missing relay route"))?;
             crate::client::validate_address(host)?;
             if !crate::relay::valid_route(route) {
-                bail!("INVALID_LINK: invalid relay route")
+                bail!(ErrorCode::InvalidLink.error("invalid relay route"))
             }
             Ok(format!("https://{a}"))
         })
         .collect::<Result<Vec<_>>>()?;
     if addresses.is_empty() || addresses.len() > 8 {
-        bail!("INVALID_LINK: invalid relay address count")
+        bail!(ErrorCode::InvalidLink.error("invalid relay address count"))
     }
     Ok(Invitation {
         addresses,
@@ -563,7 +576,7 @@ async fn pairing_at(
     let mut outer = net::websocket_at(address, &path, crypto::relay_tls_config(relay_ca)?).await?;
     authenticate(&mut outer, None, network, &path, None).await?;
     let RelayMessage::Connected { flow_control } = receive(&mut outer).await? else {
-        bail!("INVALID_MESSAGE: expected pairing tunnel")
+        bail!(ErrorCode::InvalidMessage.error("expected pairing tunnel"))
     };
     secure::pairing_client_with_flow(outer, root_pin, manager, flow_control).await
 }
@@ -578,11 +591,11 @@ fn validate_pair(
     if pair.roster.roster.manager_id != manager
         || crypto::ca_spki_pin(&pair.roster.ca_pem)? != root_pin
     {
-        bail!("IDENTITY_MISMATCH: pairing returned another authority")
+        bail!(ErrorCode::IdentityMismatch.error("pairing returned another authority"))
     }
     let fp = crypto::csr_key(&crypto::renew_device_request(key)?)?;
     if pair.member.key_fp != fp || pair.member != *pair.roster.member(&pair.member.device_id)? {
-        bail!("IDENTITY_MISMATCH: pairing returned another member key")
+        bail!(ErrorCode::IdentityMismatch.error("pairing returned another member key"))
     }
     crypto::verify_member_certificate(&pair.cert_pem, &pair.roster.ca_pem, &pair.member.device_id)?;
     pair.roster.peer(
@@ -604,7 +617,7 @@ pub async fn join(link: &str, name: String) -> Result<Identity> {
         && old.network.is_some()
     {
         if authority(old)?.network_id != invite.network {
-            bail!("NETWORK_MISMATCH: already joined to another network")
+            bail!(ErrorCode::NetworkMismatch.error("already joined to another network"))
         }
         current(old)?;
     }
@@ -621,7 +634,7 @@ pub async fn join(link: &str, name: String) -> Result<Identity> {
     } else if pending_path.exists() {
         let p: PendingIdentity = config::read(&pending_path)?;
         if p.pin != invite.root_pin {
-            bail!("NETWORK_MISMATCH: pending pairing belongs to another network")
+            bail!(ErrorCode::NetworkMismatch.error("pending pairing belongs to another network"))
         };
         p.key_pem
     } else {
@@ -659,7 +672,7 @@ pub async fn join(link: &str, name: String) -> Result<Identity> {
             .await?;
             let value: serde_json::Value = net::receive(&mut ws).await?;
             if let Ok(Data::Error { code, message }) = serde_json::from_value(value.clone()) {
-                bail!("{code}: {message}")
+                bail!(crate::error::CodedError::from_wire(code, message))
             }
             let pair: Pairing = serde_json::from_value(value)?;
             validate_pair(
@@ -673,7 +686,7 @@ pub async fn join(link: &str, name: String) -> Result<Identity> {
                 && old.network.is_some()
                 && old.device_id != pair.member.device_id
             {
-                bail!("IDENTITY_MISMATCH: pairing changed existing identity")
+                bail!(ErrorCode::IdentityMismatch.error("pairing changed existing identity"))
             }
             let id = Identity {
                 device_id: pair.member.device_id,
@@ -714,7 +727,7 @@ pub async fn join(link: &str, name: String) -> Result<Identity> {
         .await
         .unwrap_or_else(|_| {
             Err(anyhow::anyhow!(
-                "PAIRING_TIMEOUT: retry using the same invitation and pending key"
+                ErrorCode::PairingTimeout.error("retry using the same invitation and pending key")
             ))
         });
         match result {
@@ -723,7 +736,9 @@ pub async fn join(link: &str, name: String) -> Result<Identity> {
             Err(e) => error = Some(e),
         }
     }
-    Err(error.unwrap_or_else(|| anyhow::anyhow!("CONNECT_FAILED: no relay is reachable")))
+    Err(error.unwrap_or_else(|| {
+        anyhow::anyhow!(ErrorCode::ConnectFailed.error("no relay is reachable"))
+    }))
 }
 fn archive_legacy(dir: &std::path::Path) -> Result<()> {
     let old = std::fs::read(dir.join("identity.toml"))?;
@@ -777,7 +792,7 @@ pub async fn renew(id: &mut Identity) -> Result<()> {
                     let value: serde_json::Value = net::receive(&mut ws).await?;
                     if let Ok(Data::Error { code, message }) = serde_json::from_value(value.clone())
                     {
-                        bail!("{code}: {message}")
+                        bail!(crate::error::CodedError::from_wire(code, message))
                     }
                     let pair: Pairing = serde_json::from_value(value)?;
                     validate_pair(
@@ -792,7 +807,7 @@ pub async fn renew(id: &mut Identity) -> Result<()> {
                 .await
                 .unwrap_or_else(|_| {
                     Err(anyhow::anyhow!(
-                        "RENEW_TIMEOUT: manager did not complete renewal"
+                        ErrorCode::RenewTimeout.error("manager did not complete renewal")
                     ))
                 });
                 match attempt {
@@ -804,11 +819,13 @@ pub async fn renew(id: &mut Identity) -> Result<()> {
                 }
             }
             answer.ok_or_else(|| {
-                error.unwrap_or_else(|| anyhow::anyhow!("MANAGER_OFFLINE: manager is unavailable"))
+                error.unwrap_or_else(|| {
+                    anyhow::anyhow!(ErrorCode::ManagerOffline.error("manager is unavailable"))
+                })
             })?
         };
         if pair.member.device_id != id.device_id {
-            bail!("IDENTITY_MISMATCH: renewal changed the device ID")
+            bail!(ErrorCode::IdentityMismatch.error("renewal changed the device ID"))
         }
         observe(id, &pair.roster)?;
         id.cert_pem = pair.cert_pem;
@@ -822,7 +839,9 @@ pub async fn renew(id: &mut Identity) -> Result<()> {
             tracing::warn!(error=%e,"certificate renewal unavailable; using the still-valid member certificate");
             Ok(())
         }
-        Err(e) => Err(e.context("CERTIFICATE_EXPIRED: renewal requires the manager")),
+        Err(e) => {
+            Err(e.context(ErrorCode::CertificateExpired.error("renewal requires the manager")))
+        }
     }
 }
 struct RelayEndpoint {
@@ -854,29 +873,34 @@ fn endpoint(link: &str) -> Result<RelayEndpoint> {
             || !crate::relay::valid_route(url.path().trim_start_matches('/'))
             || url.path().matches('/').count() != 1
         {
-            bail!("INVALID_RELAY: expected a complete HTTPS relay address with its random route")
+            bail!(
+                ErrorCode::InvalidRelay
+                    .error("expected a complete HTTPS relay address with its random route")
+            )
         }
         return Ok(RelayEndpoint {
             addresses: vec![url.into()],
             pin: "webpki".into(),
         });
     }
-    let value = link.strip_prefix("xrun-relay://").context(
-        "INVALID_RELAY: use the HTTPS address or deployment link printed by the relay deployment",
-    )?;
+    let value =
+        link.strip_prefix("xrun-relay://")
+            .context(ErrorCode::InvalidRelay.error(
+                "use the HTTPS address or deployment link printed by the relay deployment",
+            ))?;
     let (value, route) = value
         .split_once('#')
-        .context("INVALID_RELAY: missing relay route")?;
+        .context(ErrorCode::InvalidRelay.error("missing relay route"))?;
     let (addresses, pin) = value
         .split_once('/')
-        .context("INVALID_RELAY: missing transport fingerprint")?;
+        .context(ErrorCode::InvalidRelay.error("missing transport fingerprint"))?;
     let valid = |s: &str, n| {
         s.len() == n
             && s.bytes()
                 .all(|b| b.is_ascii_lowercase() || matches!(b, b'2'..=b'7'))
     };
     if !valid(pin, 52) || !crate::relay::valid_route(route) {
-        bail!("INVALID_RELAY: malformed fingerprint or relay route")
+        bail!(ErrorCode::InvalidRelay.error("malformed fingerprint or relay route"))
     }
     let addresses = addresses
         .split(',')
@@ -886,7 +910,7 @@ fn endpoint(link: &str) -> Result<RelayEndpoint> {
         })
         .collect::<Result<Vec<_>>>()?;
     if addresses.is_empty() || addresses.len() > 8 {
-        bail!("INVALID_RELAY: invalid address count")
+        bail!(ErrorCode::InvalidRelay.error("invalid address count"))
     }
     Ok(RelayEndpoint {
         addresses,
@@ -908,7 +932,7 @@ pub async fn create(relay_link: &str, name: Option<String>) -> Result<Identity> 
             .await?;
             // A challenge proves the random route; there is no member yet.
             if !matches!(receive(&mut ws).await?, RelayMessage::Challenge { .. }) {
-                bail!("INVALID_MESSAGE: expected a relay challenge")
+                bail!(ErrorCode::InvalidMessage.error("expected a relay challenge"))
             }
             Ok::<_, anyhow::Error>(ca)
         })
@@ -919,11 +943,17 @@ pub async fn create(relay_link: &str, name: Option<String>) -> Result<Identity> 
                 break;
             }
             Ok(Err(e)) => error = Some(e),
-            Err(_) => error = Some(anyhow::anyhow!("CONNECT_TIMEOUT: relay did not respond")),
+            Err(_) => {
+                error = Some(anyhow::anyhow!(
+                    ErrorCode::ConnectTimeout.error("relay did not respond")
+                ))
+            }
         }
     }
     let relay_ca = root.ok_or_else(|| {
-        error.unwrap_or_else(|| anyhow::anyhow!("CONNECT_FAILED: relay is unavailable"))
+        error.unwrap_or_else(|| {
+            anyhow::anyhow!(ErrorCode::ConnectFailed.error("relay is unavailable"))
+        })
     })?;
     let _lock = daemon::instance_lock()?;
     let dir = config::device_dir()?;
@@ -934,7 +964,7 @@ pub async fn create(relay_link: &str, name: Option<String>) -> Result<Identity> 
     };
     if let Some(old) = existing.as_ref().filter(|i| i.network.is_some()) {
         if name.as_ref().is_some_and(|name| name != &old.name) {
-            bail!("INVALID_REQUEST: device names are immutable within a network")
+            bail!(ErrorCode::InvalidRequest.error("device names are immutable within a network"))
         }
         let manager = manager(old)?;
         let before = manager.roster()?;
@@ -968,22 +998,31 @@ pub async fn create(relay_link: &str, name: Option<String>) -> Result<Identity> 
         // Resume only an interrupted initial creation, never restore an older
         // authority over a network that has already admitted other members.
         if roster.roster.version != 1 || roster.roster.members.len() != 1 {
-            bail!("MANAGER_STATE_EXISTS: no matching local identity; refusing authority recovery")
+            bail!(
+                ErrorCode::ManagerStateExists
+                    .error("no matching local identity; refusing authority recovery")
+            )
         }
         let key = std::fs::read_to_string(manager_dir.join("device.key.pending"))
-            .context("MANAGER_STATE_MISSING: initial device key is missing")?;
+            .context(ErrorCode::ManagerStateMissing.error("initial device key is missing"))?;
         let cert = std::fs::read_to_string(manager_dir.join("device.pem.pending"))?;
         let member = roster.member(&roster.roster.manager_id)?.clone();
         if member.key_fp != crypto::csr_key(&crypto::renew_device_request(&key)?)?
             || member.key_fp != crypto::peer_identity(&crypto::cert_der(&cert)?)?.1
         {
-            bail!("MANAGER_STATE_MISMATCH: initial identity differs from the authority")
+            bail!(
+                ErrorCode::ManagerStateMismatch
+                    .error("initial identity differs from the authority")
+            )
         }
         if member.name != name
             || roster.roster.relay_addresses != endpoint.addresses
             || relay_pin(&roster.roster.relay_ca_pem)? != endpoint.pin
         {
-            bail!("MANAGER_STATE_MISMATCH: retry initial creation with the same name and relay")
+            bail!(
+                ErrorCode::ManagerStateMismatch
+                    .error("retry initial creation with the same name and relay")
+            )
         }
         (manager, member, key, cert)
     } else {
@@ -1022,7 +1061,7 @@ pub async fn serve_pair(id: &Identity, ws: &mut Ws) -> Result<()> {
     let request: PairRequest =
         tokio::time::timeout(Duration::from_secs(10), net::receive(ws)).await??;
     if request.version != VERSION {
-        bail!("VERSION_MISMATCH: pairing peer release differs")
+        bail!(ErrorCode::VersionMismatch.error("pairing peer release differs"))
     }
     let pair = manager.pair(
         &request.token,
@@ -1069,14 +1108,14 @@ pub async fn http<T: DeserializeOwned>(
                 id,
                 body.as_ref()
                     .and_then(|v| v["device"].as_str())
-                    .context("INVALID_REQUEST: missing device")?,
+                    .context(ErrorCode::InvalidRequest.error("missing device"))?,
             )
             .await?
         }
         (reqwest::Method::GET, path) if path.starts_with("/devices/") => {
             serde_json::to_value(device(id, &path[9..]).await?)?
         }
-        _ => bail!("INVALID_REQUEST: unsupported network operation"),
+        _ => bail!(ErrorCode::InvalidRequest.error("unsupported network operation")),
     };
     Ok(serde_json::from_value(value)?)
 }

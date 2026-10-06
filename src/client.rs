@@ -1,3 +1,4 @@
+use crate::error::ErrorCode;
 use crate::{
     config::{self, Identity, ServerConfig},
     daemon, net,
@@ -131,7 +132,9 @@ pub async fn set_permission(value: &str, allow: bool) -> Result<Permission> {
     let id = Identity::load()?;
     let device_id = if let Some(key) = value.strip_prefix("dev_") {
         if key.len() != 32 || !key.bytes().all(|b| b.is_ascii_hexdigit()) {
-            bail!("INVALID_DEVICE_ID: expected dev_ followed by 32 hexadecimal digits");
+            bail!(
+                ErrorCode::InvalidDeviceId.error("expected dev_ followed by 32 hexadecimal digits")
+            );
         }
         value.to_string()
     } else {
@@ -153,9 +156,9 @@ pub async fn set_permission(value: &str, allow: bool) -> Result<Permission> {
 pub(crate) fn validate_address(address: &str) -> Result<()> {
     let (_, port) = address
         .rsplit_once(':')
-        .context("INVALID_ADDRESS: an explicit port is required")?;
+        .context(ErrorCode::InvalidAddress.error("an explicit port is required"))?;
     if port.parse::<u16>().ok().is_none_or(|p| p == 0) {
-        bail!("INVALID_ADDRESS: invalid port")
+        bail!(ErrorCode::InvalidAddress.error("invalid port"))
     }
     let url = url::Url::parse(&format!("https://{address}"))?;
     if url.host_str().is_none()
@@ -166,7 +169,7 @@ pub(crate) fn validate_address(address: &str) -> Result<()> {
         || url.fragment().is_some()
         || matches!(url.host(), Some(url::Host::Ipv6(_)))
     {
-        bail!("INVALID_ADDRESS: expected IPv4 or hostname followed by :port")
+        bail!(ErrorCode::InvalidAddress.error("expected IPv4 or hostname followed by :port"))
     };
     Ok(())
 }

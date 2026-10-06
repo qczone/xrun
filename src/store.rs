@@ -1,3 +1,4 @@
+use crate::error::ErrorCode;
 use crate::{config::restrict_dir, protocol::*};
 use anyhow::{Context, Result, bail};
 use base64::{Engine, engine::general_purpose::STANDARD};
@@ -7,10 +8,10 @@ use std::{path::Path, sync::Mutex};
 
 fn open(path: &Path, create: bool) -> Result<Connection> {
     if !create && !path.exists() {
-        bail!(
-            "DB_MISSING: {} (use daemon reset while stopped)",
+        bail!(ErrorCode::DbMissing.error(format!(
+            "{} (use daemon reset while stopped)",
             path.display()
-        )
+        )))
     }
     let parent = path.parent().context("missing database parent")?;
     std::fs::create_dir_all(parent)?;
@@ -21,7 +22,7 @@ fn open(path: &Path, create: bool) -> Result<Connection> {
     db.busy_timeout(std::time::Duration::from_secs(5))?;
     let integrity: String = db.query_row("PRAGMA quick_check", [], |r| r.get(0))?;
     if integrity != "ok" {
-        bail!("DB_CORRUPT: {integrity}")
+        bail!(ErrorCode::DbCorrupt.error(integrity.to_string()))
     }
     #[cfg(unix)]
     {
@@ -54,7 +55,7 @@ impl TaskStore {
                 db.execute("INSERT INTO meta VALUES('db_id',?1)", [&id])?;
                 id
             }
-            None => bail!("DB_CORRUPT: missing db_id"),
+            None => bail!(ErrorCode::DbCorrupt.error("missing db_id")),
         };
         Ok(Self {
             db: Mutex::new(db),

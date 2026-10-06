@@ -1,3 +1,4 @@
+use crate::error::ErrorCode;
 use crate::{
     config::{Identity, ServerConfig},
     crypto,
@@ -71,23 +72,29 @@ impl Proof {
     /// Returns whether the proof also holds the network root key.
     pub fn verify(&self, network: &str, path: &str, nonce: &str) -> Result<bool> {
         if network != format!("net_{}", crypto::ca_spki_pin(&self.root_pem)?) {
-            bail!("UNAUTHENTICATED: proof belongs to another network")
+            bail!(ErrorCode::Unauthenticated.error("proof belongs to another network"))
         }
         crypto::verify_member_certificate(&self.cert_pem, &self.root_pem, &self.device_id)
-            .map_err(|e| anyhow::anyhow!("UNAUTHENTICATED: invalid member certificate: {e}"))?;
+            .map_err(|e| {
+                anyhow::anyhow!(
+                    ErrorCode::Unauthenticated.error(format!("invalid member certificate: {e}"))
+                )
+            })?;
         let binding = ChallengeBinding {
             network,
             device: &self.device_id,
             path,
             nonce,
         };
-        membership::verify(&self.cert_pem, "relay-proof", &binding, &self.signature)
-            .map_err(|_| anyhow::anyhow!("UNAUTHENTICATED: invalid member proof"))?;
+        membership::verify(&self.cert_pem, "relay-proof", &binding, &self.signature).map_err(
+            |_| anyhow::anyhow!(ErrorCode::Unauthenticated.error("invalid member proof")),
+        )?;
         let Some(signature) = &self.manager_signature else {
             return Ok(false);
         };
-        membership::verify(&self.root_pem, "relay-manager", &binding, signature)
-            .map_err(|_| anyhow::anyhow!("UNAUTHENTICATED: invalid manager proof"))?;
+        membership::verify(&self.root_pem, "relay-manager", &binding, signature).map_err(|_| {
+            anyhow::anyhow!(ErrorCode::Unauthenticated.error("invalid manager proof"))
+        })?;
         Ok(true)
     }
 }
@@ -135,7 +142,7 @@ impl RelayMessage {
 async fn send(ws: &mut WebSocket, message: &RelayMessage) -> Result<()> {
     let text = serde_json::to_string(message)?;
     if text.len() > MAX_MESSAGE {
-        bail!("MESSAGE_TOO_LARGE: relay message limit exceeded")
+        bail!(ErrorCode::MessageTooLarge.error("relay message limit exceeded"))
     }
     tokio::time::timeout(Duration::from_secs(10), ws.send(Message::Text(text.into()))).await??;
     Ok(())
@@ -145,18 +152,18 @@ async fn receive(ws: &mut WebSocket) -> Result<RelayMessage> {
         match ws
             .next()
             .await
-            .context("CONNECTION_CLOSED: relay socket closed")??
+            .context(ErrorCode::ConnectionClosed.error("relay socket closed"))??
         {
             Message::Text(text) => return Ok(serde_json::from_str(&text)?),
             Message::Ping(bytes) => ws.send(Message::Pong(bytes)).await?,
             Message::Pong(_) => {}
-            _ => bail!("INVALID_MESSAGE: expected relay message"),
+            _ => bail!(ErrorCode::InvalidMessage.error("expected relay message")),
         }
     }
 }
 fn version(headers: &HeaderMap) -> Result<()> {
     if headers.get("x-xrun-version").and_then(|v| v.to_str().ok()) != Some(VERSION) {
-        bail!("VERSION_MISMATCH: all components must run {VERSION}")
+        bail!(ErrorCode::VersionMismatch.error(format!("all components must run {VERSION}")))
     }
     Ok(())
 }
@@ -207,7 +214,7 @@ async fn authenticate(
     let RelayMessage::Authenticate { proof } =
         tokio::time::timeout(Duration::from_secs(5), receive(ws)).await??
     else {
-        bail!("UNAUTHENTICATED: expected a member proof")
+        bail!(ErrorCode::Unauthenticated.error("expected a member proof"))
     };
     let Some(proof) = proof else {
         return Ok(None);
@@ -224,7 +231,7 @@ async fn member(
 ) -> Result<(String, bool)> {
     authenticate(ws, network, path, permit)
         .await?
-        .context("UNAUTHENTICATED: member proof required")
+        .context(ErrorCode::Unauthenticated.error("member proof required"))
 }
 #[derive(Default)]
 struct Connections {
@@ -307,7 +314,7 @@ async fn control(
             && (c.controls.len() >= 4096
                 || c.controls.keys().filter(|(n, _)| n == network).count() >= 256)
         {
-            bail!("CONNECTION_LIMIT: too many control connections")
+            bail!(ErrorCode::ConnectionLimit.error("too many control connections"))
         }
         if let Some(old) = c.controls.insert(
             key.clone(),
@@ -334,20 +341,20 @@ async fn control(
             tokio::select! {
                 _ = closed.changed() => return Ok(()),
                 _ = tick.tick() => {
-                    if last.elapsed() > Duration::from_secs(45) { bail!("CONTROL_TIMEOUT: endpoint stopped responding") }
+                    if last.elapsed() > Duration::from_secs(45) { bail!(ErrorCode::ControlTimeout.error("endpoint stopped responding")) }
                     tokio::time::timeout(Duration::from_secs(10), ws.send(Message::Ping(vec![].into()))).await??;
                 },
-                message = rx.recv() => send(ws, &message.context("CONNECTION_CLOSED: control sender stopped")?).await?,
-                message = ws.next() => match message.context("CONNECTION_CLOSED: control socket closed")?? {
+                message = rx.recv() => send(ws, &message.context(ErrorCode::ConnectionClosed.error("control sender stopped"))?).await?,
+                message = ws.next() => match message.context(ErrorCode::ConnectionClosed.error("control socket closed"))?? {
                     Message::Ping(bytes) => { last = Instant::now(); ws.send(Message::Pong(bytes)).await?; },
                     Message::Pong(_) => last = Instant::now(),
                     Message::Text(text) => {
                         last = Instant::now();
-                        let RelayMessage::Reject { session_id, error } = serde_json::from_str(&text)? else { bail!("INVALID_MESSAGE: unexpected control message") };
+                        let RelayMessage::Reject { session_id, error } = serde_json::from_str(&text)? else { bail!(ErrorCode::InvalidMessage.error("unexpected control message")) };
                         let mut c = app.connections.lock().await;
                         if let Some(s) = c.sessions.get_mut(&session_id) && s.network == network && s.target == id && s.generation == generation && let Some(sender) = s.claim.take() { let _ = sender.send(Err(*error)); }
                     },
-                    _ => bail!("CONNECTION_CLOSED: control socket closed"),
+                    _ => bail!(ErrorCode::ConnectionClosed.error("control socket closed")),
                 }
             }
         }
@@ -410,16 +417,16 @@ async fn source(
                     .count()
                     >= 4)
         {
-            bail!("SESSION_LIMIT: too many concurrent relay sessions")
+            bail!(ErrorCode::SessionLimit.error("too many concurrent relay sessions"))
         }
         let control = c
             .controls
             .get(&(network.into(), target.into()))
-            .context("DEVICE_OFFLINE: target is offline")?;
+            .context(ErrorCode::DeviceOffline.error("target is offline"))?;
         // Joining and renewal clients have no usable member certificate; they
         // may only reach the device that proved it holds the network root key.
         if anonymous && !control.manager {
-            bail!("UNAUTHENTICATED: member proof required")
+            bail!(ErrorCode::Unauthenticated.error("member proof required"))
         }
         let generation = control.generation.clone();
         control
@@ -427,7 +434,7 @@ async fn source(
             .try_send(RelayMessage::Incoming {
                 session_id: sid.clone(),
             })
-            .context("DEVICE_BUSY: control queue is full")?;
+            .context(ErrorCode::DeviceBusy.error("control queue is full"))?;
         c.sessions.insert(
             sid.clone(),
             Session {
@@ -443,9 +450,9 @@ async fn source(
     }
     let result = async {
         let mut target = tokio::select! {
-            value = tokio::time::timeout(Duration::from_secs(10), rx) => match value?? { Ok(ws) => ws, Err(Data::Error { code, message }) => bail!("{code}: {message}"), _ => bail!("INVALID_MESSAGE: invalid session rejection") },
-            _ = closed.changed() => bail!("CONNECTION_CLOSED: session was cancelled"),
-            _ = ws.next() => bail!("CONNECTION_CLOSED: source disconnected before session establishment"),
+            value = tokio::time::timeout(Duration::from_secs(10), rx) => match value?? { Ok(ws) => ws, Err(Data::Error { code, message }) => bail!(crate::error::CodedError::from_wire(code, message)), _ => bail!(ErrorCode::InvalidMessage.error("invalid session rejection")) },
+            _ = closed.changed() => bail!(ErrorCode::ConnectionClosed.error("session was cancelled")),
+            _ = ws.next() => bail!(ErrorCode::ConnectionClosed.error("source disconnected before session establishment")),
         };
         send(ws, &RelayMessage::Connected { flow_control: false }).await?;
         let result = bridge(ws, &mut target, &mut closed).await;
@@ -475,24 +482,23 @@ async fn attach_route(
                     let control = c
                         .controls
                         .get(&(network.clone(), target.clone()))
-                        .context("INVALID_SESSION: target control is missing")?;
+                        .context(ErrorCode::InvalidSession.error("target control is missing"))?;
                     if control.generation != generation {
-                        bail!("INVALID_SESSION: control binding mismatch")
+                        bail!(ErrorCode::InvalidSession.error("control binding mismatch"))
                     }
-                    let s = c
-                        .sessions
-                        .get_mut(&sid)
-                        .context("INVALID_SESSION: session is missing or expired")?;
+                    let s = c.sessions.get_mut(&sid).context(
+                        ErrorCode::InvalidSession.error("session is missing or expired"),
+                    )?;
                     if s.network != network
                         || s.target != target
                         || s.generation != generation
                         || *s.cancel.borrow()
                     {
-                        bail!("INVALID_SESSION: session binding mismatch")
+                        bail!(ErrorCode::InvalidSession.error("session binding mismatch"))
                     }
                     s.claim
                         .take()
-                        .context("INVALID_SESSION: session was already claimed")?
+                        .context(ErrorCode::InvalidSession.error("session was already claimed"))?
                 };
                 permit.authenticated();
                 send(
@@ -502,9 +508,9 @@ async fn attach_route(
                     },
                 )
                 .await?;
-                sender
-                    .send(Ok(ws))
-                    .map_err(|_| anyhow::anyhow!("CONNECTION_CLOSED: source disappeared"))?;
+                sender.send(Ok(ws)).map_err(|_| {
+                    anyhow::anyhow!(ErrorCode::ConnectionClosed.error("source disappeared"))
+                })?;
                 Ok::<_, anyhow::Error>(())
             }
             .await;
@@ -534,12 +540,14 @@ where
     loop {
         let message = tokio::time::timeout(Duration::from_secs(300), reader.next())
             .await?
-            .context("CONNECTION_CLOSED: ciphertext stream ended")??;
+            .context(ErrorCode::ConnectionClosed.error("ciphertext stream ended"))??;
         match &message {
             Message::Binary(bytes) if bytes.len() <= FILE_CHUNK => {}
             Message::Ping(_) | Message::Pong(_) => {}
             Message::Close(_) => return Ok(()),
-            _ => bail!("INVALID_MESSAGE: relay only accepts encrypted binary frames"),
+            _ => {
+                bail!(ErrorCode::InvalidMessage.error("relay only accepts encrypted binary frames"))
+            }
         }
         tokio::time::timeout(Duration::from_secs(300), writer.send(message)).await??;
     }
@@ -586,7 +594,7 @@ fn route(config: &ServerConfig) -> Result<String> {
     let path = config.data_dir.join("route");
     match std::fs::read_to_string(&path) {
         Ok(value) if valid_route(&value) => Ok(value),
-        Ok(_) => bail!("INVALID_RELAY: invalid local relay route"),
+        Ok(_) => bail!(ErrorCode::InvalidRelay.error("invalid local relay route")),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
             let value = crypto::random_token();
             crate::config::atomic_private_write(&path, value.as_bytes())?;

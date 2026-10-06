@@ -1,3 +1,4 @@
+use crate::error::ErrorCode;
 use crate::{
     config::{Identity, ServerConfig, atomic_private_write, restrict_dir},
     protocol::*,
@@ -85,7 +86,7 @@ pub fn peer_identity(der: &[u8]) -> Result<(String, String)> {
 pub fn csr_key(csr: &[u8]) -> Result<String> {
     CertificateSigningRequestParams::from_der(&csr.into())?; // verifies proof of possession
     let (_, csr) = x509_parser::certification_request::X509CertificationRequest::from_der(csr)
-        .map_err(|e| anyhow::anyhow!("INVALID_CSR: {e}"))?;
+        .map_err(|e| anyhow::anyhow!(ErrorCode::InvalidCsr.error(format!("{e}"))))?;
     Ok(sha256(csr.certification_request_info.subject_pki.raw))
 }
 use x509_parser::prelude::FromDer;
@@ -116,7 +117,7 @@ pub fn load_or_create_server(config: &ServerConfig) -> Result<ServerKeys> {
     let names = ["ca.pem", "ca.key", "server.pem", "server.key"];
     let count = names.iter().filter(|n| dir.join(n).exists()).count();
     if count != 0 && count != 4 {
-        bail!("TLS_IDENTITY_INCOMPLETE: refusing to replace deployment CA")
+        bail!(ErrorCode::TlsIdentityIncomplete.error("refusing to replace deployment CA"))
     }
     if count == 0 {
         let key = KeyPair::generate()?;
@@ -134,7 +135,7 @@ pub fn load_or_create_server(config: &ServerConfig) -> Result<ServerKeys> {
     let ca_key_pem = std::fs::read_to_string(dir.join("ca.key"))?;
     let ca_expiry = expiry(&ca_pem)?;
     if ca_expiry <= OffsetDateTime::now_utc() {
-        bail!("CA_EXPIRED: deployment must be recreated")
+        bail!(ErrorCode::CaExpired.error("deployment must be recreated"))
     }
     let ca_key = KeyPair::from_pem(&ca_key_pem)?;
     let issuer = Issuer::from_ca_cert_pem(&ca_pem, &ca_key)?;

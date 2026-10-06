@@ -1,5 +1,6 @@
 //! Local daemon state and generation-bound graceful shutdown through private IPC.
 use crate::config;
+use crate::error::ErrorCode;
 use anyhow::{Result, bail};
 use serde::{Deserialize, Serialize};
 use std::{
@@ -44,7 +45,7 @@ impl Control {
     }
     pub(crate) fn check_generation(&self, generation: &str) -> Result<()> {
         if self.value.lock().unwrap().generation != generation {
-            bail!("DAEMON_CHANGED: stop request belongs to an earlier daemon");
+            bail!(ErrorCode::DaemonChanged.error("stop request belongs to an earlier daemon"));
         }
         Ok(())
     }
@@ -81,7 +82,8 @@ pub fn state(dir: &Path) -> Result<Option<State>> {
 pub async fn request_shutdown(dir: &Path) -> Result<()> {
     let Some(state) = state(dir)? else {
         bail!(
-            "DAEMON_UPGRADE_REQUIRED: restart the daemon with the current xrun before stopping it from the app"
+            ErrorCode::DaemonUpgradeRequired
+                .error("restart the daemon with the current xrun before stopping it from the app")
         )
     };
     if dir.join("daemon-ipc.json").exists() {

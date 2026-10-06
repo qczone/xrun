@@ -1,3 +1,4 @@
+use crate::error::ErrorCode;
 use crate::{
     config::{self, Identity, ServerConfig},
     crypto, daemon,
@@ -271,7 +272,7 @@ fn diagnostic(json: bool, error: &anyhow::Error) {
 }
 fn require_linux() -> Result<()> {
     if !cfg!(target_os = "linux") {
-        bail!("UNSUPPORTED_PLATFORM: Server deployment requires Linux")
+        bail!(ErrorCode::UnsupportedPlatform.error("Server deployment requires Linux"))
     }
     Ok(())
 }
@@ -398,7 +399,10 @@ async fn local(cli: LocalCli) -> Result<i32> {
             )
             .await?;
             if value["allow"].as_bool() != Some(allow) {
-                bail!("VERSION_MISMATCH: invitation policy differs; upgrade all components")
+                bail!(
+                    ErrorCode::VersionMismatch
+                        .error("invitation policy differs; upgrade all components")
+                )
             }
             print(json, &value, || {
                 println!("{}", value["link"].as_str().unwrap_or_default())
@@ -466,7 +470,10 @@ async fn local(cli: LocalCli) -> Result<i32> {
             }
             if purge {
                 if !std::io::stdin().is_terminal() {
-                    bail!("INTERACTIVE_REQUIRED: --purge requires terminal confirmation")
+                    bail!(
+                        ErrorCode::InteractiveRequired
+                            .error("--purge requires terminal confirmation")
+                    )
                 };
                 eprint!("Delete all local xrun identity, CA, jobs and logs? Type purge: ");
                 std::io::stderr().flush()?;
@@ -591,7 +598,7 @@ async fn permission(args: PermissionArgs, allow: bool, json: bool) -> Result<()>
     let value = args
         .device
         .as_deref()
-        .context("INVALID_REQUEST: device required")?;
+        .context(ErrorCode::InvalidRequest.error("device required"))?;
     let result = crate::client::set_permission(value, allow).await?;
     print(json, &result, || {
         println!(
@@ -655,7 +662,7 @@ async fn detect_addresses(port: u16, no_detect: bool) -> Result<Vec<String>> {
     addresses.sort();
     addresses.dedup();
     if addresses.is_empty() {
-        bail!("NO_ADDRESS: provide --addr <host>:<port>")
+        bail!(ErrorCode::NoAddress.error("provide --addr <host>:<port>"))
     }
     Ok(addresses)
 }
@@ -688,7 +695,7 @@ async fn relay_install(
         cfg.port = port;
     }
     if cfg.port == 0 {
-        bail!("INVALID_PORT: port must be 1..65535")
+        bail!(ErrorCode::InvalidPort.error("port must be 1..65535"))
     }
     if !addresses.is_empty() {
         for address in &addresses {
@@ -761,7 +768,7 @@ async fn session(id: &Identity, target: &str) -> Result<Session> {
 }
 async fn response(ws: &mut Ws) -> Result<Data> {
     match net::receive::<Data>(ws).await? {
-        Data::Error { code, message } => bail!("{code}: {message}"),
+        Data::Error { code, message } => bail!(crate::error::CodedError::from_wire(code, message)),
         value => Ok(value),
     }
 }
@@ -778,7 +785,7 @@ fn job_ref(job: &Job) -> String {
 fn parse_job(value: &str, target: &str, name: &str) -> Result<String> {
     let id = if let Some((device, id)) = value.split_once('/') {
         if device != target && device != name {
-            bail!("INVALID_JOB_REF: job belongs to another device")
+            bail!(ErrorCode::InvalidJobRef.error("job belongs to another device"))
         }
         id
     } else {
@@ -790,7 +797,7 @@ fn parse_job(value: &str, target: &str, name: &str) -> Result<String> {
             .bytes()
             .all(|b| b"0123456789ABCDEFGHJKMNPQRSTVWXYZ".contains(&b))
     {
-        bail!("INVALID_JOB_REF: expected a six-character job ID")
+        bail!(ErrorCode::InvalidJobRef.error("expected a six-character job ID"))
     };
     Ok(id)
 }
@@ -823,7 +830,7 @@ fn read_input(max: u64) -> Result<Vec<u8>> {
     let mut bytes = vec![];
     std::io::stdin().take(max + 1).read_to_end(&mut bytes)?;
     if bytes.len() as u64 > max {
-        bail!("INPUT_TOO_LARGE: maximum {max} bytes")
+        bail!(ErrorCode::InputTooLarge.error(format!("maximum {max} bytes")))
     }
     Ok(bytes)
 }
@@ -893,7 +900,9 @@ async fn remote(cli: DeviceCli) -> Result<i32> {
     {
         diagnostic(
             json,
-            &anyhow::anyhow!("DEVICE_MISMATCH: request-id belongs to another target device"),
+            &anyhow::anyhow!(
+                ErrorCode::DeviceMismatch.error("request-id belongs to another target device")
+            ),
         );
         return Ok(2);
     }
@@ -901,7 +910,10 @@ async fn remote(cli: DeviceCli) -> Result<i32> {
         s.source_device_id != id.device_id
             || crypto::ca_spki_pin(&id.ca_pem).ok().as_deref() != Some(&s.ca_pin)
     }) {
-        bail!("IDENTITY_MISMATCH: submission belongs to another identity or deployment")
+        bail!(
+            ErrorCode::IdentityMismatch
+                .error("submission belongs to another identity or deployment")
+        )
     }
     let selected = prior
         .as_ref()
@@ -912,7 +924,7 @@ async fn remote(cli: DeviceCli) -> Result<i32> {
     let roster = crate::network::current(&id)?;
     let target = roster.member(selected)?;
     if target.revoked {
-        bail!("DEVICE_REVOKED: target has been revoked")
+        bail!(ErrorCode::DeviceRevoked.error("target has been revoked"))
     }
     let target_name = target.name.clone();
     let target = &target.device_id;
@@ -923,7 +935,7 @@ async fn remote(cli: DeviceCli) -> Result<i32> {
                 program: e
                     .command
                     .first()
-                    .context("INVALID_REQUEST: program required")?
+                    .context(ErrorCode::InvalidRequest.error("program required"))?
                     .clone(),
                 args: e.command.into_iter().skip(1).collect(),
                 cwd: e.cwd.unwrap_or(s.cwd),
@@ -938,7 +950,7 @@ async fn remote(cli: DeviceCli) -> Result<i32> {
             )
             .await?;
             if !matches!(response(&mut s.ws).await?, Data::StreamReady) {
-                bail!("INVALID_MESSAGE: expected stream acknowledgement")
+                bail!(ErrorCode::InvalidMessage.error("expected stream acknowledgement"))
             }
             let result = tokio::select! {
                 result = crate::streaming::client(&mut s.ws) => result?,
@@ -1037,7 +1049,7 @@ async fn remote(cli: DeviceCli) -> Result<i32> {
                         show_job(false, j)
                     }
                 }),
-                _ => bail!("INVALID_MESSAGE: expected jobs"),
+                _ => bail!(ErrorCode::InvalidMessage.error("expected jobs")),
             };
             Ok(0)
         }
@@ -1063,7 +1075,9 @@ async fn remote(cli: DeviceCli) -> Result<i32> {
                     Err(_) => {
                         diagnostic(
                             json,
-                            &anyhow::anyhow!("WAIT_TIMEOUT: task continues running"),
+                            &anyhow::anyhow!(
+                                ErrorCode::WaitTimeout.error("task continues running")
+                            ),
                         );
                         return Ok(75);
                     }
@@ -1099,7 +1113,7 @@ async fn remote(cli: DeviceCli) -> Result<i32> {
                 Err(e) => {
                     diagnostic(json, &e);
                     Ok(
-                        if net::explicit(&e) && !e.to_string().starts_with("DEVICE_OFFLINE") {
+                        if net::explicit(&e) && !crate::error::is(&e, ErrorCode::DeviceOffline) {
                             125
                         } else {
                             75
@@ -1171,7 +1185,7 @@ async fn remote(cli: DeviceCli) -> Result<i32> {
             let result = match tokio::time::timeout(Duration::from_secs(10), operation).await {
                 Ok(result) => result,
                 Err(_) => Err(anyhow::anyhow!(
-                    "UNCONFIRMED: cancellation response timed out"
+                    ErrorCode::Unconfirmed.error("cancellation response timed out")
                 )),
             };
             match result {
@@ -1180,7 +1194,7 @@ async fn remote(cli: DeviceCli) -> Result<i32> {
                     show_job(json, &job);
                     Ok(0)
                 }
-                Ok(_) => bail!("INVALID_MESSAGE: expected job"),
+                Ok(_) => bail!(ErrorCode::InvalidMessage.error("expected job")),
                 Err(e) => {
                     diagnostic(json, &e);
                     Ok(if definitive(&e) { 125 } else { 75 })
@@ -1228,7 +1242,7 @@ async fn remote(cli: DeviceCli) -> Result<i32> {
             };
             let result = tokio::select! {
                 r=operation=>r,
-                _=tokio::signal::ctrl_c()=>{return Ok(if sent.load(std::sync::atomic::Ordering::SeqCst){diagnostic(json,&anyhow::anyhow!("UNCONFIRMED: upload interrupted; pull the destination before retrying"));75}else{130});},
+                _=tokio::signal::ctrl_c()=>{return Ok(if sent.load(std::sync::atomic::Ordering::SeqCst){diagnostic(json,&anyhow::anyhow!(ErrorCode::Unconfirmed.error("upload interrupted; pull the destination before retrying")));75}else{130});},
                 _=termination()=>{return Ok(if sent.load(std::sync::atomic::Ordering::SeqCst){75}else{125});},
             };
             match result {
@@ -1241,11 +1255,11 @@ async fn remote(cli: DeviceCli) -> Result<i32> {
                     );
                     Ok(0)
                 }
-                Ok(_) => bail!("INVALID_MESSAGE: expected file confirmation"),
+                Ok(_) => bail!(ErrorCode::InvalidMessage.error("expected file confirmation")),
                 Err(e) => {
                     diagnostic(json, &e);
                     Ok(
-                        if net::explicit(&e) || e.to_string().starts_with("DEVICE_BUSY") {
+                        if net::explicit(&e) || crate::error::is(&e, ErrorCode::DeviceBusy) {
                             125
                         } else if definitive(&e) {
                             1
@@ -1270,7 +1284,7 @@ async fn remote(cli: DeviceCli) -> Result<i32> {
                 path, size, sha256, ..
             } = response(&mut s.ws).await?
             else {
-                bail!("INVALID_MESSAGE: expected file header")
+                bail!(ErrorCode::InvalidMessage.error("expected file header"))
             };
             let mut temp =
                 net::receive_file_with_prefix(&mut s.ws, size, &sha256, "xrun-pull-").await?;
@@ -1314,7 +1328,7 @@ async fn remote(cli: DeviceCli) -> Result<i32> {
                 ..
             } = response(&mut s.ws).await?
             else {
-                bail!("INVALID_MESSAGE: expected screenshot header")
+                bail!(ErrorCode::InvalidMessage.error("expected screenshot header"))
             };
             let bytes = net::receive_bytes(&mut s.ws, size, &sha256, MAX_FILE).await?;
             s.finish().await;
@@ -1331,7 +1345,7 @@ async fn remote(cli: DeviceCli) -> Result<i32> {
 async fn forward_cli(id: Identity, target: &str, ports: (u16, u16), json: bool) -> Result<i32> {
     let listener = tokio::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, ports.0))
         .await
-        .context("FORWARD_LISTEN_FAILED: cannot bind local loopback port")?;
+        .context(ErrorCode::ForwardListenFailed.error("cannot bind local loopback port"))?;
     let address = listener.local_addr()?;
     print(
         json,
@@ -1345,7 +1359,7 @@ async fn forward_cli(id: Identity, target: &str, ports: (u16, u16), json: bool) 
             result = listener.accept() => {
                 let (tcp, _) = result?;
                 if connections.len() >= 32 {
-                    diagnostic(json, &anyhow::anyhow!("DEVICE_BUSY: too many local forwarded connections"));
+                    diagnostic(json, &anyhow::anyhow!(ErrorCode::DeviceBusy.error("too many local forwarded connections")));
                     continue;
                 }
                 let id = id.clone();
@@ -1354,9 +1368,9 @@ async fn forward_cli(id: Identity, target: &str, ports: (u16, u16), json: bool) 
                     let mut session = session(&id, &target).await?;
                     net::send(&mut session.ws, &Data::Request { request: Request::Forward { port: ports.1 } }).await?;
                     match tokio::time::timeout(Duration::from_secs(10), response(&mut session.ws)).await
-                        .context("FORWARD_TIMEOUT: target did not acknowledge the connection")?? {
+                        .context(ErrorCode::ForwardTimeout.error("target did not acknowledge the connection"))?? {
                         Data::ForwardReady { port } if port == ports.1 => crate::forwarding::bridge(&mut session.ws, tcp).await,
-                        _ => bail!("INVALID_MESSAGE: expected forwarding acknowledgement"),
+                        _ => bail!(ErrorCode::InvalidMessage.error("expected forwarding acknowledgement")),
                     }
                 });
             },
@@ -1376,15 +1390,7 @@ async fn forward_cli(id: Identity, target: &str, ports: (u16, u16), json: bool) 
 }
 
 fn network_error(error: &anyhow::Error) -> bool {
-    let text = error.to_string();
-    [
-        "CONNECT",
-        "SESSION_UNAVAILABLE",
-        "SESSION_REJECTED",
-        "HTTP_ERROR",
-    ]
-    .iter()
-    .any(|s| text.starts_with(s))
+    crate::error::code(error).is_some_and(|code| code.is_network())
         || error.chain().any(|e| {
             e.downcast_ref::<reqwest::Error>()
                 .is_some_and(|e| e.is_connect() || e.is_timeout())
@@ -1393,31 +1399,7 @@ fn network_error(error: &anyhow::Error) -> bool {
         })
 }
 fn definitive(error: &anyhow::Error) -> bool {
-    let code = error.to_string();
-    [
-        "DEVICE_BUSY",
-        "DB_RESET",
-        "REQUEST_CONFLICT",
-        "SOURCE_NOT_ALLOWED",
-        "JOB_NOT_FOUND",
-        "STALE",
-        "ALREADY_EXISTS",
-        "FILE_TOO_LARGE",
-        "FILE_NOT_FOUND",
-        "FILE_BUSY",
-        "INVALID_PATH",
-        "INVALID_REQUEST",
-        "INVALID_CWD",
-        "INVALID_SCRIPT",
-        "INVALID_BODY",
-        "CHECKSUM_MISMATCH",
-        "SHELL_UNSUPPORTED",
-        "IS_DIRECTORY",
-        "PARENT_NOT_FOUND",
-        "PERMISSION_DENIED",
-    ]
-    .iter()
-    .any(|c| code.starts_with(c))
+    crate::error::code(error).is_some_and(|code| code.rejects_submission())
 }
 async fn execute_cli(
     id: &Identity,
@@ -1440,7 +1422,9 @@ async fn execute_cli(
     {
         diagnostic(
             json,
-            &anyhow::anyhow!("INVALID_SHELL: select sh, bash, zsh, powershell, pwsh or cmd"),
+            &anyhow::anyhow!(
+                ErrorCode::InvalidShell.error("select sh, bash, zsh, powershell, pwsh or cmd")
+            ),
         );
         return Ok(2);
     }
@@ -1479,14 +1463,18 @@ async fn execute_cli(
         if prior.request_hash != hash {
             diagnostic(
                 json,
-                &anyhow::anyhow!("REQUEST_CONFLICT: original execution parameters must match"),
+                &anyhow::anyhow!(
+                    ErrorCode::RequestConflict.error("original execution parameters must match")
+                ),
             );
             return Ok(2);
         }
         if prior.db_id != s.db_id {
             diagnostic(
                 json,
-                &anyhow::anyhow!("DB_RESET: original task database no longer exists"),
+                &anyhow::anyhow!(
+                    ErrorCode::DbReset.error("original task database no longer exists")
+                ),
             );
             return Ok(125);
         }
@@ -1513,7 +1501,7 @@ async fn execute_cli(
     if serde_json::to_vec(&header)?.len() > MAX_MESSAGE {
         diagnostic(
             json,
-            &anyhow::anyhow!("INVALID_COMMAND: execution header exceeds 1 MiB"),
+            &anyhow::anyhow!(ErrorCode::InvalidCommand.error("execution header exceeds 1 MiB")),
         );
         return Ok(2);
     }
@@ -1536,16 +1524,16 @@ async fn execute_cli(
         net::send_bytes(&mut s.ws, &input).await?;
         match response(&mut s.ws).await? {
             Data::Job { job } => Ok(job),
-            _ => bail!("INVALID_MESSAGE: expected job acknowledgement"),
+            _ => bail!(ErrorCode::InvalidMessage.error("expected job acknowledgement")),
         }
     };
     let (job, acknowledged) = tokio::select! {
         r=submitted=>match r{Ok(job)=>(job, true),Err(error)=>{
             if definitive(&error){submission.status="not_accepted".into();store.save(&submission)?;diagnostic(json,&error);return Ok(125)}
-            match recover(id,target,&execution.request_id,Some(&execution.db_id)).await{Ok(job)=>(job, false),Err(e)=>{if e.to_string().starts_with("DB_RESET"){diagnostic(json,&e);return Ok(125)}diagnostic(json,&anyhow::anyhow!("UNCONFIRMED: request {} may have executed; use recent or jobs --request-id",execution.request_id));return Ok(75)}}
+            match recover(id,target,&execution.request_id,Some(&execution.db_id)).await{Ok(job)=>(job, false),Err(e)=>{if crate::error::is(&e, ErrorCode::DbReset){diagnostic(json,&e);return Ok(125)}diagnostic(json,&anyhow::anyhow!(ErrorCode::Unconfirmed.error(format!("request {} may have executed; use recent or jobs --request-id",execution.request_id))));return Ok(75)}}
         }},
         _=tokio::signal::ctrl_c()=>{if !sent.load(std::sync::atomic::Ordering::SeqCst){submission.status="not_accepted".into();store.save(&submission)?;return Ok(130)}return Box::pin(cancel_unknown(id,target,&execution.request_id,&execution.db_id,json)).await;},
-        _=termination()=>{if !sent.load(std::sync::atomic::Ordering::SeqCst){submission.status="not_accepted".into();store.save(&submission)?;return Ok(125)}diagnostic(json,&anyhow::anyhow!("UNCONFIRMED: request {} may have executed",execution.request_id));return Ok(75)}
+        _=termination()=>{if !sent.load(std::sync::atomic::Ordering::SeqCst){submission.status="not_accepted".into();store.save(&submission)?;return Ok(125)}diagnostic(json,&anyhow::anyhow!(ErrorCode::Unconfirmed.error(format!("request {} may have executed",execution.request_id))));return Ok(75)}
     };
     submission.job_id = Some(job_ref(&job));
     submission.status = "confirmed".into();
@@ -1579,7 +1567,7 @@ async fn execute_cli(
             tokio::select! {
                 r=&mut logs=>r,
                 _=tokio::signal::ctrl_c()=>{return Box::pin(cancel_known(id,target,&job.job_id,json)).await},
-                _=termination()=>{diagnostic(json,&anyhow::anyhow!("UNCONFIRMED: {} continues remotely",job_ref(&job)));return Ok(75)}
+                _=termination()=>{diagnostic(json,&anyhow::anyhow!(ErrorCode::Unconfirmed.error(format!("{} continues remotely",job_ref(&job)))));return Ok(75)}
             }
         };
         match result {
@@ -1590,7 +1578,7 @@ async fn execute_cli(
                 return Ok(job_code(&result));
             }
             Err(error) => {
-                if error.to_string().starts_with("DB_RESET") {
+                if crate::error::is(&error, ErrorCode::DbReset) {
                     diagnostic(json, &error);
                     return Ok(125);
                 }
@@ -1604,8 +1592,10 @@ async fn execute_cli(
                     diagnostic(
                         json,
                         &anyhow::anyhow!(
-                            "UNCONFIRMED: result unavailable for {}: {error}",
-                            job_ref(&job)
+                            ErrorCode::Unconfirmed.error(format!(
+                                "result unavailable for {}: {error}",
+                                job_ref(&job)
+                            ))
                         ),
                     );
                     return Ok(75);
@@ -1640,7 +1630,7 @@ async fn recover(
             match session(id, target).await {
                 Ok(mut s) => {
                     if expected_db.is_some_and(|db| db != s.db_id) {
-                        bail!("DB_RESET: original task database no longer exists")
+                        bail!(ErrorCode::DbReset.error("original task database no longer exists"))
                     }
                     net::send(
                         &mut s.ws,
@@ -1662,7 +1652,7 @@ async fn recover(
                         }
                     }
                 }
-                Err(e) if net::explicit(&e) && !e.to_string().starts_with("DEVICE_OFFLINE") => {
+                Err(e) if net::explicit(&e) && !crate::error::is(&e, ErrorCode::DeviceOffline) => {
                     return Err(e);
                 }
                 Err(_) => {}
@@ -1671,7 +1661,7 @@ async fn recover(
         }
     })
     .await
-    .context("UNCONFIRMED: request recovery timed out")?
+    .context(ErrorCode::Unconfirmed.error("request recovery timed out"))?
 }
 async fn cancel_unknown(
     id: &Identity,
@@ -1690,7 +1680,10 @@ async fn cancel_unknown(
         _ => {
             diagnostic(
                 json,
-                &anyhow::anyhow!("UNCONFIRMED: cancellation unconfirmed for request {request_id}"),
+                &anyhow::anyhow!(
+                    ErrorCode::Unconfirmed
+                        .error(format!("cancellation unconfirmed for request {request_id}"))
+                ),
             );
             Ok(75)
         }
@@ -1716,7 +1709,10 @@ async fn cancel_known(id: &Identity, target: &str, job: &str, json: bool) -> Res
         _ => {
             diagnostic(
                 json,
-                &anyhow::anyhow!("UNCONFIRMED: cancellation unconfirmed for {target}/{job}"),
+                &anyhow::anyhow!(
+                    ErrorCode::Unconfirmed
+                        .error(format!("cancellation unconfirmed for {target}/{job}"))
+                ),
             );
             Ok(75)
         }
@@ -1725,7 +1721,7 @@ async fn cancel_known(id: &Identity, target: &str, job: &str, json: bool) -> Res
 async fn wait(id: &Identity, target: &str, job: &str) -> Result<Job> {
     match request(id, target, Request::Wait { id: job.into() }).await? {
         Data::Job { job } => Ok(job),
-        _ => bail!("INVALID_MESSAGE: expected final job state"),
+        _ => bail!(ErrorCode::InvalidMessage.error("expected final job state")),
     }
 }
 fn output(events: &[LogEvent]) -> Result<()> {
@@ -1776,7 +1772,7 @@ async fn stream_logs(
 ) -> Result<Job> {
     let mut s = session(id, target).await?;
     if cursor.db_id.as_ref().is_some_and(|db| *db != s.db_id) {
-        bail!("DB_RESET: original task database no longer exists")
+        bail!(ErrorCode::DbReset.error("original task database no longer exists"))
     }
     cursor.db_id = Some(s.db_id.clone());
     net::send(
@@ -1812,8 +1808,11 @@ async fn receive_logs(ws: &mut Ws, json: bool, cursor: &mut LogCursor) -> Result
                 }
                 final_job = Some(job)
             }
-            Data::End => return final_job.context("INVALID_MESSAGE: logs ended without job state"),
-            _ => bail!("INVALID_MESSAGE: expected logs"),
+            Data::End => {
+                return final_job
+                    .context(ErrorCode::InvalidMessage.error("logs ended without job state"));
+            }
+            _ => bail!(ErrorCode::InvalidMessage.error("expected logs")),
         }
     }
 }
@@ -1847,10 +1846,11 @@ async fn collect_logs(
                 s.finish().await;
                 return Ok((
                     events,
-                    state.context("INVALID_MESSAGE: logs ended without job state")?,
+                    state
+                        .context(ErrorCode::InvalidMessage.error("logs ended without job state"))?,
                 ));
             }
-            _ => bail!("INVALID_MESSAGE: expected logs"),
+            _ => bail!(ErrorCode::InvalidMessage.error("expected logs")),
         }
     }
 }

@@ -1,3 +1,4 @@
+use crate::error::ErrorCode;
 use crate::{
     config::{self, DaemonConfig, Identity},
     membership::{ReceiptAck, RosterCache},
@@ -58,7 +59,7 @@ pub fn instance_lock() -> Result<std::fs::File> {
         .truncate(false)
         .open(dir.join("daemon.lock"))?;
     file.try_lock()
-        .context("DAEMON_RUNNING: stop daemon before this operation")?;
+        .context(ErrorCode::DaemonRunning.error("stop daemon before this operation"))?;
     Ok(file)
 }
 pub fn reset() -> Result<()> {
@@ -139,7 +140,7 @@ impl Runtime {
     fn membership(&self, source: &str) -> Result<()> {
         let roster = self.members.load(&self.network_id)?;
         if roster.member(&self.id.device_id)?.revoked || roster.member(source)?.revoked {
-            bail!("DEVICE_REVOKED: session member has been revoked")
+            bail!(ErrorCode::DeviceRevoked.error("session member has been revoked"))
         }
         Ok(())
     }
@@ -152,7 +153,7 @@ impl Runtime {
         let cfg = self.config()?;
         cfg.check_access(source)?;
         if cfg.pause_generation != generation {
-            bail!("SESSION_CLOSED: remote access was paused; open a new session")
+            bail!(ErrorCode::SessionClosed.error("remote access was paused; open a new session"))
         }
         Ok(())
     }
@@ -163,9 +164,9 @@ impl Runtime {
         let job = self
             .store
             .get(id)?
-            .context("JOB_NOT_FOUND: unknown or expired job")?;
+            .context(ErrorCode::JobNotFound.error("unknown or expired job"))?;
         if job.source_device_id != source {
-            bail!("SOURCE_NOT_ALLOWED: job belongs to another source")
+            bail!(ErrorCode::SourceNotAllowed.error("job belongs to another source"))
         }
         Ok(job)
     }
@@ -192,7 +193,7 @@ pub async fn run() -> Result<()> {
     let mut id = Identity::load()?;
     tokio::select! { result=&mut local=>{return result}, _=net::renew_identity(&mut id)=>{}, result=control.shutdown()=>{result?;return Ok(())} }
     if !dir.join("daemon.initialized").exists() {
-        bail!("DAEMON_NOT_INITIALIZED: run daemon install")
+        bail!(ErrorCode::DaemonNotInitialized.error("run daemon install"))
     }
     let network_id = network::authority(&id)?.network_id.clone();
     network::current(&id)?;
@@ -253,7 +254,7 @@ pub async fn run() -> Result<()> {
         result=&mut sync=>result,
         _=shutdown_signal()=>Ok(()),
         result=control.shutdown()=>result,
-        _=stop.changed()=>Err(anyhow::anyhow!("STORAGE_ERROR: {}", rt.fatal.lock().unwrap().as_deref().unwrap_or("daemon stopped"))),
+        _=stop.changed()=>Err(anyhow::anyhow!(ErrorCode::StorageError.error(rt.fatal.lock().unwrap().as_deref().unwrap_or("daemon stopped").to_string()))),
     };
     rt.stopping.store(true, Ordering::SeqCst);
     let _ = control.connected(false);
@@ -285,7 +286,7 @@ async fn control_reconnect(rt: Arc<Runtime>) -> Result<()> {
         }
         if let Err(e) = result {
             tracing::warn!(error=%e,"daemon disconnected");
-            if e.to_string().starts_with("IDENTITY_CHANGED") {
+            if crate::error::is(&e, ErrorCode::IdentityChanged) {
                 return Err(e);
             }
         }
@@ -297,7 +298,7 @@ async fn control_reconnect(rt: Arc<Runtime>) -> Result<()> {
 async fn control_once(rt: Arc<Runtime>) -> Result<()> {
     let mut current = Identity::load()?;
     if current.device_id != rt.id.device_id || current.network != rt.id.network {
-        bail!("IDENTITY_CHANGED: restart daemon after replacing its identity");
+        bail!(ErrorCode::IdentityChanged.error("restart daemon after replacing its identity"));
     }
     // Membership authority and synchronization belong to endpoints.
     if network::authority(&current)?.manager_id == current.device_id {
@@ -310,7 +311,7 @@ async fn control_once(rt: Arc<Runtime>) -> Result<()> {
     net::renew_identity(&mut current).await?;
     let (mut ws, address) = network::control(&current).await?;
     let RelayMessage::HelloAck { generation } = network::receive(&mut ws).await? else {
-        bail!("INVALID_MESSAGE: expected control acknowledgement")
+        bail!(ErrorCode::InvalidMessage.error("expected control acknowledgement"))
     };
     rt.control.connected(true)?;
     let mut ping = tokio::time::interval(Duration::from_secs(15));
@@ -320,16 +321,16 @@ async fn control_once(rt: Arc<Runtime>) -> Result<()> {
         tokio::select! {
             _=membership.tick()=>{
                 if !network::current(&current)?.roster.relay_addresses.contains(&address) {
-                    bail!("RELAY_CHANGED: reconnect using the signed relay addresses")
+                    bail!(ErrorCode::RelayChanged.error("reconnect using the signed relay addresses"))
                 }
             },
             _=ping.tick()=>{
-                if last.elapsed()>Duration::from_secs(45){bail!("CONTROL_TIMEOUT: relay stopped responding")}
+                if last.elapsed()>Duration::from_secs(45){bail!(ErrorCode::ControlTimeout.error("relay stopped responding"))}
                 ws.send(Message::Ping(vec![].into())).await?;
                 rt.store.prune()?;
             },
             message=ws.next()=>{
-                match message.context("CONNECTION_CLOSED: control disconnected")?? {
+                match message.context(ErrorCode::ConnectionClosed.error("control disconnected"))?? {
                     Message::Pong(_)=>last=tokio::time::Instant::now(),
                     Message::Ping(b)=>{last=tokio::time::Instant::now();ws.send(Message::Pong(b)).await?},
                     Message::Text(text)=>{
@@ -338,7 +339,7 @@ async fn control_once(rt: Arc<Runtime>) -> Result<()> {
                             RelayMessage::Incoming{session_id,..}=>{
                                 let Ok(permit)=rt.sessions.clone().try_acquire_owned() else {
                                     net::send(&mut ws,&RelayMessage::Reject{session_id,
-                                        error:Box::new(Data::error(&anyhow::anyhow!("DEVICE_BUSY: encrypted session limit reached")))}).await?;
+                                        error:Box::new(Data::error(&anyhow::anyhow!(ErrorCode::DeviceBusy.error("encrypted session limit reached"))))}).await?;
                                     continue;
                                 };
                                 let rt=rt.clone();let address=address.clone();let generation=generation.clone();
@@ -349,11 +350,11 @@ async fn control_once(rt: Arc<Runtime>) -> Result<()> {
                                     }
                                 });
                             },
-                            RelayMessage::Error{code,message}=>bail!("{code}: {message}"),
-                            _=>bail!("INVALID_MESSAGE: unexpected control message"),
+                            RelayMessage::Error{code,message}=>bail!(crate::error::CodedError::from_wire(code, message)),
+                            _=>bail!(ErrorCode::InvalidMessage.error("unexpected control message")),
                         }
                     },
-                    _=>bail!("CONNECTION_CLOSED: control disconnected")
+                    _=>bail!(ErrorCode::ConnectionClosed.error("control disconnected"))
                 }
             }
         }
@@ -404,7 +405,7 @@ async fn data_session(rt: Arc<Runtime>, address: &str, generation: &str, sid: &s
             }
             rt.allow(&source)?;
             let generation = rt.config()?.pause_generation;
-            let (_, cert) = x509_parser::parse_x509_certificate(&certificate).map_err(|_| anyhow::anyhow!("INVALID_CERTIFICATE: malformed member certificate"))?;
+            let (_, cert) = x509_parser::parse_x509_certificate(&certificate).map_err(|_| anyhow::anyhow!(ErrorCode::InvalidCertificate.error("malformed member certificate")))?;
             let expiry = cert.validity().not_after.timestamp()
                 .min(crate::crypto::certificate_expiry(&id.cert_pem)?)
                 .min(crate::crypto::certificate_expiry(&id.ca_pem)?);
@@ -413,20 +414,20 @@ async fn data_session(rt: Arc<Runtime>, address: &str, generation: &str, sid: &s
             loop {
                 let req = tokio::select! {
                     req = tokio::time::timeout(Duration::from_secs(60), net::receive::<Data>(&mut ws)) => req??,
-                    _ = stop.changed() => bail!("DAEMON_STOPPING: daemon shutting down"),
+                    _ = stop.changed() => bail!(ErrorCode::DaemonStopping.error("daemon shutting down")),
                 };
                 rt.check_session(&source, generation)?;
                 if expiry <= now_ms() / 1000 || Identity::load()?.cert_pem != id.cert_pem {
-                    bail!("SESSION_EXPIRED: renew the authenticated connection");
+                    bail!(ErrorCode::SessionExpired.error("renew the authenticated connection"));
                 }
                 if let Data::SessionProbe { roster_version } = req {
                     if rt.members.load(&rt.network_id)?.roster.version != roster_version {
-                        bail!("MEMBERSHIP_CHANGED: renew the authenticated connection");
+                        bail!(ErrorCode::MembershipChanged.error("renew the authenticated connection"));
                     }
                     send_ready(&rt, &mut ws).await?;
                     continue;
                 }
-                let Data::Request { request } = req else { bail!("INVALID_MESSAGE: expected operation"); };
+                let Data::Request { request } = req else { bail!(ErrorCode::InvalidMessage.error("expected operation")); };
                 let denied = async {
                     loop {
                         tokio::time::sleep(Duration::from_millis(100)).await;
@@ -435,8 +436,8 @@ async fn data_session(rt: Arc<Runtime>, address: &str, generation: &str, sid: &s
                 };
                 tokio::select! {
                     result = serve(rt.clone(), &source, generation, &mut ws, request) => result?,
-                    _ = stop.changed() => bail!("DAEMON_STOPPING: daemon shutting down"),
-                    _ = denied => bail!("SESSION_CLOSED: access changed"),
+                    _ = stop.changed() => bail!(ErrorCode::DaemonStopping.error("daemon shutting down")),
+                    _ = denied => bail!(ErrorCode::SessionClosed.error("access changed")),
                 }
                 net::send(&mut ws, &Data::Complete).await?;
             }
@@ -518,7 +519,7 @@ async fn serve(
                 let _gate = rt.gate.lock().unwrap();
                 rt.check_session(source, generation)?;
                 if rt.stopping.load(Ordering::SeqCst) {
-                    bail!("DAEMON_STOPPING: daemon shutting down")
+                    bail!(ErrorCode::DaemonStopping.error("daemon shutting down"))
                 }
                 check_capacity(&rt)?;
                 let child =
@@ -548,7 +549,7 @@ async fn serve(
                 .forwards
                 .clone()
                 .try_acquire_owned()
-                .context("DEVICE_BUSY: too many forwarded connections")?;
+                .context(ErrorCode::DeviceBusy.error("too many forwarded connections"))?;
             let tcp = crate::forwarding::connect_loopback(port).await?;
             rt.check_session(source, generation)?;
             net::send(ws, &Data::ForwardReady { port }).await?;
@@ -622,9 +623,9 @@ async fn serve(
                 .files
                 .clone()
                 .try_acquire_owned()
-                .context("DEVICE_BUSY: too many file operations")?;
+                .context(ErrorCode::DeviceBusy.error("too many file operations"))?;
             if no_overwrite && expect.is_some() {
-                bail!("INVALID_REQUEST: expect conflicts with no-overwrite")
+                bail!(ErrorCode::InvalidRequest.error("expect conflicts with no-overwrite"))
             }
             let contents = net::receive_file(ws, size, &sha256).await?;
             rt.check_session(source, generation)?;
@@ -655,7 +656,7 @@ async fn serve(
                 .files
                 .clone()
                 .try_acquire_owned()
-                .context("DEVICE_BUSY: too many file operations")?;
+                .context(ErrorCode::DeviceBusy.error("too many file operations"))?;
             let path = crate::transfer::remote_path(&path, &operation_cwd(&rt, cwd)?)?;
             let (contents, size, hash) = crate::transfer::snapshot(path.clone()).await?;
             if let Some(a) = &mut audit {
@@ -684,7 +685,7 @@ async fn serve(
                 .files
                 .clone()
                 .try_acquire_owned()
-                .context("DEVICE_BUSY: too many file operations")?;
+                .context(ErrorCode::DeviceBusy.error("too many file operations"))?;
             let capture = crate::screenshot::capture().await?;
             if let Some(a) = &mut audit {
                 a.value["size"] = serde_json::json!(capture.bytes.len());
@@ -782,7 +783,7 @@ async fn follow(
             m = ws.next() => match m {
                 Some(Ok(Message::Ping(b))) => ws.send(Message::Pong(b)).await?,
                 Some(Ok(Message::Pong(_))) => {},
-                _ => bail!("CONNECTION_CLOSED: subscriber disconnected"),
+                _ => bail!(ErrorCode::ConnectionClosed.error("subscriber disconnected")),
             }
         }
     }
@@ -798,20 +799,20 @@ fn short_id() -> String {
 }
 fn validate_stream(request: &StreamExecution) -> Result<()> {
     if !Path::new(&request.cwd).is_absolute() || request.cwd.contains('\0') {
-        bail!("INVALID_REQUEST: cwd must be absolute")
+        bail!(ErrorCode::InvalidRequest.error("cwd must be absolute"))
     }
     if request.program.is_empty()
         || request.program.contains('\0')
         || request.args.iter().any(|a| a.contains('\0'))
     {
-        bail!("INVALID_REQUEST: invalid command")
+        bail!(ErrorCode::InvalidRequest.error("invalid command"))
     }
     if request
         .env
         .iter()
         .any(|(k, v)| k.is_empty() || k.contains(['=', '\0']) || v.contains('\0'))
     {
-        bail!("INVALID_REQUEST: invalid environment")
+        bail!(ErrorCode::InvalidRequest.error("invalid environment"))
     }
     #[cfg(windows)]
     {
@@ -821,7 +822,7 @@ fn validate_stream(request: &StreamExecution) -> Result<()> {
             .keys()
             .any(|k| !keys.insert(k.to_ascii_lowercase()))
         {
-            bail!("INVALID_REQUEST: duplicate Windows environment key")
+            bail!(ErrorCode::InvalidRequest.error("duplicate Windows environment key"))
         }
     }
     Ok(())
@@ -829,7 +830,7 @@ fn validate_stream(request: &StreamExecution) -> Result<()> {
 fn check_capacity(rt: &Runtime) -> Result<()> {
     let jobs = rt.store.active_count()?;
     if jobs + rt.streams.load(Ordering::SeqCst) >= rt.config()?.max_concurrent_jobs {
-        bail!("DEVICE_BUSY: job capacity reached")
+        bail!(ErrorCode::DeviceBusy.error("job capacity reached"))
     }
     Ok(())
 }
@@ -837,26 +838,26 @@ fn submit(rt: Arc<Runtime>, source: &str, request: Execution, input: Vec<u8>) ->
     let _gate = rt.gate.lock().unwrap();
     rt.allow(source)?;
     if rt.stopping.load(Ordering::SeqCst) {
-        bail!("DAEMON_STOPPING: daemon shutting down")
+        bail!(ErrorCode::DaemonStopping.error("daemon shutting down"))
     }
     if request.db_id != rt.store.db_id {
-        bail!("DB_RESET: original database no longer exists")
+        bail!(ErrorCode::DbReset.error("original database no longer exists"))
     }
     if request.request_id.is_empty() || request.request_id.len() > 128 {
-        bail!("INVALID_REQUEST: invalid request-id")
+        bail!(ErrorCode::InvalidRequest.error("invalid request-id"))
     }
     if !Path::new(&request.cwd).is_absolute() || request.cwd.contains('\0') {
-        bail!("INVALID_REQUEST: cwd must be absolute")
+        bail!(ErrorCode::InvalidRequest.error("cwd must be absolute"))
     }
     if request
         .env
         .iter()
         .any(|(k, v)| k.is_empty() || k.contains(['=', '\0']) || v.contains('\0'))
     {
-        bail!("INVALID_REQUEST: invalid environment")
+        bail!(ErrorCode::InvalidRequest.error("invalid environment"))
     }
     if request.program.contains('\0') || request.args.iter().any(|a| a.contains('\0')) {
-        bail!("INVALID_REQUEST: NUL in command")
+        bail!(ErrorCode::InvalidRequest.error("NUL in command"))
     }
     #[cfg(windows)]
     {
@@ -866,16 +867,17 @@ fn submit(rt: Arc<Runtime>, source: &str, request: Execution, input: Vec<u8>) ->
             .keys()
             .any(|name| !names.insert(name.to_ascii_lowercase()))
         {
-            bail!("INVALID_REQUEST: duplicate Windows environment key");
+            bail!(ErrorCode::InvalidRequest.error("duplicate Windows environment key"));
         }
     }
     if let Some(shell) = &request.shell {
         if !["sh", "bash", "zsh", "powershell", "pwsh", "cmd"].contains(&shell.as_str()) {
-            bail!("SHELL_UNSUPPORTED: {shell}")
+            bail!(ErrorCode::ShellUnsupported.error(shell.to_string()))
         }
-        std::str::from_utf8(&input).context("INVALID_SCRIPT: script must be UTF-8")?;
+        std::str::from_utf8(&input)
+            .context(ErrorCode::InvalidScript.error("script must be UTF-8"))?;
         if shell == "cmd" && !input.is_ascii() {
-            bail!("INVALID_SCRIPT: cmd requires ASCII")
+            bail!(ErrorCode::InvalidScript.error("cmd requires ASCII"))
         }
         if shell == "cmd"
             && request
@@ -883,13 +885,19 @@ fn submit(rt: Arc<Runtime>, source: &str, request: Execution, input: Vec<u8>) ->
                 .iter()
                 .any(|arg| arg.contains(['\"', '\r', '\n']))
         {
-            bail!("INVALID_SCRIPT_ARGUMENT: cmd arguments cannot contain quotes or newlines")
+            bail!(
+                ErrorCode::InvalidScriptArgument
+                    .error("cmd arguments cannot contain quotes or newlines")
+            )
         }
     }
     let hash = request.hash();
     if let Some(job) = rt.store.by_request(source, &request.request_id)? {
         if job.request_hash != hash {
-            bail!("REQUEST_CONFLICT: request-id reused with different execution parameters")
+            bail!(
+                ErrorCode::RequestConflict
+                    .error("request-id reused with different execution parameters")
+            )
         }
         return Ok(job);
     }
@@ -1264,7 +1272,7 @@ fn resolve_program(program: &str, cwd: &Path, env: &BTreeMap<String, String>) ->
                 return Ok(path);
             }
         }
-        bail!("PROGRAM_NOT_FOUND: {program}")
+        bail!(ErrorCode::ProgramNotFound.error(program.to_string()))
     }
 }
 
@@ -1324,7 +1332,7 @@ fn resolve_windows_program(
                     .and_then(|e| e.to_str())
                     .unwrap_or_default();
                 if ext.eq_ignore_ascii_case("bat") || ext.eq_ignore_ascii_case("cmd") {
-                    bail!("SHELL_REQUIRED: {}", candidate.display());
+                    bail!(ErrorCode::ShellRequired.error(format!("{}", candidate.display())));
                 }
                 // Preserve ordinary absolute paths for child applications such as
                 // Windows PowerShell; canonicalize adds an incompatible \\?\ prefix.
@@ -1332,13 +1340,13 @@ fn resolve_windows_program(
             }
         }
     }
-    bail!("PROGRAM_NOT_FOUND: {program}")
+    bail!(ErrorCode::ProgramNotFound.error(program.to_string()))
 }
 
 fn operation_cwd(rt: &Runtime, cwd: Option<String>) -> Result<PathBuf> {
     let path = cwd.map(PathBuf::from).unwrap_or(rt.cwd()?);
     if !path.is_absolute() {
-        bail!("INVALID_CWD: -C must be absolute")
+        bail!(ErrorCode::InvalidCwd.error("-C must be absolute"))
     }
     Ok(path)
 }

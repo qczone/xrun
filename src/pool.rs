@@ -1,5 +1,6 @@
 //! Sequential sessions cached by the local daemon. Active requests exclusively
 //! own their socket; the cache never multiplexes or retries submitted work.
+use crate::error::ErrorCode;
 use crate::{
     config::Identity,
     ipc::{self, LocalRequest, LocalResponse},
@@ -48,11 +49,11 @@ fn ready(value: &Data, target: &str) -> Result<()> {
         Data::Ready {
             version, device_id, ..
         } if version == VERSION && device_id == target => Ok(()),
-        Data::Error { code, message } => bail!("{code}: {message}"),
+        Data::Error { code, message } => bail!(crate::error::CodedError::from_wire(code, message)),
         Data::Ready { version, .. } if version != VERSION => {
-            bail!("VERSION_MISMATCH: target release differs")
+            bail!(ErrorCode::VersionMismatch.error("target release differs"))
         }
-        _ => bail!("DEVICE_MISMATCH: invalid target acknowledgement"),
+        _ => bail!(ErrorCode::DeviceMismatch.error("invalid target acknowledgement")),
     }
 }
 impl Pool {
@@ -77,7 +78,7 @@ impl Pool {
         let stamp = binding(id)?;
         let roster = network::current(id)?;
         if roster.member(target)?.revoked {
-            bail!("DEVICE_REVOKED: target has been revoked");
+            bail!(ErrorCode::DeviceRevoked.error("target has been revoked"));
         }
         let cached = {
             let mut idle = self.idle.lock().unwrap();
@@ -111,7 +112,7 @@ impl Pool {
         }
         let (mut ws, _, expires) = match network::session_with_expiry(id, target).await {
             Ok(session) => session,
-            Err(e) if e.to_string().starts_with("SESSION_LIMIT") => {
+            Err(e) if crate::error::is(&e, ErrorCode::SessionLimit) => {
                 self.idle.lock().unwrap().clear();
                 return Err(e);
             }
@@ -188,7 +189,7 @@ async fn handle(
         tokio::time::timeout(Duration::from_secs(5), net::receive(local)).await??;
     if let LocalRequest::Stop { token, generation } = &opening {
         if token != expected_token {
-            bail!("UNAUTHENTICATED: invalid local endpoint token");
+            bail!(ErrorCode::Unauthenticated.error("invalid local endpoint token"));
         }
         control.check_generation(generation)?;
         net::send(local, &LocalResponse::Stopped).await?;
@@ -202,20 +203,20 @@ async fn handle(
         target,
     } = opening
     else {
-        bail!("INVALID_MESSAGE: expected local open");
+        bail!(ErrorCode::InvalidMessage.error("expected local open"));
     };
     if token != expected_token {
-        bail!("UNAUTHENTICATED: invalid local endpoint token");
+        bail!(ErrorCode::Unauthenticated.error("invalid local endpoint token"));
     }
     if version != VERSION {
-        bail!("VERSION_MISMATCH: local release differs");
+        bail!(ErrorCode::VersionMismatch.error("local release differs"));
     }
     let _permit = permits
         .try_acquire_owned()
-        .context("DEVICE_BUSY: local operation capacity reached")?;
+        .context(ErrorCode::DeviceBusy.error("local operation capacity reached"))?;
     let id = Identity::load()?;
     if identity != ipc::identity_binding(&id) {
-        bail!("IDENTITY_MISMATCH: local identity changed");
+        bail!(ErrorCode::IdentityMismatch.error("local identity changed"));
     }
     let (remote, ready, stamp, expires) =
         tokio::time::timeout(Duration::from_secs(30), pool.take(&id, &target)).await??;
@@ -237,20 +238,22 @@ async fn handle(
                     _ = complete_signal.notified() => continue,
                 }
             }
-            .context("CONNECTION_CLOSED: local client disconnected")??;
+            .context(ErrorCode::ConnectionClosed.error("local client disconnected"))??;
             if let Message::Text(text) = &message {
                 if matches!(
                     serde_json::from_str::<LocalRequest>(text),
                     Ok(LocalRequest::Release)
                 ) {
                     if !complete.load(Ordering::Acquire) {
-                        bail!("INVALID_MESSAGE: release before completion");
+                        bail!(ErrorCode::InvalidMessage.error("release before completion"));
                     }
                     return Ok::<_, anyhow::Error>(cacheable);
                 }
                 if let Ok(Data::Request { request }) = serde_json::from_str(text) {
                     if requested {
-                        bail!("INVALID_MESSAGE: one operation per local connection");
+                        bail!(
+                            ErrorCode::InvalidMessage.error("one operation per local connection")
+                        );
                     }
                     requested = true;
                     batch_body = matches!(request, Request::Push { .. } | Request::Exec { .. });
@@ -259,10 +262,10 @@ async fn handle(
                         Request::Forward { .. } | Request::StreamExec { .. }
                     );
                 } else if !requested {
-                    bail!("INVALID_MESSAGE: expected operation");
+                    bail!(ErrorCode::InvalidMessage.error("expected operation"));
                 }
             } else if !requested || matches!(message, Message::Close(_)) {
-                bail!("CONNECTION_CLOSED: incomplete local operation");
+                bail!(ErrorCode::ConnectionClosed.error("incomplete local operation"));
             }
             if batch_body && matches!(message, Message::Binary(_)) {
                 remote_tx.feed(message).await?;
@@ -284,7 +287,7 @@ async fn handle(
                 return Ok::<_, anyhow::Error>(());
             }
         }
-        bail!("CONNECTION_CLOSED: target disconnected");
+        bail!(ErrorCode::ConnectionClosed.error("target disconnected"));
     };
     let (cacheable, ()) = tokio::try_join!(upload, download)?;
     // Both pumps are finished and the CLI consumed Complete before Release.

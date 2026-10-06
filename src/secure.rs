@@ -1,3 +1,4 @@
+use crate::error::ErrorCode;
 use crate::{
     config::Identity,
     crypto,
@@ -174,13 +175,18 @@ fn tunnel(outer: Ws, flow_control: bool) -> Tunnel {
                                 })
                                 .is_err()
                         {
-                            bail!("INVALID_RELAY_MESSAGE: invalid ciphertext acknowledgement")
+                            bail!(
+                                ErrorCode::InvalidRelayMessage
+                                    .error("invalid ciphertext acknowledgement")
+                            )
                         }
                         credit.add_permits(bytes);
                     }
                     Message::Ping(_) | Message::Pong(_) => {}
                     Message::Close(_) => return Ok::<_, anyhow::Error>(()),
-                    _ => bail!("INVALID_RELAY_MESSAGE: expected encrypted TLS bytes"),
+                    _ => {
+                        bail!(ErrorCode::InvalidRelayMessage.error("expected encrypted TLS bytes"))
+                    }
                 }
             }
             Ok(())
@@ -222,11 +228,11 @@ pub async fn client_with_flow(
         .1
         .peer_certificates()
         .and_then(|c| c.first())
-        .context("UNAUTHENTICATED: target omitted its certificate")?
+        .context(ErrorCode::Unauthenticated.error("target omitted its certificate"))?
         .to_vec();
     let (actual, _) = crypto::peer_identity(&der)?;
     if actual != target {
-        bail!("IDENTITY_MISMATCH: relay connected an unexpected device")
+        bail!(ErrorCode::IdentityMismatch.error("relay connected an unexpected device"))
     }
     // TLS already authenticates this private protocol; no HTTP endpoint or
     // Upgrade negotiation is needed inside the encrypted relay tunnel.
@@ -261,15 +267,15 @@ pub async fn pairing_client_with_flow(
         .1
         .peer_certificates()
         .and_then(|c| c.first())
-        .context("UNAUTHENTICATED: manager omitted its certificate")?;
+        .context(ErrorCode::Unauthenticated.error("manager omitted its certificate"))?;
     if crypto::peer_identity(der)?.0 != manager {
-        bail!("IDENTITY_MISMATCH: pairing peer is not the invited manager")
+        bail!(ErrorCode::IdentityMismatch.error("pairing peer is not the invited manager"))
     }
     let root = ca
         .lock()
         .unwrap()
         .clone()
-        .context("UNAUTHENTICATED: manager omitted the network root")?;
+        .context(ErrorCode::Unauthenticated.error("manager omitted the network root"))?;
     // TLS already authenticates this private protocol; no HTTP endpoint or
     // Upgrade negotiation is needed inside the encrypted relay tunnel.
     let ws = tokio_tungstenite::WebSocketStream::from_raw_socket(
@@ -314,7 +320,7 @@ struct RosterExchange {
 async fn receive_roster(ws: &mut Ws) -> Result<RosterExchange> {
     let value: serde_json::Value = net::receive(ws).await?;
     if let Ok(Data::Error { code, message }) = serde_json::from_value(value.clone()) {
-        bail!("{code}: {message}")
+        bail!(crate::error::CodedError::from_wire(code, message))
     }
     Ok(serde_json::from_value(value)?)
 }
@@ -323,7 +329,7 @@ fn observe(cache: &RosterCache, network: &str, next: &SignedRoster) -> Result<()
         Ok(()) => Ok(()),
         // An authenticated peer may legitimately be behind. We keep our higher
         // version and validate its identity against that version below.
-        Err(error) if error.to_string().starts_with("ROSTER_ROLLBACK") => Ok(()),
+        Err(error) if crate::error::is(&error, ErrorCode::RosterRollback) => Ok(()),
         Err(error) => Err(error),
     }
 }
@@ -349,7 +355,7 @@ pub async fn exchange_client(
     net::send(ws, purpose).await?;
     let peer = receive_roster(ws).await?;
     if peer.version != VERSION {
-        bail!("VERSION_MISMATCH: peer release differs")
+        bail!(ErrorCode::VersionMismatch.error("peer release differs"))
     }
     observe(cache, network, &peer.roster)?;
     let current = cache.load(network)?;
@@ -364,7 +370,7 @@ pub async fn exchange_server(
 ) -> Result<(SignedRoster, String)> {
     let peer = receive_roster(ws).await?;
     if peer.version != VERSION {
-        bail!("VERSION_MISMATCH: peer release differs")
+        bail!(ErrorCode::VersionMismatch.error("peer release differs"))
     }
     observe(cache, network, &peer.roster)?;
     let current = cache.load(network)?;

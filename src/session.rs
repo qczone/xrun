@@ -1,5 +1,6 @@
 //! An operation session. A completed request may be returned to the local
 //! daemon; dropping a session at any other point discards the connection.
+use crate::error::ErrorCode;
 use crate::{
     config::Identity,
     net::{self, Ws},
@@ -32,10 +33,15 @@ impl Session {
                 default_cwd,
             } => {
                 if version != VERSION {
-                    bail!("VERSION_MISMATCH: daemon runs {version}, CLI runs {VERSION}");
+                    bail!(
+                        ErrorCode::VersionMismatch
+                            .error(format!("daemon runs {version}, CLI runs {VERSION}"))
+                    );
                 }
                 if device_id != target {
-                    bail!("DEVICE_MISMATCH: session connected to a different device");
+                    bail!(
+                        ErrorCode::DeviceMismatch.error("session connected to a different device")
+                    );
                 }
                 Ok(Self {
                     ws,
@@ -44,8 +50,10 @@ impl Session {
                     pooled,
                 })
             }
-            Data::Error { code, message } => bail!("{code}: {message}"),
-            _ => bail!("INVALID_MESSAGE: expected ready"),
+            Data::Error { code, message } => {
+                bail!(crate::error::CodedError::from_wire(code, message))
+            }
+            _ => bail!(ErrorCode::InvalidMessage.error("expected ready")),
         }
     }
     // Recycling is optional. A confirmed operation must not become a failure
@@ -53,7 +61,7 @@ impl Session {
     pub async fn finish(mut self) {
         let result = tokio::time::timeout(Duration::from_secs(2), async {
             if !matches!(net::receive::<Data>(&mut self.ws).await?, Data::Complete) {
-                bail!("INVALID_MESSAGE: expected request completion");
+                bail!(ErrorCode::InvalidMessage.error("expected request completion"));
             }
             if self.pooled {
                 net::send(&mut self.ws, &crate::ipc::LocalRequest::Release).await?;
@@ -61,7 +69,7 @@ impl Session {
                     net::receive::<crate::ipc::LocalResponse>(&mut self.ws).await?,
                     crate::ipc::LocalResponse::Released
                 ) {
-                    bail!("INVALID_MESSAGE: expected cache acknowledgement");
+                    bail!(ErrorCode::InvalidMessage.error("expected cache acknowledgement"));
                 }
             }
             Ok::<_, anyhow::Error>(())

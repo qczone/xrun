@@ -1,3 +1,4 @@
+use crate::error::ErrorCode;
 use crate::protocol::Registration;
 use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
@@ -103,12 +104,12 @@ impl Default for DaemonConfig {
 impl DaemonConfig {
     pub fn check_access(&self, source: &str) -> Result<()> {
         if self.remote_access_paused {
-            bail!("ACCESS_PAUSED: remote access is paused on this device")
+            bail!(ErrorCode::AccessPaused.error("remote access is paused on this device"))
         }
         if self.deny_from.iter().any(|id| id == source)
             || !(self.allow_all || self.allow_from.iter().any(|id| id == source))
         {
-            bail!("SOURCE_NOT_ALLOWED: source device is not allowed")
+            bail!(ErrorCode::SourceNotAllowed.error("source device is not allowed"))
         }
         Ok(())
     }
@@ -126,7 +127,7 @@ impl DaemonConfig {
             self.pause_generation = self
                 .pause_generation
                 .checked_add(1)
-                .context("INVALID_CONFIG: pause generation exhausted")?;
+                .context(ErrorCode::InvalidConfig.error("pause generation exhausted"))?;
         }
         self.remote_access_paused = paused;
         Ok(())
@@ -143,17 +144,17 @@ impl DaemonConfig {
     }
     fn validate(&self) -> Result<()> {
         if !(1..=64).contains(&self.max_concurrent_jobs) {
-            bail!("INVALID_CONFIG: max_concurrent_jobs must be 1..64")
+            bail!(ErrorCode::InvalidConfig.error("max_concurrent_jobs must be 1..64"))
         }
         if self.default_cwd.as_ref().is_some_and(|p| !p.is_absolute()) {
-            bail!("INVALID_CONFIG: default_cwd must be absolute")
+            bail!(ErrorCode::InvalidConfig.error("default_cwd must be absolute"))
         }
         if self
             .env
             .iter()
             .any(|(k, v)| k.is_empty() || k.contains(['=', '\0']) || v.contains('\0'))
         {
-            bail!("INVALID_CONFIG: invalid environment")
+            bail!(ErrorCode::InvalidConfig.error("invalid environment"))
         }
         #[cfg(windows)]
         {
@@ -163,7 +164,7 @@ impl DaemonConfig {
                 .keys()
                 .any(|k| !keys.insert(k.to_ascii_lowercase()))
             {
-                bail!("INVALID_CONFIG: duplicate environment key")
+                bail!(ErrorCode::InvalidConfig.error("duplicate environment key"))
             }
         }
         Ok(())
@@ -243,7 +244,7 @@ pub fn update_execution(
     if let Some(cwd) = &default_cwd
         && !cwd.is_dir()
     {
-        bail!("INVALID_CWD: working directory must exist")
+        bail!(ErrorCode::InvalidCwd.error("working directory must exist"))
     }
     update_daemon_config(&device_dir()?, |cfg| {
         cfg.default_cwd = default_cwd;
@@ -406,13 +407,10 @@ mod tests {
         let generation = cfg.pause_generation;
         let reloaded: DaemonConfig = toml::from_str(&toml::to_string(&cfg)?)?;
         assert!(reloaded.remote_access_paused);
-        assert!(
-            reloaded
-                .check_access("known")
-                .unwrap_err()
-                .to_string()
-                .starts_with("ACCESS_PAUSED")
-        );
+        assert!(crate::error::is(
+            &reloaded.check_access("known").unwrap_err(),
+            ErrorCode::AccessPaused
+        ));
         cfg.set_paused(true)?;
         assert_eq!(cfg.pause_generation, generation);
         cfg.set_paused(false)?;

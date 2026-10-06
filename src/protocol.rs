@@ -229,37 +229,7 @@ pub enum Data {
 }
 impl Data {
     pub fn error(error: &anyhow::Error) -> Self {
-        let message = format!("{error:#}");
-        let candidate = message
-            .split([':', ' '])
-            .next()
-            .unwrap_or("EXECUTION_ERROR")
-            .to_string();
-        let code = if candidate
-            .bytes()
-            .all(|c| c.is_ascii_uppercase() || c == b'_')
-        {
-            candidate
-        } else if let Some(error) = error
-            .chain()
-            .find_map(|e| e.downcast_ref::<std::io::Error>())
-        {
-            match error.kind() {
-                std::io::ErrorKind::NotFound => "FILE_NOT_FOUND",
-                std::io::ErrorKind::PermissionDenied => "PERMISSION_DENIED",
-                std::io::ErrorKind::WouldBlock => "FILE_BUSY",
-                std::io::ErrorKind::InvalidInput => "INVALID_PATH",
-                _ => "STORAGE_ERROR",
-            }
-            .to_string()
-        } else {
-            "EXECUTION_ERROR".to_string()
-        };
-        let message = message
-            .strip_prefix(&format!("{code}:"))
-            .map(str::trim_start)
-            .unwrap_or(&message)
-            .to_string();
+        let (code, message) = crate::error::wire(error);
         Self::Error { code, message }
     }
 }

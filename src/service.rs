@@ -1,6 +1,7 @@
 use crate::config;
 #[cfg(not(target_os = "linux"))]
 use crate::config::device_dir;
+use crate::error::ErrorCode;
 use anyhow::{Context, Result, bail};
 #[cfg(unix)]
 use std::path::PathBuf;
@@ -17,12 +18,12 @@ async fn command(program: &str, args: &[&str]) -> Result<()> {
     let output = cmd
         .output()
         .await
-        .with_context(|| format!("SERVICE_UNAVAILABLE: {program}"))?;
+        .with_context(|| ErrorCode::ServiceUnavailable.error(program.to_string()))?;
     if !output.status.success() {
-        bail!(
-            "SERVICE_FAILED: {program}: {}",
+        bail!(ErrorCode::ServiceFailed.error(format!(
+            "{program}: {}",
             String::from_utf8_lossy(&output.stderr)
-        )
+        )))
     }
     Ok(())
 }
@@ -52,7 +53,7 @@ pub async fn install(kind: &str) -> Result<()> {
 #[cfg(target_os = "linux")]
 pub async fn install_with_executable(kind: &str, exe: &Path) -> Result<()> {
     if !["server", "daemon"].contains(&kind) {
-        bail!("INVALID_SERVICE: {kind}")
+        bail!(ErrorCode::InvalidService.error(kind.to_string()))
     }
     let path = unit_path(kind)?;
     let text = format!(
@@ -114,7 +115,7 @@ pub async fn install(kind: &str) -> Result<()> {
 #[cfg(target_os = "macos")]
 pub async fn install_with_executable(kind: &str, exe: &Path) -> Result<()> {
     if kind != "daemon" {
-        bail!("UNSUPPORTED_PLATFORM: Server requires Linux")
+        bail!(ErrorCode::UnsupportedPlatform.error("Server requires Linux"))
     }
     let path = unit_path(kind)?;
     let dir = device_dir()?;
@@ -169,7 +170,7 @@ pub async fn install(kind: &str) -> Result<()> {
 #[cfg(windows)]
 pub async fn install_with_executable(kind: &str, exe: &Path) -> Result<()> {
     if kind != "daemon" {
-        bail!("UNSUPPORTED_PLATFORM: Server requires Linux")
+        bail!(ErrorCode::UnsupportedPlatform.error("Server requires Linux"))
     }
     let script = r#"$u=[Security.Principal.WindowsIdentity]::GetCurrent().Name; $a=New-ScheduledTaskAction -Execute $env:XRUN_SERVICE_EXE -Argument daemon; $t=New-ScheduledTaskTrigger -AtLogOn -User $u; $p=New-ScheduledTaskPrincipal -UserId $u -LogonType Interactive -RunLevel Limited; $s=New-ScheduledTaskSettingsSet -RestartCount 999 -RestartInterval (New-TimeSpan -Minutes 1) -ExecutionTimeLimit ([TimeSpan]::Zero) -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries; Register-ScheduledTask -TaskName xrun-daemon -Action $a -Trigger $t -Principal $p -Settings $s -Force | Out-Null; Start-ScheduledTask -TaskName xrun-daemon"#;
     let output = tokio::process::Command::new("powershell.exe")
@@ -180,8 +181,7 @@ pub async fn install_with_executable(kind: &str, exe: &Path) -> Result<()> {
         .await?;
     if !output.status.success() {
         bail!(
-            "SERVICE_FAILED: {}",
-            String::from_utf8_lossy(&output.stderr)
+            ErrorCode::ServiceFailed.error(format!("{}", String::from_utf8_lossy(&output.stderr)))
         )
     }
     config::atomic_private_write(&device_dir()?.join("daemon.service"), b"scheduled-task\n")?;
@@ -190,7 +190,7 @@ pub async fn install_with_executable(kind: &str, exe: &Path) -> Result<()> {
 
 pub async fn start(kind: &str) -> Result<()> {
     if !installed(kind)? {
-        bail!("SERVICE_NOT_INSTALLED: {kind}")
+        bail!(ErrorCode::ServiceNotInstalled.error(kind.to_string()))
     }
     #[cfg(target_os = "linux")]
     return command(
@@ -247,7 +247,10 @@ pub async fn stop_daemon() -> Result<()> {
         #[cfg(target_os = "linux")]
         command("systemctl", &["--user", "stop", "xrun-daemon.service"]).await?;
         #[cfg(windows)]
-        bail!("DAEMON_UPGRADE_REQUIRED: stop the old daemon before upgrading to the desktop app");
+        bail!(
+            ErrorCode::DaemonUpgradeRequired
+                .error("stop the old daemon before upgrading to the desktop app")
+        );
     }
     tokio::time::timeout(Duration::from_secs(12), async {
         while config::instance_running(&dir.join("daemon.lock"))? {
@@ -256,7 +259,7 @@ pub async fn stop_daemon() -> Result<()> {
         Ok::<_, anyhow::Error>(())
     })
     .await
-    .context("DAEMON_STOP_TIMEOUT: daemon did not finish cleanup")?
+    .context(ErrorCode::DaemonStopTimeout.error("daemon did not finish cleanup"))?
 }
 #[cfg(windows)]
 pub async fn uninstall(kind: &str) -> Result<()> {
@@ -308,5 +311,5 @@ pub async fn restart(kind: &str) -> Result<()> {
 }
 #[cfg(not(target_os = "linux"))]
 pub async fn restart(_kind: &str) -> Result<()> {
-    bail!("UNSUPPORTED_PLATFORM: Server requires Linux")
+    bail!(ErrorCode::UnsupportedPlatform.error("Server requires Linux"))
 }

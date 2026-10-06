@@ -1,5 +1,6 @@
 //! Private, per-user communication with the existing daemon. The endpoint is
 //! random and its advertisement lives in the protected device directory.
+use crate::error::ErrorCode;
 use crate::{
     config::{self, Identity},
     net::{self, Io, Ws},
@@ -70,7 +71,7 @@ pub(crate) async fn connect(id: &Identity, target: &str) -> Result<Option<Ws>> {
     let endpoint: Endpoint =
         serde_json::from_slice(&bytes).context("read local daemon endpoint")?;
     if endpoint.version != VERSION {
-        bail!("VERSION_MISMATCH: restart the local daemon with this release");
+        bail!(ErrorCode::VersionMismatch.error("restart the local daemon with this release"));
     }
     let io = match tokio::time::timeout(Duration::from_secs(2), open(&endpoint.address)).await {
         Ok(Ok(io)) => io,
@@ -84,7 +85,7 @@ pub(crate) async fn connect(id: &Identity, target: &str) -> Result<Option<Ws>> {
             return Ok(None);
         }
         Ok(Err(e)) => return Err(e.into()),
-        Err(_) => bail!("CONNECT_TIMEOUT: local daemon did not accept connection"),
+        Err(_) => bail!(ErrorCode::ConnectTimeout.error("local daemon did not accept connection")),
     };
     let mut ws = framed(io, Role::Client).await;
     net::send(
@@ -168,7 +169,7 @@ impl Listener {
         let io: Io = {
             let (stream, _) = self.listener.accept().await?;
             if stream.peer_cred()?.uid() != unsafe { libc::geteuid() } {
-                bail!("PERMISSION_DENIED: local user differs");
+                bail!(ErrorCode::PermissionDenied.error("local user differs"));
             }
             Box::new(stream)
         };
@@ -267,12 +268,12 @@ pub(crate) async fn stop(dir: &Path, generation: &str) -> Result<()> {
             }
             value => {
                 if let Ok(Data::Error { code, message }) = serde_json::from_value(value) {
-                    bail!("{code}: {message}");
+                    bail!(crate::error::CodedError::from_wire(code, message));
                 }
-                bail!("INVALID_MESSAGE: expected stop acknowledgement");
+                bail!(ErrorCode::InvalidMessage.error("expected stop acknowledgement"));
             }
         }
     })
     .await
-    .context("DAEMON_STOP_TIMEOUT: local daemon did not acknowledge shutdown")?
+    .context(ErrorCode::DaemonStopTimeout.error("local daemon did not acknowledge shutdown"))?
 }

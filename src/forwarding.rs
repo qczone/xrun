@@ -1,3 +1,4 @@
+use crate::error::ErrorCode;
 use crate::{
     net::Ws,
     protocol::{Data, FILE_CHUNK},
@@ -20,7 +21,7 @@ use tokio_tungstenite::tungstenite::Message;
 
 pub async fn connect_loopback(port: u16) -> Result<TcpStream> {
     if port == 0 {
-        bail!("INVALID_PORT: remote port must be 1..65535")
+        bail!(ErrorCode::InvalidPort.error("remote port must be 1..65535"))
     }
     let mut error = None;
     for host in ["127.0.0.1", "::1"] {
@@ -34,8 +35,8 @@ pub async fn connect_loopback(port: u16) -> Result<TcpStream> {
         }
     }
     bail!(
-        "FORWARD_CONNECT_FAILED: localhost:{port}: {}",
-        error.unwrap_or_default()
+        ErrorCode::ForwardConnectFailed
+            .error(format!("localhost:{port}: {}", error.unwrap_or_default()))
     )
 }
 
@@ -63,11 +64,11 @@ pub async fn bridge(ws: &mut Ws, tcp: TcpStream) -> Result<()> {
             input_tx
                 .send(message)
                 .await
-                .context("CONNECTION_CLOSED: forwarding writer stopped")?;
+                .context(ErrorCode::ConnectionClosed.error("forwarding writer stopped"))?;
             if n == 0 {
-                ack_rx
-                    .await
-                    .context("CONNECTION_CLOSED: peer did not acknowledge forwarding EOF")?;
+                ack_rx.await.context(
+                    ErrorCode::ConnectionClosed.error("peer did not acknowledge forwarding EOF"),
+                )?;
                 return Ok::<_, anyhow::Error>(());
             }
         }
@@ -89,28 +90,30 @@ pub async fn bridge(ws: &mut Ws, tcp: TcpStream) -> Result<()> {
                             serde_json::to_string(&Data::ForwardEofAck)?.into(),
                         ))
                         .await
-                        .context("CONNECTION_CLOSED: forwarding writer stopped")?;
+                        .context(ErrorCode::ConnectionClosed.error("forwarding writer stopped"))?;
                     }
                     Data::ForwardEofAck if !acknowledged && sent_eof.load(Ordering::Relaxed) => {
                         acknowledged = true;
                         let _ = ack_tx.take().unwrap().send(());
                     }
-                    Data::Error { code, message } => bail!("{code}: {message}"),
-                    _ => bail!("INVALID_MESSAGE: expected forwarding EOF"),
+                    Data::Error { code, message } => {
+                        bail!(crate::error::CodedError::from_wire(code, message))
+                    }
+                    _ => bail!(ErrorCode::InvalidMessage.error("expected forwarding EOF")),
                 },
                 Message::Ping(bytes) => tx
                     .send(Message::Pong(bytes))
                     .await
-                    .context("CONNECTION_CLOSED: forwarding writer stopped")?,
+                    .context(ErrorCode::ConnectionClosed.error("forwarding writer stopped"))?,
                 Message::Pong(_) => {}
                 Message::Close(_) => break,
-                _ => bail!("INVALID_MESSAGE: forwarding chunk exceeds limit"),
+                _ => bail!(ErrorCode::InvalidMessage.error("forwarding chunk exceeds limit")),
             }
             if received_eof && acknowledged {
                 return Ok::<_, anyhow::Error>(());
             }
         }
-        bail!("CONNECTION_CLOSED: forwarded TCP connection interrupted")
+        bail!(ErrorCode::ConnectionClosed.error("forwarded TCP connection interrupted"))
     };
     let writer = async move {
         let mut ping = tokio::time::interval(Duration::from_secs(15));
@@ -121,7 +124,7 @@ pub async fn bridge(ws: &mut Ws, tcp: TcpStream) -> Result<()> {
             };
             tokio::time::timeout(Duration::from_secs(300), socket_tx.send(message))
                 .await
-                .context("FORWARD_TIMEOUT: receiver is not reading")??;
+                .context(ErrorCode::ForwardTimeout.error("receiver is not reading"))??;
         }
     };
     tokio::try_join!(send, receive, writer)?;

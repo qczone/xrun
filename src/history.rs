@@ -1,4 +1,5 @@
 //! Local, read-only views of the daemon's existing task and file records.
+use crate::error::ErrorCode;
 use crate::{config, protocol::*};
 use anyhow::{Context, Result, bail};
 use base64::{Engine, engine::general_purpose::STANDARD};
@@ -62,7 +63,7 @@ pub fn tasks(before: Option<i64>, filter: &str) -> Result<TaskPage> {
 
 fn tasks_at(path: &Path, before: Option<i64>, filter: &str) -> Result<TaskPage> {
     if !["all", "running", "failed"].contains(&filter) {
-        bail!("INVALID_FILTER: expected all, running or failed");
+        bail!(ErrorCode::InvalidFilter.error("expected all, running or failed"));
     }
     let Some(mut db) = open(path)? else {
         return Ok(TaskPage {
@@ -109,20 +110,21 @@ pub fn output(expected_db: &str, job: &str, after: Option<u64>) -> Result<TaskOu
 }
 
 fn output_at(path: &Path, expected_db: &str, job: &str, after: Option<u64>) -> Result<TaskOutput> {
-    let mut db = open(path)?.context("DB_MISSING: task database is no longer available")?;
+    let mut db =
+        open(path)?.context(ErrorCode::DbMissing.error("task database is no longer available"))?;
     let tx = db.transaction()?;
     if db_id(&tx)? != expected_db {
-        bail!("DB_RESET: task database has been replaced; refresh the task list");
+        bail!(ErrorCode::DbReset.error("task database has been replaced; refresh the task list"));
     }
     let value: String = tx
         .query_row("SELECT data FROM jobs WHERE id=?1", [job], |r| r.get(0))
         .optional()?
-        .context("JOB_NOT_FOUND: task is no longer available")?;
+        .context(ErrorCode::JobNotFound.error("task is no longer available"))?;
     let job: Job = serde_json::from_str(&value)?;
     let after = after
         .map(i64::try_from)
         .transpose()
-        .context("INVALID_CURSOR: log sequence is too large")?;
+        .context(ErrorCode::InvalidCursor.error("log sequence is too large"))?;
     let sql = if after.is_some() {
         "SELECT seq,stream,bytes FROM logs WHERE job=?1 AND seq>?2 ORDER BY seq LIMIT ?3"
     } else {
@@ -230,12 +232,10 @@ mod tests {
         let db = open(&path)?.unwrap();
         assert!(db.execute("DELETE FROM jobs", []).is_err());
         assert_eq!(tasks_at(&path, None, "all")?.jobs.len(), 1);
-        assert!(
-            output_at(&path, "old-db", "000001", None)
-                .unwrap_err()
-                .to_string()
-                .starts_with("DB_RESET")
-        );
+        assert!(crate::error::is(
+            &output_at(&path, "old-db", "000001", None).unwrap_err(),
+            ErrorCode::DbReset
+        ));
         Ok(())
     }
 

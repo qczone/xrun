@@ -795,6 +795,8 @@ CLI 的 start 入口使用 exec，并把解析后的实际超时发给 daemon；
 
 错误统一使用 `{"type":"error","code":"错误码","message":"说明"}`，message 去掉已有的同一错误码前缀，CLI 只拼接一次。
 
+Rust 内部用 `error::ErrorCode` 和 `CodedError` 标识错误，协议边界保留现有 code 字符串。添加 anyhow 上下文或修改说明不会改变分类；未知远端错误码保留原值，不按字符串前缀推断含义。退出码同时取决于请求阶段：发送前失败、明确拒绝与送达后结果未确认分别处理，不能只按错误码直接映射退出码。
+
 ### 6.3 版本和限制
 
 CLI、Rust 中转和 daemon 使用核心包中的完整发布版本，与 `xrun --version` 一致；Cloudflare 部署脚本从根 Cargo.toml 读取该版本，写入 Worker 的 `XRUN_VERSION`。本机 IPC、外层 WSS 和端到端会话都检查版本，不一致在业务处理前返回 `VERSION_MISMATCH`。不单独维护协议版本号，也不按“主版本相同”判断兼容。

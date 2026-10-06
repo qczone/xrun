@@ -1,4 +1,5 @@
 use crate::config::ServerConfig;
+use crate::error::ErrorCode;
 use anyhow::{Context, Result};
 use axum::{Router, body::Body, http::StatusCode};
 use std::{
@@ -155,7 +156,7 @@ pub fn instance_lock(dir: &std::path::Path) -> Result<std::fs::File> {
         .truncate(false)
         .open(dir.join("server.lock"))?;
     lock.try_lock()
-        .context("SERVER_RUNNING: server already running")?;
+        .context(ErrorCode::ServerRunning.error("server already running"))?;
     Ok(lock)
 }
 pub async fn run(config: ServerConfig) -> Result<()> {

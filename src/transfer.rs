@@ -1,3 +1,4 @@
+use crate::error::ErrorCode;
 use crate::{config::sync_parent, protocol::MAX_FILE};
 use anyhow::{Context, Result, bail};
 use sha2::{Digest, Sha256};
@@ -11,7 +12,7 @@ use tokio::sync::Mutex as AsyncMutex;
 
 pub fn remote_path(value: &str, cwd: &Path) -> Result<PathBuf> {
     if value.is_empty() || value.contains('\0') {
-        bail!("INVALID_PATH: empty path or NUL")
+        bail!(ErrorCode::InvalidPath.error("empty path or NUL"))
     };
     let p = Path::new(value);
     Ok(if p.is_absolute() {
@@ -27,13 +28,13 @@ fn open_file(path: &Path) -> Result<std::fs::File> {
     let metadata = std::fs::metadata(path)
         .with_context(|| format!("read file metadata: {}", path.display()))?;
     if metadata.is_dir() {
-        bail!("IS_DIRECTORY: {}", path.display())
+        bail!(ErrorCode::IsDirectory.error(format!("{}", path.display())))
     }
     if !metadata.is_file() {
-        bail!("INVALID_PATH: only regular files are supported")
+        bail!(ErrorCode::InvalidPath.error("only regular files are supported"))
     }
     if metadata.len() > MAX_FILE {
-        bail!("FILE_TOO_LARGE: maximum {MAX_FILE} bytes")
+        bail!(ErrorCode::FileTooLarge.error(format!("maximum {MAX_FILE} bytes")))
     }
     let mut options = std::fs::OpenOptions::new();
     options.read(true);
@@ -44,7 +45,7 @@ fn open_file(path: &Path) -> Result<std::fs::File> {
     }
     let file = options.open(path)?;
     if !file.metadata()?.is_file() {
-        bail!("INVALID_PATH: only regular files are supported")
+        bail!(ErrorCode::InvalidPath.error("only regular files are supported"))
     }
     Ok(file)
 }
@@ -53,7 +54,7 @@ pub fn read_file(path: &Path) -> Result<Vec<u8>> {
     let mut bytes = vec![];
     file.take(MAX_FILE + 1).read_to_end(&mut bytes)?;
     if bytes.len() as u64 > MAX_FILE {
-        bail!("FILE_TOO_LARGE: maximum {MAX_FILE} bytes")
+        bail!(ErrorCode::FileTooLarge.error(format!("maximum {MAX_FILE} bytes")))
     }
     Ok(bytes)
 }
@@ -69,7 +70,7 @@ fn copy_hashed(file: impl Read, output: &mut impl std::io::Write) -> Result<(u64
         }
         size += n as u64;
         if size > MAX_FILE {
-            bail!("FILE_TOO_LARGE: maximum {MAX_FILE} bytes")
+            bail!(ErrorCode::FileTooLarge.error(format!("maximum {MAX_FILE} bytes")))
         }
         output.write_all(&chunk[..n])?;
         digest.update(&chunk[..n]);
@@ -103,7 +104,7 @@ fn destination(path: &Path, mkdir: bool) -> Result<PathBuf> {
 }
 fn destination_inner(path: &Path, mkdir: bool, depth: usize) -> Result<PathBuf> {
     if depth > 40 {
-        bail!("INVALID_PATH: symlink loop")
+        bail!(ErrorCode::InvalidPath.error("symlink loop"))
     }
     if let Ok(metadata) = std::fs::symlink_metadata(path)
         && metadata.file_type().is_symlink()
@@ -118,19 +119,24 @@ fn destination_inner(path: &Path, mkdir: bool, depth: usize) -> Result<PathBuf> 
     }
     if let Ok(metadata) = std::fs::metadata(path) {
         if metadata.is_dir() {
-            bail!("IS_DIRECTORY: {}", path.display())
+            bail!(ErrorCode::IsDirectory.error(format!("{}", path.display())))
         }
         if !metadata.is_file() {
-            bail!("INVALID_PATH: only regular files are supported")
+            bail!(ErrorCode::InvalidPath.error("only regular files are supported"))
         }
     }
-    let parent = path.parent().context("INVALID_PATH: no parent directory")?;
+    let parent = path
+        .parent()
+        .context(ErrorCode::InvalidPath.error("no parent directory"))?;
     if mkdir {
         std::fs::create_dir_all(parent)?
     }
     let parent = std::fs::canonicalize(parent)
-        .context("PARENT_NOT_FOUND: destination directory must exist")?;
-    Ok(parent.join(path.file_name().context("INVALID_PATH: no filename")?))
+        .context(ErrorCode::ParentNotFound.error("destination directory must exist"))?;
+    Ok(parent.join(
+        path.file_name()
+            .context(ErrorCode::InvalidPath.error("no filename"))?,
+    ))
 }
 static LOCKS: OnceLock<Mutex<HashMap<PathBuf, Weak<AsyncMutex<()>>>>> = OnceLock::new();
 pub async fn push(
@@ -141,13 +147,13 @@ pub async fn push(
     expect: Option<String>,
 ) -> Result<PathBuf> {
     if contents.as_file().metadata()?.len() > MAX_FILE {
-        bail!("FILE_TOO_LARGE: maximum {MAX_FILE} bytes")
+        bail!(ErrorCode::FileTooLarge.error(format!("maximum {MAX_FILE} bytes")))
     }
     if expect.as_ref().is_some_and(|s| !valid_hash(s)) {
-        bail!("INVALID_EXPECT: expected a full SHA-256")
+        bail!(ErrorCode::InvalidExpect.error("expected a full SHA-256"))
     }
     if no_overwrite && expect.is_some() {
-        bail!("INVALID_REQUEST: expect conflicts with no-overwrite")
+        bail!(ErrorCode::InvalidRequest.error("expect conflicts with no-overwrite"))
     }
     let path = destination(&path, mkdir)?;
     let lock = {
@@ -180,7 +186,7 @@ fn check_expect(path: &Path, expect: Option<&str>) -> Result<()> {
     if let Some(hash) = expect {
         match open_file(path).and_then(|file| copy_hashed(file, &mut std::io::sink())) {
             Ok((_, actual)) if actual.eq_ignore_ascii_case(hash) => {}
-            _ => bail!("STALE: destination no longer matches expected SHA-256"),
+            _ => bail!(ErrorCode::Stale.error("destination no longer matches expected SHA-256")),
         }
     }
     Ok(())
@@ -195,14 +201,14 @@ fn save(
     let metadata = std::fs::metadata(path).ok();
     if let Some(m) = &metadata {
         if m.is_dir() {
-            bail!("IS_DIRECTORY: {}", path.display())
+            bail!(ErrorCode::IsDirectory.error(format!("{}", path.display())))
         }
         if !m.is_file() {
-            bail!("INVALID_PATH: only regular files are supported")
+            bail!(ErrorCode::InvalidPath.error("only regular files are supported"))
         }
     }
     if no_overwrite && metadata.is_some() {
-        bail!("ALREADY_EXISTS: {}", path.display())
+        bail!(ErrorCode::AlreadyExists.error(format!("{}", path.display())))
     }
     let mut builder = tempfile::Builder::new();
     builder.prefix(".xrun-transfer-");
@@ -230,11 +236,12 @@ fn save(
     check_expect(path, expect)?;
     if no_overwrite {
         temp.persist_noclobber(path)
-            .map_err(|e| anyhow::anyhow!("ALREADY_EXISTS: {}", e.error))?;
+            .map_err(|e| anyhow::anyhow!(ErrorCode::AlreadyExists.error(format!("{}", e.error))))?;
     } else {
         replace(temp, path)?;
     }
-    sync_parent(path).context("UNCONFIRMED: destination replaced but directory sync failed")?;
+    sync_parent(path)
+        .context(ErrorCode::Unconfirmed.error("destination replaced but directory sync failed"))?;
     Ok(())
 }
 #[cfg(not(windows))]
@@ -288,10 +295,12 @@ pub fn save_local(path: &Path, bytes: &[u8]) -> Result<PathBuf> {
 pub fn save_local_reader(path: &Path, input: &mut impl Read) -> Result<PathBuf> {
     // Resolve the chosen parent, never the final path component. Publication
     // replaces that directory entry rather than writing through a link.
-    let name = path.file_name().context("INVALID_PATH: missing filename")?;
+    let name = path
+        .file_name()
+        .context(ErrorCode::InvalidPath.error("missing filename"))?;
     let path = path
         .parent()
-        .context("INVALID_PATH: missing parent")?
+        .context(ErrorCode::InvalidPath.error("missing parent"))?
         .canonicalize()?
         .join(name);
     let metadata = local_metadata(&path)?;
@@ -304,20 +313,21 @@ pub fn save_local_reader(path: &Path, input: &mut impl Read) -> Result<PathBuf> 
     local_metadata(&path)?;
     // MoveFileExW on Windows, rename on Unix; do not use ReplaceFileW here.
     temp.into_temp_path().persist(&path).map_err(|e| e.error)?;
-    sync_parent(&path).context("UNCONFIRMED: destination replaced but directory sync failed")?;
+    sync_parent(&path)
+        .context(ErrorCode::Unconfirmed.error("destination replaced but directory sync failed"))?;
     Ok(path)
 }
 fn local_metadata(path: &Path) -> Result<Option<std::fs::Metadata>> {
     match std::fs::symlink_metadata(path) {
         Ok(metadata) => {
             if metadata.file_type().is_symlink() {
-                bail!("INVALID_PATH: local destination must not be a symbolic link")
+                bail!(ErrorCode::InvalidPath.error("local destination must not be a symbolic link"))
             }
             if metadata.is_dir() {
-                bail!("IS_DIRECTORY: local destination is a directory")
+                bail!(ErrorCode::IsDirectory.error("local destination is a directory"))
             }
             if !metadata.is_file() {
-                bail!("INVALID_PATH: local destination must be a regular file")
+                bail!(ErrorCode::InvalidPath.error("local destination must be a regular file"))
             }
             Ok(Some(metadata))
         }

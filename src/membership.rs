@@ -1,5 +1,6 @@
 //! Network authority lives on the manager; signed records travel between peers.
 //! Relay transport certificates and routing claims do not establish peer identity.
+use crate::error::ErrorCode;
 use crate::{config, crypto, protocol::*};
 use anyhow::{Context, Result, bail};
 use base64::{Engine, engine::general_purpose::STANDARD};
@@ -77,11 +78,11 @@ pub fn sign<T: Serialize>(key_pem: &str, domain: &str, value: &T) -> Result<Stri
         &key.serialize_der(),
         &random,
     )
-    .map_err(|_| anyhow::anyhow!("INVALID_KEY: expected a P-256 private key"))?;
+    .map_err(|_| anyhow::anyhow!(ErrorCode::InvalidKey.error("expected a P-256 private key")))?;
     Ok(STANDARD.encode(
         signer
             .sign(&random, &payload(domain, value)?)
-            .map_err(|_| anyhow::anyhow!("SIGNATURE_ERROR: signing failed"))?
+            .map_err(|_| anyhow::anyhow!(ErrorCode::SignatureError.error("signing failed")))?
             .as_ref(),
     ))
 }
@@ -93,17 +94,19 @@ pub fn verify<T: Serialize>(
 ) -> Result<()> {
     let der = crypto::cert_der(cert_pem)?;
     let (_, cert) = x509_parser::parse_x509_certificate(&der)
-        .map_err(|e| anyhow::anyhow!("INVALID_CERTIFICATE: {e}"))?;
+        .map_err(|e| anyhow::anyhow!(ErrorCode::InvalidCertificate.error(format!("{e}"))))?;
     signature::UnparsedPublicKey::new(
         &signature::ECDSA_P256_SHA256_ASN1,
         cert.public_key().subject_public_key.data.as_ref(),
     )
     .verify(&payload(domain, value)?, &STANDARD.decode(signature)?)
-    .map_err(|_| anyhow::anyhow!("INVALID_SIGNATURE: record signature does not match"))
+    .map_err(|_| {
+        anyhow::anyhow!(ErrorCode::InvalidSignature.error("record signature does not match"))
+    })
 }
 pub fn device_name(id: &str) -> Result<String> {
     if !valid_id(id) {
-        bail!("INVALID_DEVICE_ID: expected an immutable device ID")
+        bail!(ErrorCode::InvalidDeviceId.error("expected an immutable device ID"))
     }
     Ok(format!("d{}.xrun", &id[4..]))
 }
@@ -141,7 +144,7 @@ impl SignedRoster {
         if r.network_id != expected_network
             || r.network_id != format!("net_{}", crypto::ca_spki_pin(&self.ca_pem)?)
         {
-            bail!("NETWORK_MISMATCH: roster belongs to another network")
+            bail!(ErrorCode::NetworkMismatch.error("roster belongs to another network"))
         }
         verify(
             &self.ca_pem,
@@ -155,7 +158,7 @@ impl SignedRoster {
             || r.relay_addresses.is_empty()
             || r.relay_addresses.len() > 8
         {
-            bail!("INVALID_ROSTER: invalid version or member/address count")
+            bail!(ErrorCode::InvalidRoster.error("invalid version or member/address count"))
         }
         let mut ids = HashSet::new();
         let mut keys = HashSet::new();
@@ -169,7 +172,7 @@ impl SignedRoster {
                 || !keys.insert(&m.key_fp)
                 || (!m.revoked && !names.insert(&m.name))
             {
-                bail!("INVALID_ROSTER: invalid or duplicated member")
+                bail!(ErrorCode::InvalidRoster.error("invalid or duplicated member"))
             }
         }
         if !r
@@ -177,7 +180,7 @@ impl SignedRoster {
             .iter()
             .any(|m| m.device_id == r.manager_id && !m.revoked)
         {
-            bail!("INVALID_ROSTER: manager must be an active member")
+            bail!(ErrorCode::InvalidRoster.error("manager must be an active member"))
         }
         if !r.relay_ca_pem.is_empty() {
             crypto::cert_der(&r.relay_ca_pem)?;
@@ -193,7 +196,8 @@ impl SignedRoster {
                 || u.fragment().is_some()
             {
                 bail!(
-                    "INVALID_ROSTER: expected HTTPS relay addresses with an optional random route"
+                    ErrorCode::InvalidRoster
+                        .error("expected HTTPS relay addresses with an optional random route")
                 )
             }
         }
@@ -211,43 +215,43 @@ impl SignedRoster {
                     .find(|m| m.name == selector && !m.revoked)
             })
             .or_else(|| self.roster.members.iter().find(|m| m.name == selector))
-            .context("UNKNOWN_DEVICE: device is not in the signed roster")
+            .context(ErrorCode::UnknownDevice.error("device is not in the signed roster"))
     }
     // Call only after TLS has validated the certificate chain and validity.
     pub fn peer(&self, der: &[u8], expected: Option<&str>) -> Result<&Member> {
         let (id, fp) = crypto::peer_identity(der)?;
         if expected.is_some_and(|target| target != id) {
-            bail!("IDENTITY_MISMATCH: unexpected peer device")
+            bail!(ErrorCode::IdentityMismatch.error("unexpected peer device"))
         }
         let member = self.member(&id)?;
         if member.key_fp != fp {
-            bail!("IDENTITY_MISMATCH: certificate key differs from the roster")
+            bail!(ErrorCode::IdentityMismatch.error("certificate key differs from the roster"))
         }
         if member.revoked {
-            bail!("DEVICE_REVOKED: peer identity has been revoked")
+            bail!(ErrorCode::DeviceRevoked.error("peer identity has been revoked"))
         }
         Ok(member)
     }
     pub fn check_successor(&self, next: &Self) -> Result<()> {
         next.verify(&self.roster.network_id)?;
         if crypto::cert_der(&next.ca_pem)? != crypto::cert_der(&self.ca_pem)? {
-            bail!("INVALID_ROSTER: network root certificate cannot change")
+            bail!(ErrorCode::InvalidRoster.error("network root certificate cannot change"))
         }
         if next.roster.manager_id != self.roster.manager_id {
-            bail!("INVALID_ROSTER: manager identity cannot change")
+            bail!(ErrorCode::InvalidRoster.error("manager identity cannot change"))
         }
         if next.roster.version < self.roster.version {
-            bail!("ROSTER_ROLLBACK: refusing an older roster")
+            bail!(ErrorCode::RosterRollback.error("refusing an older roster"))
         }
         if next.roster.version == self.roster.version && next.hash()? != self.hash()? {
-            bail!("ROSTER_CONFLICT: same version contains different content")
+            bail!(ErrorCode::RosterConflict.error("same version contains different content"))
         }
         for old in &self.roster.members {
             let new = next
                 .member(&old.device_id)
-                .context("INVALID_ROSTER: members cannot be removed")?;
+                .context(ErrorCode::InvalidRoster.error("members cannot be removed"))?;
             if new.key_fp != old.key_fp || new.name != old.name || (old.revoked && !new.revoked) {
-                bail!("INVALID_ROSTER: member identity cannot change or reactivate")
+                bail!(ErrorCode::InvalidRoster.error("member identity cannot change or reactivate"))
             }
         }
         Ok(())
@@ -261,18 +265,18 @@ impl SignedReceipt {
             || p.device_id != expected_device
             || p.device_id == p.manager_id
         {
-            bail!("INVALID_RECEIPT: pairing result is not bound to these devices")
+            bail!(ErrorCode::InvalidReceipt.error("pairing result is not bound to these devices"))
         }
         verify(&roster.ca_pem, "pairing", p, &self.signature)?;
         if roster.member(&p.device_id)?.revoked {
-            bail!("DEVICE_REVOKED: pairing identity has been revoked")
+            bail!(ErrorCode::DeviceRevoked.error("pairing identity has been revoked"))
         }
         Ok(())
     }
 }
 fn database(path: &Path, create: bool) -> Result<Connection> {
     if !create && !path.exists() {
-        bail!("MANAGER_STATE_MISSING: refusing to recreate network authority")
+        bail!(ErrorCode::ManagerStateMissing.error("refusing to recreate network authority"))
     }
     let parent = path.parent().context("missing database parent")?;
     std::fs::create_dir_all(parent)?;
@@ -319,7 +323,7 @@ impl Manager {
         relay_ca_pem: String,
     ) -> Result<(Self, Member, String, String)> {
         if !valid_name(name) {
-            bail!("INVALID_NAME: choose a nonreserved lowercase device name")
+            bail!(ErrorCode::InvalidName.error("choose a nonreserved lowercase device name"))
         }
         std::fs::create_dir_all(dir)?;
         config::restrict_dir(dir)?;
@@ -330,12 +334,12 @@ impl Manager {
             .write(true)
             .open(dir.join("manager.lock"))?;
         lock.try_lock()
-            .context("MANAGER_BUSY: network creation is already running")?;
+            .context(ErrorCode::ManagerBusy.error("network creation is already running"))?;
         if ["root.pem", "root.key", "manager.db", "device.key.pending"]
             .iter()
             .any(|n| dir.join(n).exists())
         {
-            bail!("MANAGER_STATE_EXISTS: refusing to overwrite network authority")
+            bail!(ErrorCode::ManagerStateExists.error("refusing to overwrite network authority"))
         }
         let root_key = KeyPair::generate()?;
         let mut params = CertificateParams::default();
@@ -391,14 +395,14 @@ impl Manager {
     }
     pub fn open(dir: &Path) -> Result<Self> {
         let ca_pem = std::fs::read_to_string(dir.join("root.pem"))
-            .context("MANAGER_STATE_MISSING: root certificate is missing")?;
+            .context(ErrorCode::ManagerStateMissing.error("root certificate is missing"))?;
         let key_pem = std::fs::read_to_string(dir.join("root.key"))
-            .context("MANAGER_STATE_MISSING: root key is missing")?;
+            .context(ErrorCode::ManagerStateMissing.error("root key is missing"))?;
         let db = database(&dir.join("manager.db"), false)?;
         let roster = state(&db)?;
         roster.verify(&roster.roster.network_id)?;
         if crypto::ca_spki_pin(&ca_pem)? != crypto::ca_spki_pin(&roster.ca_pem)? {
-            bail!("MANAGER_STATE_MISMATCH: root differs from the stored roster")
+            bail!(ErrorCode::ManagerStateMismatch.error("root differs from the stored roster"))
         }
         verify(
             &ca_pem,
@@ -425,7 +429,7 @@ impl Manager {
         db.execute("DELETE FROM invitations WHERE expires<=?1", [now_ms()])?;
         let count: i64 = db.query_row("SELECT COUNT(*) FROM invitations", [], |r| r.get(0))?;
         if count >= 256 {
-            bail!("INVITATION_LIMIT: too many active invitations")
+            bail!(ErrorCode::InvitationLimit.error("too many active invitations"))
         }
         db.execute(
             "INSERT INTO invitations VALUES(?1,?2,?3)",
@@ -446,15 +450,15 @@ impl Manager {
             .cloned();
         let member = if let Some(member) = existing {
             if member.revoked {
-                bail!("DEVICE_REVOKED: old private keys cannot rejoin")
+                bail!(ErrorCode::DeviceRevoked.error("old private keys cannot rejoin"))
             }
             member
         } else {
             if !valid_name(name) {
-                bail!("INVALID_NAME: choose a nonreserved lowercase device name")
+                bail!(ErrorCode::InvalidName.error("choose a nonreserved lowercase device name"))
             }
             if roster.roster.members.len() >= 256 {
-                bail!("MEMBER_LIMIT: network member limit reached")
+                bail!(ErrorCode::MemberLimit.error("network member limit reached"))
             }
             if roster
                 .roster
@@ -462,7 +466,7 @@ impl Manager {
                 .iter()
                 .any(|m| m.name == name && !m.revoked)
             {
-                bail!("NAME_IN_USE: choose another name")
+                bail!(ErrorCode::NameInUse.error("choose another name"))
             }
             let allow: bool = tx
                 .query_row(
@@ -471,7 +475,7 @@ impl Manager {
                     |r| r.get(0),
                 )
                 .optional()?
-                .context("INVALID_TOKEN: invitation expired or was consumed")?;
+                .context(ErrorCode::InvalidToken.error("invitation expired or was consumed"))?;
             let member = Member {
                 device_id: format!("dev_{}", uuid::Uuid::new_v4().simple()),
                 name: name.into(),
@@ -540,7 +544,7 @@ impl Manager {
         let old = state(&tx)?;
         let target = old.member(selector)?;
         if target.device_id == old.roster.manager_id {
-            bail!("MANAGER_PROTECTED: manager cannot revoke itself")
+            bail!(ErrorCode::ManagerProtected.error("manager cannot revoke itself"))
         }
         if target.revoked {
             return Ok(old);
@@ -586,12 +590,12 @@ fn issue(ca: &str, root_key: &str, csr: &[u8], id: &str) -> Result<String> {
     p.not_before = OffsetDateTime::now_utc() - Duration::days(1);
     let der = crypto::cert_der(ca)?;
     let (_, root) = x509_parser::parse_x509_certificate(&der)
-        .map_err(|e| anyhow::anyhow!("INVALID_CERTIFICATE: {e}"))?;
+        .map_err(|e| anyhow::anyhow!(ErrorCode::InvalidCertificate.error(format!("{e}"))))?;
     p.not_after = (OffsetDateTime::now_utc() + Duration::days(365)).min(
         OffsetDateTime::from_unix_timestamp(root.validity().not_after.timestamp())?,
     );
     if p.not_after <= OffsetDateTime::now_utc() {
-        bail!("CA_EXPIRED: network must be recreated")
+        bail!(ErrorCode::CaExpired.error("network must be recreated"))
     }
     p.key_usages = vec![KeyUsagePurpose::DigitalSignature];
     p.extended_key_usages = vec![
@@ -662,7 +666,7 @@ impl ReceiptAck {
             || self.version != roster.roster.version
             || self.hash != roster.hash()?
         {
-            bail!("INVALID_ACK: acknowledgement is for another roster")
+            bail!(ErrorCode::InvalidAck.error("acknowledgement is for another roster"))
         }
         let der = crypto::cert_der(&self.cert_pem)?;
         crypto::verify_member_certificate(&self.cert_pem, &roster.ca_pem, &self.device_id)?;

@@ -1,3 +1,4 @@
+use crate::error::ErrorCode;
 use crate::{
     net::{self, Ws},
     process::{self, ManagedChild, Output},
@@ -56,7 +57,7 @@ where
         };
         tokio::time::timeout(Duration::from_secs(300), sink.send(message))
             .await
-            .context("STREAM_TIMEOUT: receiver is not reading")??;
+            .context(ErrorCode::StreamTimeout.error("receiver is not reading"))??;
     }
 }
 
@@ -82,7 +83,7 @@ async fn drain(
         .fetch_add(n as u64, Ordering::Relaxed);
         tx.send(Message::Binary(buffer[..n + 1].to_vec().into()))
             .await
-            .context("CONNECTION_CLOSED: stream writer stopped")?;
+            .context(ErrorCode::ConnectionClosed.error("stream writer stopped"))?;
         total += n as u64;
     }
 }
@@ -142,19 +143,20 @@ pub async fn serve(
                         return Ok::<_, anyhow::Error>(total);
                     }
                     _ => bail!(
-                        "INVALID_MESSAGE: expected stdin EOF or stream result acknowledgement"
+                        ErrorCode::InvalidMessage
+                            .error("expected stdin EOF or stream result acknowledgement")
                     ),
                 },
                 Message::Ping(bytes) => input_tx
                     .send(Message::Pong(bytes))
                     .await
-                    .context("CONNECTION_CLOSED: stream writer stopped")?,
+                    .context(ErrorCode::ConnectionClosed.error("stream writer stopped"))?,
                 Message::Pong(_) => {}
                 Message::Close(_) => break,
-                _ => bail!("INVALID_MESSAGE: invalid stdin chunk"),
+                _ => bail!(ErrorCode::InvalidMessage.error("invalid stdin chunk")),
             }
         }
-        bail!("CONNECTION_CLOSED: streaming process disconnected")
+        bail!(ErrorCode::ConnectionClosed.error("streaming process disconnected"))
     };
     let start = crate::clock::elapsed_clock_ms()?;
     let pid = child.pid;
@@ -218,7 +220,7 @@ pub async fn serve(
             result: result.clone(),
         })?)
         .await
-        .context("CONNECTION_CLOSED: stream writer stopped")?;
+        .context(ErrorCode::ConnectionClosed.error("stream writer stopped"))?;
         // Release the producer only after the result has been queued. The
         // receiver keeps the writer alive until the caller acknowledges it.
         drop(tx);
@@ -280,7 +282,7 @@ pub async fn client(ws: &mut Ws) -> Result<StreamResult> {
                 Message::Binary(bytes.into())
             };
             tokio::select! {
-                r=send_tx.send(message)=>r.context("CONNECTION_CLOSED: stream writer stopped")?,
+                r=send_tx.send(message)=>r.context(ErrorCode::ConnectionClosed.error("stream writer stopped"))?,
                 _=stopped.changed()=>return Ok(()),
             }
             if eof {
@@ -303,7 +305,7 @@ pub async fn client(ws: &mut Ws) -> Result<StreamResult> {
                             stderr.write_all(&bytes[1..]).await?;
                             stderr.flush().await?;
                         }
-                        _ => bail!("INVALID_MESSAGE: unknown output stream"),
+                        _ => bail!(ErrorCode::InvalidMessage.error("unknown output stream")),
                     }
                 }
                 Message::Text(text) => match serde_json::from_str::<Data>(&text)? {
@@ -312,19 +314,24 @@ pub async fn client(ws: &mut Ws) -> Result<StreamResult> {
                         let _ = tx.try_send(frame(&Data::StreamExitAck)?);
                         return Ok::<_, anyhow::Error>(result);
                     }
-                    Data::Error { code, message } => bail!("{code}: {message}"),
-                    _ => bail!("INVALID_MESSAGE: expected stream result"),
+                    Data::Error { code, message } => {
+                        bail!(crate::error::CodedError::from_wire(code, message))
+                    }
+                    _ => bail!(ErrorCode::InvalidMessage.error("expected stream result")),
                 },
                 Message::Ping(bytes) => tx
                     .send(Message::Pong(bytes))
                     .await
-                    .context("CONNECTION_CLOSED: stream writer stopped")?,
+                    .context(ErrorCode::ConnectionClosed.error("stream writer stopped"))?,
                 Message::Pong(_) => {}
                 Message::Close(_) => break,
-                _ => bail!("INVALID_MESSAGE: invalid output chunk"),
+                _ => bail!(ErrorCode::InvalidMessage.error("invalid output chunk")),
             }
         }
-        bail!("CONNECTION_CLOSED: stream ended before its result; it will not be replayed")
+        bail!(
+            ErrorCode::ConnectionClosed
+                .error("stream ended before its result; it will not be replayed")
+        )
     };
     let transport = async {
         tokio::try_join!(send, writer(socket_tx, rx))?;

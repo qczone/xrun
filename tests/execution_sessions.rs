@@ -5,6 +5,81 @@ use std::{process::Stdio, time::Duration};
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, BufReader};
 use xrun::{crypto, membership::RosterCache, net, protocol::*, relay::RelayMessage, secure};
 
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn submission_rejection_and_uncertainty_keep_distinct_exit_codes() -> Result<()> {
+    use xrun::error::{CodedError, ErrorCode};
+    tokio::time::timeout(Duration::from_secs(30), async {
+        let mut lab = Lab::new().await?;
+        stop_daemon(&lab.source, &mut lab.source_daemon).await?;
+        stop_daemon(&lab.target, &mut lab.daemon).await?;
+        let cache = RosterCache::open(&lab.target.join(".xrun/roster.db"))?;
+        let network = &lab.target_identity.network.as_ref().unwrap().network_id;
+        let roster = cache.load(network)?;
+        let mut control = relay_socket(
+            Some(&lab.target_identity), &roster, &format!("/networks/{network}/control"),
+        ).await?;
+        let RelayMessage::HelloAck { generation } = net::receive(&mut control).await? else {
+            bail!("control acknowledgement")
+        };
+        let peer = async {
+            // The unknown reply must only trigger a query, never a second Exec.
+            for step in ["rejected", "unknown", "recovery"] {
+                let RelayMessage::Incoming { session_id } = net::receive(&mut control).await? else {
+                    bail!("incoming session")
+                };
+                let mut outer = net::websocket_at(
+                    &roster.roster.relay_addresses[0],
+                    &format!("/networks/{network}/attach/{}/{generation}/{session_id}", lab.target_identity.device_id),
+                    crypto::relay_tls_config(&roster.roster.relay_ca_pem)?,
+                ).await?;
+                assert!(matches!(net::receive(&mut outer).await?, RelayMessage::Connected { .. }));
+                let (mut ws, cert) = secure::server(outer, &lab.target_identity).await?;
+                secure::exchange_server(&mut ws, &cache, network, &cert.context("certificate")?).await?;
+                assert!(matches!(net::receive(&mut ws).await?, secure::Purpose::Execute));
+                net::send(&mut ws, &Data::Ready {
+                    version: VERSION.into(), device_id: lab.target_identity.device_id.clone(),
+                    db_id: "test-db".into(), default_cwd: lab.target.to_string_lossy().into(),
+                }).await?;
+                let Data::Request { request } = net::receive(&mut ws).await? else { bail!("request") };
+                let error: anyhow::Error = if step == "recovery" {
+                    assert!(matches!(request, Request::Jobs { request_id: Some(ref id), .. } if id == "unknown"));
+                    ErrorCode::SourceNotAllowed.error("recovery cannot establish the result").into()
+                } else {
+                    let Request::Exec { execution, .. } = request else { bail!("expected execution") };
+                    assert_eq!(execution.request_id, step);
+                    net::receive_bytes(&mut ws, execution.input_size, &execution.input_sha256, MAX_INPUT as u64).await?;
+                    if step == "rejected" {
+                        ErrorCode::RequestConflict.error("changed validation wording").into()
+                    } else {
+                        CodedError::from_wire("INVALID_REQUEST_FUTURE", "cannot infer acceptance").into()
+                    }
+                };
+                net::send(&mut ws, &Data::error(&error.context("request handling"))).await?;
+                ws.close(None).await?;
+            }
+            Ok::<_, anyhow::Error>(())
+        };
+        let commands = async {
+            for (request, expected, diagnostic) in [
+                ("rejected", 125, "REQUEST_CONFLICT"),
+                ("unknown", 75, "UNCONFIRMED"),
+            ] {
+                let out = cli(&lab.source, &["target1", "--json", "--request-id", request, "--", "must-not-run"]).await;
+                assert_eq!(out.status.code(), Some(expected), "{}", String::from_utf8_lossy(&out.stderr));
+                let error: serde_json::Value = serde_json::from_slice(&out.stderr)?;
+                assert_eq!(error["code"], diagnostic);
+            }
+            let recent = json(cli(&lab.source, &["recent", "--json"]).await);
+            let submissions = recent.as_array().context("submissions")?;
+            assert!(submissions.iter().any(|s| s["request_id"] == "rejected" && s["status"] == "not_accepted"));
+            assert!(submissions.iter().any(|s| s["request_id"] == "unknown" && s["status"] == "unconfirmed"));
+            Ok::<_, anyhow::Error>(())
+        };
+        tokio::try_join!(peer, commands)?;
+        Ok::<_, anyhow::Error>(())
+    }).await?
+}
+
 fn job(execution: &Execution, lab: &Lab) -> Job {
     Job {
         job_id: "ABC123".into(),

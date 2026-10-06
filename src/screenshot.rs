@@ -1,3 +1,4 @@
+use crate::error::ErrorCode;
 use crate::protocol::MAX_FILE;
 use anyhow::{Context, Result, bail};
 pub struct Capture {
@@ -9,12 +10,12 @@ pub struct Capture {
 pub async fn capture() -> Result<Capture> {
     let bytes = platform().await?;
     if bytes.len() as u64 > MAX_FILE {
-        bail!("FILE_TOO_LARGE: screenshot exceeds 64 MiB")
+        bail!(ErrorCode::FileTooLarge.error("screenshot exceeds 64 MiB"))
     }
     let decoder = png::Decoder::new(std::io::Cursor::new(&bytes));
     let reader = decoder
         .read_info()
-        .context("SCREENSHOT_FAILED: invalid PNG")?;
+        .context(ErrorCode::ScreenshotFailed.error("invalid PNG"))?;
     let width = reader.info().width;
     let height = reader.info().height;
     Ok(Capture {
@@ -32,7 +33,10 @@ async fn platform() -> Result<Vec<u8>> {
         fn CGPreflightScreenCaptureAccess() -> bool;
     }
     if !unsafe { CGPreflightScreenCaptureAccess() } {
-        bail!("PERMISSION_DENIED: grant Screen Recording permission to the daemon executable")
+        bail!(
+            ErrorCode::PermissionDenied
+                .error("grant Screen Recording permission to the daemon executable")
+        )
     }
     // screencapture rejects hidden output names, even while returning exit 0.
     let temp = tempfile::Builder::new()
@@ -48,10 +52,10 @@ async fn platform() -> Result<Vec<u8>> {
         .status()
         .await?;
     if !status.success() {
-        bail!("NO_DISPLAY: screenshot requires a logged-in graphical session")
+        bail!(ErrorCode::NoDisplay.error("screenshot requires a logged-in graphical session"))
     }
     crate::transfer::read_file(temp.path())
-        .context("SCREENSHOT_FAILED: screencapture did not create a readable PNG")
+        .context(ErrorCode::ScreenshotFailed.error("screencapture did not create a readable PNG"))
 }
 #[cfg(windows)]
 fn windows_capture_path() -> Result<tempfile::TempPath> {
@@ -79,12 +83,13 @@ $r=[Windows.Forms.Screen]::PrimaryScreen.Bounds; $b=New-Object Drawing.Bitmap $r
         .status()
         .await?;
     if status.code() == Some(77) {
-        bail!("SCREEN_LOCKED: interactive desktop is inaccessible")
+        bail!(ErrorCode::ScreenLocked.error("interactive desktop is inaccessible"))
     }
     if !status.success() {
-        bail!("SCREENSHOT_FAILED: PowerShell could not capture or save the display")
+        bail!(ErrorCode::ScreenshotFailed.error("PowerShell could not capture or save the display"))
     }
-    crate::transfer::read_file(&temp).context("SCREENSHOT_FAILED: cannot read captured PNG")
+    crate::transfer::read_file(&temp)
+        .context(ErrorCode::ScreenshotFailed.error("cannot read captured PNG"))
 }
 
 #[cfg(all(test, windows))]
@@ -121,21 +126,22 @@ async fn platform() -> Result<Vec<u8>> {
     if std::env::var_os("WAYLAND_DISPLAY").is_some()
         || std::env::var("XDG_SESSION_TYPE").is_ok_and(|s| s == "wayland")
     {
-        bail!("SCREENSHOT_UNAVAILABLE: this release supports X11 only")
+        bail!(ErrorCode::ScreenshotUnavailable.error("this release supports X11 only"))
     }
     if std::env::var_os("DISPLAY").is_none() {
-        bail!("NO_DISPLAY: DISPLAY is unset")
+        bail!(ErrorCode::NoDisplay.error("DISPLAY is unset"))
     }
     tokio::task::spawn_blocking(x11_capture).await?
 }
 #[cfg(target_os = "linux")]
 fn x11_capture() -> Result<Vec<u8>> {
     use x11_dl::{xlib, xrandr};
-    let x = xlib::Xlib::open().context("SCREENSHOT_UNAVAILABLE: libX11 is required")?;
+    let x =
+        xlib::Xlib::open().context(ErrorCode::ScreenshotUnavailable.error("libX11 is required"))?;
     unsafe {
         let display = (x.XOpenDisplay)(std::ptr::null());
         if display.is_null() {
-            bail!("NO_DISPLAY: cannot open X11 display")
+            bail!(ErrorCode::NoDisplay.error("cannot open X11 display"))
         }
         struct DisplayGuard<'a>(&'a xlib::Xlib, *mut xlib::Display);
         impl Drop for DisplayGuard<'_> {
@@ -167,7 +173,7 @@ fn x11_capture() -> Result<Vec<u8>> {
             }
         }
         if width <= 0 || height <= 0 || (width as u64) * (height as u64) * 3 > 256 * 1024 * 1024 {
-            bail!("SCREENSHOT_FAILED: unsupported display size")
+            bail!(ErrorCode::ScreenshotFailed.error("unsupported display size"))
         }
         let image = (x.XGetImage)(
             display,
@@ -180,7 +186,7 @@ fn x11_capture() -> Result<Vec<u8>> {
             xlib::ZPixmap,
         );
         if image.is_null() {
-            bail!("SCREENSHOT_FAILED: XGetImage returned no pixels")
+            bail!(ErrorCode::ScreenshotFailed.error("XGetImage returned no pixels"))
         }
         struct ImageGuard<'a>(&'a xlib::Xlib, *mut xlib::XImage);
         impl Drop for ImageGuard<'_> {
@@ -193,7 +199,10 @@ fn x11_capture() -> Result<Vec<u8>> {
         let _image = ImageGuard(&x, image);
         let masks = [(*image).red_mask, (*image).green_mask, (*image).blue_mask];
         if masks.contains(&0) {
-            bail!("SCREENSHOT_UNAVAILABLE: indexed-color X11 displays are unsupported")
+            bail!(
+                ErrorCode::ScreenshotUnavailable
+                    .error("indexed-color X11 displays are unsupported")
+            )
         }
         let mut pixels = Vec::with_capacity(width as usize * height as usize * 3);
         for row in 0..height {

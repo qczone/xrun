@@ -1,3 +1,5 @@
+#[cfg(windows)]
+use crate::error::ErrorCode;
 use anyhow::Result;
 use std::{collections::BTreeMap, path::Path};
 use tokio::io::{AsyncRead, AsyncWrite};
@@ -405,7 +407,8 @@ mod windows {
             for (i, arg) in args.iter().enumerate() {
                 if arg.contains(['\"', '\r', '\n']) {
                     bail!(
-                        "INVALID_SCRIPT_ARGUMENT: cmd arguments cannot contain quotes or newlines"
+                        ErrorCode::InvalidScriptArgument
+                            .error("cmd arguments cannot contain quotes or newlines")
                     );
                 }
                 let name = format!("XRUN_CMD_ARG_{i}");

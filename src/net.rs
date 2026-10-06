@@ -1,3 +1,4 @@
+use crate::error::ErrorCode;
 use crate::{
     config::{Identity, atomic_private_write, device_dir},
     crypto,
@@ -37,10 +38,11 @@ pub async fn tcp(url: &url::Url) -> Result<TcpStream> {
         }
     }
     bail!(
-        "CONNECT_FAILED: {}",
-        error
-            .map(|e| e.to_string())
-            .unwrap_or_else(|| "host has no IPv4 A record".into())
+        ErrorCode::ConnectFailed.error(
+            error
+                .map(|e| e.to_string())
+                .unwrap_or_else(|| "host has no IPv4 A record".into())
+        )
     )
 }
 pub fn ordered(id: &Identity) -> Vec<String> {
@@ -103,9 +105,9 @@ pub async fn websocket_at(address: &str, path: &str, tls: Arc<rustls::ClientConf
             if let Some(body) = r.body()
                 && let Ok(Data::Error { code, message }) = serde_json::from_slice(body)
             {
-                bail!("{code}: {message}")
+                bail!(crate::error::CodedError::from_wire(code, message))
             }
-            bail!("SESSION_REJECTED: {}", r.status())
+            bail!(ErrorCode::SessionRejected.error(format!("{}", r.status())))
         }
         Err(e) => Err(e.into()),
     }
@@ -114,29 +116,11 @@ pub async fn websocket(id: &Identity, path: &str) -> Result<(Ws, String)> {
     let target = path
         .strip_prefix("/devices/")
         .and_then(|p| p.strip_suffix("/session"))
-        .context("INVALID_REQUEST: expected a device session")?;
+        .context(ErrorCode::InvalidRequest.error("expected a device session"))?;
     crate::network::session(id, target).await
 }
 pub fn explicit(e: &anyhow::Error) -> bool {
-    let s = e.to_string();
-    [
-        "DEVICE_REVOKED",
-        "VERSION_MISMATCH",
-        "SOURCE_NOT_ALLOWED",
-        "ACCESS_PAUSED",
-        "DEVICE_OFFLINE",
-        "SESSION_LIMIT",
-        "NOT_MANAGER",
-        "MIGRATION_REQUIRED",
-        "IDENTITY_MISMATCH",
-        "UNKNOWN_DEVICE",
-        "INVALID_TOKEN",
-        "INVALID_NAME",
-        "NAME_TAKEN",
-        "MEMBER_LIMIT",
-    ]
-    .iter()
-    .any(|c| s.starts_with(c))
+    crate::error::code(e).is_some_and(|code| code.is_explicit())
 }
 pub async fn http<T: DeserializeOwned>(
     id: &Identity,
@@ -149,7 +133,7 @@ pub async fn http<T: DeserializeOwned>(
 pub async fn send<T: Serialize>(ws: &mut Ws, value: &T) -> Result<()> {
     let bytes = serde_json::to_string(value)?;
     if bytes.len() > MAX_MESSAGE {
-        bail!("MESSAGE_TOO_LARGE: {}", bytes.len())
+        bail!(ErrorCode::MessageTooLarge.error(format!("{}", bytes.len())))
     }
     ws.send(Message::Text(bytes.into())).await?;
     Ok(())
@@ -173,13 +157,13 @@ pub async fn receive<T: DeserializeOwned>(ws: &mut Ws) -> Result<T> {
         match ws
             .next()
             .await
-            .context("CONNECTION_CLOSED: peer closed connection")??
+            .context(ErrorCode::ConnectionClosed.error("peer closed connection"))??
         {
             Message::Text(s) => return Ok(serde_json::from_str(&s)?),
             Message::Ping(bytes) => ws.send(Message::Pong(bytes)).await?,
             Message::Pong(_) => {}
-            Message::Close(_) => bail!("CONNECTION_CLOSED: peer closed connection"),
-            _ => bail!("INVALID_MESSAGE: expected JSON"),
+            Message::Close(_) => bail!(ErrorCode::ConnectionClosed.error("peer closed connection")),
+            _ => bail!(ErrorCode::InvalidMessage.error("expected JSON")),
         }
     }
 }
@@ -222,7 +206,7 @@ pub async fn send_file(ws: &mut Ws, file: &std::fs::File) -> Result<()> {
         }
         sent += n as u64;
         if sent > MAX_FILE {
-            bail!("FILE_TOO_LARGE: limit {MAX_FILE} bytes");
+            bail!(ErrorCode::FileTooLarge.error(format!("limit {MAX_FILE} bytes")));
         }
         ws.feed(Message::Binary(chunk[..n].to_vec().into())).await?;
     }
@@ -236,7 +220,7 @@ async fn receive_body<W: AsyncWrite + Unpin>(
     max: u64,
 ) -> Result<()> {
     if size > max {
-        bail!("FILE_TOO_LARGE: limit {max} bytes")
+        bail!(ErrorCode::FileTooLarge.error(format!("limit {max} bytes")))
     }
     let mut received = 0u64;
     let mut digest = Sha256::new();
@@ -244,11 +228,11 @@ async fn receive_body<W: AsyncWrite + Unpin>(
         match ws
             .next()
             .await
-            .context("CONNECTION_CLOSED: incomplete body")??
+            .context(ErrorCode::ConnectionClosed.error("incomplete body"))??
         {
             Message::Binary(chunk) => {
                 if chunk.len() > FILE_CHUNK || received + chunk.len() as u64 > size {
-                    bail!("INVALID_BODY: unexpected chunk size")
+                    bail!(ErrorCode::InvalidBody.error("unexpected chunk size"))
                 }
                 output.write_all(&chunk).await?;
                 digest.update(&chunk);
@@ -256,16 +240,18 @@ async fn receive_body<W: AsyncWrite + Unpin>(
             }
             Message::Text(text) => match serde_json::from_str::<Data>(&text)? {
                 Data::End => break,
-                Data::Error { code, message } => bail!("{code}: {message}"),
-                _ => bail!("INVALID_BODY: expected end"),
+                Data::Error { code, message } => {
+                    bail!(crate::error::CodedError::from_wire(code, message))
+                }
+                _ => bail!(ErrorCode::InvalidBody.error("expected end")),
             },
             Message::Ping(b) => ws.send(Message::Pong(b)).await?,
             Message::Pong(_) => {}
-            _ => bail!("CONNECTION_CLOSED: incomplete body"),
+            _ => bail!(ErrorCode::ConnectionClosed.error("incomplete body")),
         }
     }
     if received != size || hex::encode(digest.finalize()) != hash {
-        bail!("CHECKSUM_MISMATCH: incomplete or corrupted body")
+        bail!(ErrorCode::ChecksumMismatch.error("incomplete or corrupted body"))
     }
     Ok(())
 }
