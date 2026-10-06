@@ -92,7 +92,7 @@ impl Proof {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
+#[serde(tag = "type", rename_all = "snake_case")]
 /// Relay routing and handshake messages, outside the encrypted peer payload.
 pub enum RelayMessage {
     /// Fresh challenge required before connection admission.

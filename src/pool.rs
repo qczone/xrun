@@ -47,12 +47,12 @@ fn binding(id: &Identity) -> Result<String> {
 fn ready(value: &Data, target: &str) -> Result<()> {
     match value {
         Data::Ready {
-            version, device_id, ..
-        } if version == VERSION && device_id == target => Ok(()),
+            protocol,
+            selected_protocol,
+            device_id,
+            ..
+        } if device_id == target => ProtocolRange::CURRENT.confirm(*protocol, *selected_protocol),
         Data::Error { code, message } => bail!(crate::error::CodedError::from_wire(code, message)),
-        Data::Ready { version, .. } if version != VERSION => {
-            bail!(ErrorCode::VersionMismatch.error("target release differs"))
-        }
         _ => bail!(ErrorCode::DeviceMismatch.error("invalid target acknowledgement")),
     }
 }

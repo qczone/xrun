@@ -13,6 +13,7 @@ pub(crate) struct Session {
     pub ws: Ws,
     pub db_id: String,
     pub cwd: String,
+    protocol: u32,
     pooled: bool,
 }
 impl Session {
@@ -27,17 +28,14 @@ impl Session {
     async fn ready(mut ws: Ws, target: &str, pooled: bool) -> Result<Self> {
         match tokio::time::timeout(Duration::from_secs(30), net::receive::<Data>(&mut ws)).await?? {
             Data::Ready {
-                version,
+                version: _,
+                protocol,
+                selected_protocol,
                 device_id,
                 db_id,
                 default_cwd,
             } => {
-                if version != VERSION {
-                    bail!(
-                        ErrorCode::VersionMismatch
-                            .error(format!("daemon runs {version}, CLI runs {VERSION}"))
-                    );
-                }
+                ProtocolRange::CURRENT.confirm(protocol, selected_protocol)?;
                 if device_id != target {
                     bail!(
                         ErrorCode::DeviceMismatch.error("session connected to a different device")
@@ -47,6 +45,7 @@ impl Session {
                     ws,
                     db_id,
                     cwd: default_cwd,
+                    protocol: selected_protocol,
                     pooled,
                 })
             }
@@ -55,6 +54,10 @@ impl Session {
             }
             _ => bail!(ErrorCode::InvalidMessage.error("expected ready")),
         }
+    }
+    pub(crate) async fn send_request(&mut self, request: Request) -> Result<()> {
+        ProtocolRange::require(self.protocol, request.minimum_protocol())?;
+        net::send(&mut self.ws, &Data::Request { request }).await
     }
     // Recycling is optional. A confirmed operation must not become a failure
     // just because the daemon/socket disappears after the final response.

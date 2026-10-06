@@ -71,20 +71,15 @@ pub(super) async fn run(id: &Identity, target: &str, command: Remote, json: bool
             let sent = std::sync::atomic::AtomicBool::new(false);
             let operation = async {
                 sent.store(true, std::sync::atomic::Ordering::SeqCst);
-                net::send(
-                    &mut s.ws,
-                    &Data::Request {
-                        request: Request::Push {
-                            path,
-                            cwd,
-                            size,
-                            sha256: hash.clone(),
-                            mkdir,
-                            no_overwrite,
-                            expect,
-                        },
-                    },
-                )
+                s.send_request(Request::Push {
+                    path,
+                    cwd,
+                    size,
+                    sha256: hash.clone(),
+                    mkdir,
+                    no_overwrite,
+                    expect,
+                })
                 .await?;
                 net::send_file(&mut s.ws, &file).await?;
                 response(&mut s.ws).await
@@ -122,13 +117,7 @@ pub(super) async fn run(id: &Identity, target: &str, command: Remote, json: bool
         Remote::Pull { remote, local, cwd } => {
             let mut s = session(id, target).await?;
             let path = remote.clone();
-            net::send(
-                &mut s.ws,
-                &Data::Request {
-                    request: Request::Pull { path, cwd },
-                },
-            )
-            .await?;
+            s.send_request(Request::Pull { path, cwd }).await?;
             let Data::File {
                 path, size, sha256, ..
             } = response(&mut s.ws).await?
@@ -161,13 +150,7 @@ pub(super) async fn run(id: &Identity, target: &str, command: Remote, json: bool
         }
         Remote::Screenshot { local } => {
             let mut s = session(id, target).await?;
-            net::send(
-                &mut s.ws,
-                &Data::Request {
-                    request: Request::Screenshot,
-                },
-            )
-            .await?;
+            s.send_request(Request::Screenshot).await?;
             let Data::File {
                 size,
                 sha256,

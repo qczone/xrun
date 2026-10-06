@@ -114,7 +114,7 @@ async fn manager_offline_members_use_mutual_tls_and_relay_only_sees_ciphertext()
         let secret = "secret-command-file-env-output-347ad64f";
         let server = async {
             let (mut ws, cert) = secure::server(wire_b, &target).await?;
-            let (_, actual) = secure::exchange_server(
+            let (_, actual, _) = secure::exchange_server(
                 &mut ws,
                 &b,
                 &network,

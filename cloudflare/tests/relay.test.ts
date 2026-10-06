@@ -1,3 +1,4 @@
+import { PROTOCOL, PROTOCOL_HEADER } from "../src/protocol";
 import { Socket } from "./socket";
 import { afterAll, beforeAll, expect, test } from "bun:test";
 import { Miniflare, convertV4MiniflareOptions } from "miniflare";
@@ -37,7 +38,8 @@ beforeAll(async () => {
       durableObjects: { NETWORKS: { className: "TestRelay", useSQLite: true } },
       bindings: {
         RELAY_ROUTE: secret,
-        XRUN_VERSION: VERSION,
+        XRUN_PROTOCOL_MIN: PROTOCOL.min,
+        XRUN_PROTOCOL_MAX: PROTOCOL.max,
         XRUN_TEST_PROOF_GATE: gate.url.origin,
       },
     }),
@@ -51,10 +53,15 @@ afterAll(async () => {
 });
 async function open(path: string): Promise<Socket> {
   const response = await runtime.dispatchFetch(`${origin}/${secret}${path}`, {
-    headers: { Upgrade: "websocket", "X-Xrun-Version": VERSION },
+    headers: {
+      Upgrade: "websocket",
+      "X-Xrun-Version": VERSION,
+      "X-Xrun-Protocol": PROTOCOL_HEADER,
+    },
   });
   if (!response.webSocket)
     throw new Error(`Upgrade ${response.status}: ${await response.text()}`);
+  expect(response.headers.get("X-Xrun-Protocol")).toBe("1");
   return new Socket(response.webSocket);
 }
 async function authenticated(
@@ -64,7 +71,11 @@ async function authenticated(
   const socket = await open(path);
   const challenge = await socket.json();
   expect(challenge.type).toBe("challenge");
-  socket.send({ type: "authenticate", proof: await proof(challenge.nonce) });
+  socket.send({
+    type: "authenticate",
+    proof: await proof(challenge.nonce),
+    diagnostic: "optional",
+  });
   return socket;
 }
 
@@ -209,6 +220,7 @@ test("idle authentication sockets are capped and client headers cannot bypass th
     headers: {
       Upgrade: "websocket",
       "X-Xrun-Version": VERSION,
+      "X-Xrun-Protocol": PROTOCOL_HEADER,
       "X-Xrun-Peer": "forged",
     },
   });
@@ -218,7 +230,7 @@ test("idle authentication sockets are capped and client headers cannot bypass th
 });
 
 // Runs production relay handlers in workerd; only alarm controls are test-specific.
-test("secret route, component version and proof protect existing device routes", async () => {
+test("secret route, protocol and proof protect existing device routes", async () => {
   expect(
     (await runtime.dispatchFetch(`${origin}/wrong/networks/probe/status`))
       .status,
@@ -226,7 +238,11 @@ test("secret route, component version and proof protect existing device routes",
   expect(
     (
       await runtime.dispatchFetch(`${origin}/${secret}/networks/probe/status`, {
-        headers: { Upgrade: "websocket", "X-Xrun-Version": "wrong" },
+        headers: {
+          Upgrade: "websocket",
+          "X-Xrun-Version": VERSION,
+          "X-Xrun-Protocol": "2-2",
+        },
       })
     ).status,
   ).toBe(409);

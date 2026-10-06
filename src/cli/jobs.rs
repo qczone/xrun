@@ -176,13 +176,7 @@ pub(super) async fn run(
             };
             let mut s = session(id, target).await?;
             let operation = async {
-                net::send(
-                    &mut s.ws,
-                    &Data::Request {
-                        request: Request::Kill { id: job },
-                    },
-                )
-                .await?;
+                s.send_request(Request::Kill { id: job }).await?;
                 response(&mut s.ws).await
             };
             let result = match tokio::time::timeout(Duration::from_secs(10), operation).await {

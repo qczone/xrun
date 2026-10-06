@@ -54,11 +54,41 @@ async fn receive(ws: &mut WebSocket) -> Result<RelayMessage> {
         }
     }
 }
-fn version(headers: &HeaderMap) -> Result<()> {
-    if headers.get("x-xrun-version").and_then(|v| v.to_str().ok()) != Some(VERSION) {
-        bail!(ErrorCode::VersionMismatch.error(format!("all components must run {VERSION}")))
+fn protocol(headers: &HeaderMap) -> Result<u32> {
+    let value = headers
+        .get("x-xrun-protocol")
+        .and_then(|value| value.to_str().ok())
+        .context(ErrorCode::VersionMismatch.error("missing protocol range"))?;
+    ProtocolRange::CURRENT.negotiate(ProtocolRange::from_header(value)?)
+}
+fn negotiated(mut response: Response, selected: u32) -> Response {
+    response.headers_mut().insert(
+        "x-xrun-protocol",
+        axum::http::HeaderValue::from_str(&selected.to_string()).expect("integer header"),
+    );
+    response
+}
+
+#[cfg(test)]
+mod protocol_tests {
+    use super::*;
+    #[test]
+    fn admission_depends_on_protocol_and_not_release_identity() {
+        let mut headers = HeaderMap::new();
+        headers.insert("x-xrun-version", "future-release".parse().unwrap());
+        headers.insert("x-xrun-protocol", "1-2".parse().unwrap());
+        assert_eq!(protocol(&headers).unwrap(), 1);
+        headers.insert("x-xrun-protocol", "2-2".parse().unwrap());
+        assert!(crate::error::is(
+            &protocol(&headers).unwrap_err(),
+            ErrorCode::VersionMismatch
+        ));
+        headers.remove("x-xrun-protocol");
+        assert!(crate::error::is(
+            &protocol(&headers).unwrap_err(),
+            ErrorCode::VersionMismatch
+        ));
     }
-    Ok(())
 }
 struct Api(anyhow::Error);
 impl<E: Into<anyhow::Error>> From<E> for Api {

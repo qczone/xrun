@@ -39,7 +39,7 @@ async fn submission_rejection_and_uncertainty_keep_distinct_exit_codes() -> Resu
                 secure::exchange_server(&mut ws, &cache, network, &cert.context("certificate")?).await?;
                 assert!(matches!(net::receive(&mut ws).await?, secure::Purpose::Execute));
                 net::send(&mut ws, &Data::Ready {
-                    version: VERSION.into(), device_id: lab.target_identity.device_id.clone(),
+                    version: VERSION.into(), protocol: xrun::protocol::ProtocolRange::CURRENT, selected_protocol: 1, device_id: lab.target_identity.device_id.clone(),
                     db_id: "test-db".into(), default_cwd: lab.target.to_string_lossy().into(),
                 }).await?;
                 let Data::Request { request } = net::receive(&mut ws).await? else { bail!("request") };
@@ -171,6 +171,8 @@ async fn foreground_uses_one_session_and_recovers_without_resubmitting() -> Resu
                         &mut ws,
                         &Data::Ready {
                             version: VERSION.into(),
+                            protocol: xrun::protocol::ProtocolRange::CURRENT,
+                            selected_protocol: 1,
                             device_id: lab.target_identity.device_id.clone(),
                             db_id: "test-db".into(),
                             default_cwd: lab.target.to_string_lossy().into(),
@@ -327,6 +329,93 @@ fn main() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn differing_release_and_optional_metadata_do_not_prevent_a_negotiated_operation()
+-> Result<()> {
+    tokio::time::timeout(Duration::from_secs(15), async {
+        let mut lab = Lab::new().await?;
+        stop_daemon(&lab.source, &mut lab.source_daemon).await?;
+        stop_daemon(&lab.target, &mut lab.daemon).await?;
+        let network = &lab.target_identity.network.as_ref().unwrap().network_id;
+        let roster = RosterCache::open(&lab.target.join(".xrun/roster.db"))?.load(network)?;
+        let mut control = relay_socket(
+            Some(&lab.target_identity),
+            &roster,
+            &format!("/networks/{network}/control"),
+        )
+        .await?;
+        let RelayMessage::HelloAck { generation } = net::receive(&mut control).await? else {
+            bail!("hello")
+        };
+        let peer = async {
+            let RelayMessage::Incoming { session_id } = net::receive(&mut control).await? else {
+                bail!("incoming")
+            };
+            let outer = net::websocket_at(
+                &roster.roster.relay_addresses[0],
+                &format!(
+                    "/networks/{network}/attach/{}/{generation}/{session_id}",
+                    lab.target_identity.device_id
+                ),
+                crypto::relay_tls_config(&roster.roster.relay_ca_pem)?,
+            )
+            .await?;
+            let mut outer = outer;
+            assert!(matches!(
+                net::receive(&mut outer).await?,
+                RelayMessage::Connected { .. }
+            ));
+            let (mut socket, cert) = secure::server(outer, &lab.target_identity).await?;
+            roster.peer(
+                &cert.context("certificate")?,
+                Some(&lab.source_identity.device_id),
+            )?;
+            let exchange: serde_json::Value = net::receive(&mut socket).await?;
+            assert_eq!(exchange["protocol"], serde_json::json!({"min":1,"max":1}));
+            assert!(matches!(
+                net::receive(&mut socket).await?,
+                secure::Purpose::Execute
+            ));
+            net::send(
+                &mut socket,
+                &serde_json::json!({
+                    "version":"future-release", "protocol":{"min":1,"max":2}, "roster":roster,
+                    "diagnostic":"safe optional metadata",
+                }),
+            )
+            .await?;
+            net::send(
+                &mut socket,
+                &serde_json::json!({
+                    "type":"ready", "version":"future-release", "protocol":{"min":1,"max":2},
+                    "selected_protocol":1, "device_id":lab.target_identity.device_id,
+                    "db_id":"test-db", "default_cwd":lab.target.to_string_lossy(),
+                    "diagnostic":"safe optional metadata",
+                }),
+            )
+            .await?;
+            assert!(matches!(
+                net::receive(&mut socket).await?,
+                Data::Request {
+                    request: Request::Jobs { .. }
+                }
+            ));
+            net::send(&mut socket, &Data::Jobs { jobs: Vec::new() }).await?;
+            net::send(&mut socket, &Data::Complete).await?;
+            net::close(&mut socket).await;
+            Ok::<_, anyhow::Error>(())
+        };
+        let caller = async {
+            let output = cli(&lab.source, &["target1", "jobs", "--json"]).await;
+            assert_eq!(json(output), serde_json::json!([]));
+            Ok::<_, anyhow::Error>(())
+        };
+        tokio::try_join!(peer, caller)?;
+        Ok::<_, anyhow::Error>(())
+    })
+    .await?
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn pipelined_purpose_never_sends_execution_before_handshake_acceptance() -> Result<()> {
     use xrun::testing::membership::Manager;
     tokio::time::timeout(Duration::from_secs(20), async {
@@ -337,7 +426,7 @@ async fn pipelined_purpose_never_sends_execution_before_handshake_acceptance() -
         let roster = RosterCache::open(&lab.target.join(".xrun/roster.db"))?.load(network)?;
         let mut control = relay_socket(Some(&lab.target_identity), &roster, &format!("/networks/{network}/control")).await?;
         let RelayMessage::HelloAck { generation } = net::receive(&mut control).await? else { bail!("control acknowledgement") };
-        let failures = ["version", "signature", "ready-version", "ready-identity", "denied", "revoked"];
+        let failures = ["protocol", "signature", "ready-protocol", "ready-identity", "denied", "revoked"];
         let peer = async {
             for failure in failures {
                 let RelayMessage::Incoming { session_id } = net::receive(&mut control).await? else { bail!("incoming session") };
@@ -356,14 +445,14 @@ async fn pipelined_purpose_never_sends_execution_before_handshake_acceptance() -
                 if failure == "revoked" {
                     sent_roster = Manager::open(&lab.source.join(".xrun/manager"))?.revoke("target1")?;
                 }
-                net::send(&mut ws, &serde_json::json!({ "version": if failure == "version" { "incompatible" } else { VERSION }, "roster": sent_roster })).await?;
+                net::send(&mut ws, &serde_json::json!({ "version": "future-release", "protocol": { "min": if failure == "protocol" { 2 } else { 1 }, "max": 2 }, "roster": sent_roster })).await?;
                 if failure.starts_with("ready-") || failure == "denied" {
                     // Even a valid roster does not permit sending Exec before Ready.
                     assert!(tokio::time::timeout(Duration::from_millis(50), net::receive::<Data>(&mut ws)).await.is_err());
                     let response = if failure == "denied" {
                         Data::Error { code: "PERMISSION_DENIED".into(), message: "not allowed".into() }
                     } else {
-                        Data::Ready { version: if failure == "ready-version" { "incompatible" } else { VERSION }.into(), device_id: if failure == "ready-identity" { lab.source_identity.device_id.clone() } else { lab.target_identity.device_id.clone() }, db_id: "test-db".into(), default_cwd: lab.target.to_string_lossy().into() }
+                        Data::Ready { version: "future-release".into(), protocol: xrun::protocol::ProtocolRange::CURRENT, selected_protocol: if failure == "ready-protocol" { 2 } else { 1 }, device_id: if failure == "ready-identity" { lab.source_identity.device_id.clone() } else { lab.target_identity.device_id.clone() }, db_id: "test-db".into(), default_cwd: lab.target.to_string_lossy().into() }
                     };
                     net::send(&mut ws, &response).await?;
                 }

@@ -147,15 +147,10 @@ pub(super) async fn run(
     let sent = std::sync::atomic::AtomicBool::new(false);
     let submitted = async {
         sent.store(true, std::sync::atomic::Ordering::SeqCst);
-        net::send(
-            &mut s.ws,
-            &Data::Request {
-                request: Request::Exec {
-                    execution: execution.clone(),
-                    follow: !background,
-                },
-            },
-        )
+        s.send_request(Request::Exec {
+            execution: execution.clone(),
+            follow: !background,
+        })
         .await?;
         net::send_bytes(&mut s.ws, &input).await?;
         match response(&mut s.ws).await? {
@@ -296,18 +291,13 @@ async fn recover(
                     if expected_db.is_some_and(|db| db != s.db_id) {
                         bail!(ErrorCode::DbReset.error("original task database no longer exists"))
                     }
-                    net::send(
-                        &mut s.ws,
-                        &Data::Request {
-                            request: Request::Jobs {
-                                id: None,
-                                running: false,
-                                request_id: Some(request_id.into()),
-                                limit: 1,
-                                offset: 0,
-                            },
-                        },
-                    )
+                    s.send_request(Request::Jobs {
+                        id: None,
+                        running: false,
+                        request_id: Some(request_id.into()),
+                        limit: 1,
+                        offset: 0,
+                    })
                     .await?;
                     if let Data::Jobs { jobs } = response(&mut s.ws).await? {
                         s.finish().await;
@@ -392,17 +382,11 @@ pub(super) async fn stream(id: &Identity, target: &str, e: Execute) -> Result<i3
             .context(ErrorCode::InvalidRequest.error("program required"))?
             .clone(),
         args: e.command.into_iter().skip(1).collect(),
-        cwd: e.cwd.unwrap_or(s.cwd),
+        cwd: e.cwd.unwrap_or_else(|| s.cwd.clone()),
         env: e.env.into_iter().collect(),
         timeout: e.timeout.unwrap_or(1800),
     };
-    net::send(
-        &mut s.ws,
-        &Data::Request {
-            request: Request::StreamExec { execution },
-        },
-    )
-    .await?;
+    s.send_request(Request::StreamExec { execution }).await?;
     if !matches!(response(&mut s.ws).await?, Data::StreamReady) {
         bail!(ErrorCode::InvalidMessage.error("expected stream acknowledgement"))
     }

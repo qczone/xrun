@@ -46,7 +46,7 @@ pub(super) async fn response(ws: &mut Ws) -> Result<Data> {
 }
 pub(super) async fn request(id: &Identity, target: &str, req: Request) -> Result<Data> {
     let mut s = session(id, target).await?;
-    net::send(&mut s.ws, &Data::Request { request: req }).await?;
+    s.send_request(req).await?;
     let value = response(&mut s.ws).await?;
     s.finish().await;
     Ok(value)

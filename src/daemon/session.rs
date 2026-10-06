@@ -29,7 +29,7 @@ pub(super) async fn data_session(
     .await??;
     let result = if let Some(certificate) = certificate {
         async {
-            let (_, source) = tokio::time::timeout(
+            let (_, source, protocol) = tokio::time::timeout(
                 CONNECT_TIMEOUT,
                 secure::exchange_server(&mut ws, &rt.members, &rt.network_id, &certificate),
             )
@@ -53,7 +53,7 @@ pub(super) async fn data_session(
                 .min(crate::crypto::certificate_expiry(&id.cert_pem)?)
                 .min(crate::crypto::certificate_expiry(&id.ca_pem)?);
             let lease = AccessLease { source: &source, generation, identity: &id, expiry };
-            send_ready(&rt, &mut ws).await?;
+            send_ready(&rt, &mut ws, protocol).await?;
             let mut stop = rt.stop.subscribe();
             loop {
                 let req = tokio::select! {
@@ -68,12 +68,13 @@ pub(super) async fn data_session(
                     if rt.members.load(&rt.network_id)?.roster.version != roster_version {
                         bail!(ErrorCode::MembershipChanged.error("renew the authenticated connection"));
                     }
-                    send_ready(&rt, &mut ws).await?;
+                    send_ready(&rt, &mut ws, protocol).await?;
                     continue;
                 }
                 let Data::Request { request } = req else {
                     bail!(ErrorCode::InvalidMessage.error("expected operation"));
                 };
+                ProtocolRange::require(protocol, request.minimum_protocol())?;
                 tokio::select! {
                     result = serve(rt.clone(), &source, generation, &mut ws, request) => result?,
                     _ = stop.changed() => bail!(ErrorCode::DaemonStopping.error("daemon shutting down")),
@@ -128,11 +129,13 @@ async fn access_ended(rt: &Runtime, lease: &AccessLease<'_>) -> Result<()> {
         }
     }
 }
-async fn send_ready(rt: &Runtime, ws: &mut Ws) -> Result<()> {
+async fn send_ready(rt: &Runtime, ws: &mut Ws, selected_protocol: u32) -> Result<()> {
     net::send(
         ws,
         &Data::Ready {
             version: VERSION.into(),
+            protocol: ProtocolRange::CURRENT,
+            selected_protocol,
             device_id: rt.id.device_id.clone(),
             db_id: rt.store.db_id.clone(),
             default_cwd: rt.cwd()?.to_string_lossy().into(),

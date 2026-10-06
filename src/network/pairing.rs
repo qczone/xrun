@@ -11,12 +11,27 @@ use crate::{
 };
 use anyhow::{Result, bail};
 use base64::{Engine, engine::general_purpose::STANDARD};
+use serde::{Deserialize, Serialize};
 use std::{collections::HashMap, time::Duration};
 
 use super::links::{discover_relay_ca, invitation_link, parse_link};
 use super::peers::peer_state;
 use super::transport::{authenticate, receive};
 use super::{archive_legacy, authority, cache, current, devices, observe, synchronize};
+
+#[derive(Serialize, Deserialize)]
+struct PairResponse {
+    version: String,
+    protocol: ProtocolRange,
+    selected_protocol: u32,
+    pairing: Pairing,
+}
+impl PairResponse {
+    fn accept(self) -> Result<Pairing> {
+        ProtocolRange::CURRENT.confirm(self.protocol, self.selected_protocol)?;
+        Ok(self.pairing)
+    }
+}
 
 pub fn manager(id: &Identity) -> Result<Manager> {
     if authority(id)?.manager_id != id.device_id {
@@ -177,6 +192,7 @@ pub(crate) async fn join(link: &str, name: String) -> Result<Identity> {
                 &mut ws,
                 &PairRequest {
                     version: VERSION.into(),
+                    protocol: ProtocolRange::CURRENT,
                     token: invite.token.clone(),
                     name: name.clone(),
                     csr_base64: STANDARD.encode(crypto::renew_device_request(&key)?),
@@ -187,7 +203,7 @@ pub(crate) async fn join(link: &str, name: String) -> Result<Identity> {
             if let Ok(Data::Error { code, message }) = serde_json::from_value(value.clone()) {
                 bail!(crate::error::CodedError::from_wire(code, message))
             }
-            let pair: Pairing = serde_json::from_value(value)?;
+            let pair = serde_json::from_value::<PairResponse>(value)?.accept()?;
             validate_pair(
                 &pair,
                 &invite.network,
@@ -280,6 +296,7 @@ pub(crate) async fn renew(id: &mut Identity) -> Result<()> {
                         &mut ws,
                         &PairRequest {
                             version: VERSION.into(),
+                            protocol: ProtocolRange::CURRENT,
                             token: String::new(),
                             name: id.name.clone(),
                             csr_base64: STANDARD.encode(crypto::renew_device_request(&id.key_pem)?),
@@ -291,7 +308,7 @@ pub(crate) async fn renew(id: &mut Identity) -> Result<()> {
                     {
                         bail!(crate::error::CodedError::from_wire(code, message))
                     }
-                    let pair: Pairing = serde_json::from_value(value)?;
+                    let pair = serde_json::from_value::<PairResponse>(value)?.accept()?;
                     validate_pair(
                         &pair,
                         &roster.roster.network_id,
@@ -345,9 +362,7 @@ pub(crate) async fn serve_pair(id: &Identity, ws: &mut Ws) -> Result<()> {
     let manager = manager(id)?;
     let request: PairRequest =
         tokio::time::timeout(Duration::from_secs(10), net::receive(ws)).await??;
-    if request.version != VERSION {
-        bail!(ErrorCode::VersionMismatch.error("pairing peer release differs"))
-    }
+    let selected_protocol = ProtocolRange::CURRENT.negotiate(request.protocol)?;
     let pair = manager.pair(
         &request.token,
         &request.name,
@@ -368,6 +383,15 @@ pub(crate) async fn serve_pair(id: &Identity, ws: &mut Ws) -> Result<()> {
     if let Err(error) = synchronize(&pair.roster).await {
         tracing::warn!(%error,"membership committed but peer synchronization failed");
     }
-    net::send(ws, &pair).await?;
+    net::send(
+        ws,
+        &PairResponse {
+            version: VERSION.into(),
+            protocol: ProtocolRange::CURRENT,
+            selected_protocol,
+            pairing: pair,
+        },
+    )
+    .await?;
     Ok(())
 }

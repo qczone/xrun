@@ -1,4 +1,5 @@
 import "reflect-metadata";
+import { SIGNATURE_FORMAT } from "./protocol";
 import {
   AsnEcSignatureFormatter,
   BasicConstraintsExtension,
@@ -52,13 +53,13 @@ export function randomRoute(): string {
 }
 export function object(
   value: unknown,
-  keys: string[],
+  keys?: string[],
 ): value is Record<string, unknown> {
   return (
     !!value &&
     typeof value === "object" &&
     !Array.isArray(value) &&
-    Object.keys(value).every((key) => keys.includes(key))
+    (!keys || Object.keys(value).every((key) => keys.includes(key)))
   );
 }
 async function signature(
@@ -66,7 +67,6 @@ async function signature(
   domain: string,
   binding: object,
   encoded: string,
-  version: string,
 ): Promise<boolean> {
   if (encoded.length > MAX_ENCODED_SIGNATURE_CHARS) return false;
   const der = Uint8Array.from(atob(encoded), (character) =>
@@ -80,7 +80,7 @@ async function signature(
     key,
     raw,
     new TextEncoder().encode(
-      `xrun/${version}/${domain}\0${JSON.stringify(binding)}`,
+      `xrun/sig-v${SIGNATURE_FORMAT}/${domain}\0${JSON.stringify(binding)}`,
     ),
   );
 }
@@ -91,7 +91,6 @@ export async function verifyProof(
   network: string,
   path: string,
   nonce: string,
-  version: string,
 ): Promise<{ device: string; manager: boolean }> {
   if (
     !object(value, [
@@ -161,22 +160,14 @@ export async function verifyProof(
     throw new Error("Invalid member certificate");
   }
   const binding = { network, device: value.device_id, path, nonce };
-  if (
-    !(await signature(member, "relay-proof", binding, value.signature, version))
-  ) {
+  if (!(await signature(member, "relay-proof", binding, value.signature))) {
     throw new Error("Invalid member signature");
   }
   const managerSignature = value.manager_signature;
   const manager = typeof managerSignature === "string";
   if (
     manager &&
-    !(await signature(
-      root,
-      "relay-manager",
-      binding,
-      managerSignature,
-      version,
-    ))
+    !(await signature(root, "relay-manager", binding, managerSignature))
   ) {
     throw new Error("Invalid manager signature");
   }

@@ -58,7 +58,7 @@ pub struct Pairing {
 // Domain separation prevents a roster signature from being interpreted as a
 // pairing permission or a relay authentication proof.
 fn payload<T: Serialize>(domain: &str, value: &T) -> Result<Vec<u8>> {
-    let mut bytes = format!("xrun/{VERSION}/{domain}\0").into_bytes();
+    let mut bytes = format!("xrun/sig-v{SIGNATURE_FORMAT}/{domain}\0").into_bytes();
     bytes.extend(serde_json::to_vec(value)?);
     Ok(bytes)
 }
@@ -312,5 +312,127 @@ impl ReceiptAck {
             &self.binding(),
             &self.signature,
         )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::protocol::{ChallengeBinding, Proof};
+
+    fn vector() -> serde_json::Value {
+        serde_json::from_str(include_str!("../../tests/fixtures/signatures.json")).unwrap()
+    }
+    fn check<T: Serialize>(fixture: &serde_json::Value, domain: &str, value: &T) -> Result<()> {
+        let record = &fixture["records"][domain];
+        assert_eq!(
+            payload(domain, value)?,
+            record["payload_utf8"].as_str().unwrap().as_bytes()
+        );
+        let member = record["signer"] == "member";
+        let certificate = fixture[if member { "member_pem" } else { "root_pem" }]
+            .as_str()
+            .unwrap();
+        let key = fixture[if member {
+            "member_private_key_pem"
+        } else {
+            "root_private_key_pem"
+        }]
+        .as_str()
+        .unwrap();
+        verify(
+            certificate,
+            domain,
+            value,
+            record["signature"].as_str().unwrap(),
+        )?;
+        verify(certificate, domain, value, &sign(key, domain, value)?)?;
+        assert!(
+            verify(
+                certificate,
+                "wrong-domain",
+                value,
+                record["signature"].as_str().unwrap()
+            )
+            .is_err()
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn fixed_signed_records_pin_bytes_and_verification_across_releases() -> Result<()> {
+        let fixture = vector();
+        assert_eq!(fixture["signature_format"], SIGNATURE_FORMAT);
+        assert_eq!(
+            fixture["protocol"],
+            serde_json::to_value(ProtocolRange::CURRENT)?
+        );
+        let records = &fixture["records"];
+        let roster: Roster = serde_json::from_value(records["roster"]["value"][0].clone())?;
+        let root_pem = fixture["root_pem"].as_str().unwrap();
+        check(
+            &fixture,
+            "roster",
+            &(&roster, sha256(&crypto::cert_der(root_pem)?)),
+        )?;
+        let signed = SignedRoster {
+            roster,
+            ca_pem: root_pem.into(),
+            signature: records["roster"]["signature"].as_str().unwrap().into(),
+        };
+        signed.verify(&signed.roster.network_id)?;
+        let receipt: PairReceipt = serde_json::from_value(records["pairing"]["value"].clone())?;
+        check(&fixture, "pairing", &receipt)?;
+        SignedReceipt {
+            receipt: receipt.clone(),
+            signature: records["pairing"]["signature"].as_str().unwrap().into(),
+        }
+        .verify(&signed, &receipt.device_id)?;
+        let ack_value = &records["roster-ack"]["value"];
+        let ack = ReceiptAck {
+            network: ack_value["network"].as_str().unwrap().into(),
+            device_id: ack_value["device_id"].as_str().unwrap().into(),
+            version: ack_value["version"].as_u64().unwrap(),
+            hash: ack_value["hash"].as_str().unwrap().into(),
+            cert_pem: fixture["member_pem"].as_str().unwrap().into(),
+            signature: records["roster-ack"]["signature"].as_str().unwrap().into(),
+        };
+        check(&fixture, "roster-ack", &ack.binding())?;
+        ack.verify(&signed)?;
+        let value = &records["relay-proof"]["value"];
+        let binding = ChallengeBinding {
+            network: value["network"].as_str().unwrap(),
+            device: value["device"].as_str().unwrap(),
+            path: value["path"].as_str().unwrap(),
+            nonce: value["nonce"].as_str().unwrap(),
+        };
+        check(&fixture, "relay-proof", &binding)?;
+        check(&fixture, "relay-manager", &binding)?;
+        check(&fixture, "key-check", &"manager")?;
+        let proof = Proof {
+            device_id: binding.device.into(),
+            cert_pem: ack.cert_pem,
+            root_pem: root_pem.into(),
+            signature: records["relay-proof"]["signature"].as_str().unwrap().into(),
+            manager_signature: Some(
+                records["relay-manager"]["signature"]
+                    .as_str()
+                    .unwrap()
+                    .into(),
+            ),
+        };
+        assert!(proof.verify(binding.network, binding.path, binding.nonce)?);
+        assert!(
+            proof
+                .verify(binding.network, binding.path, "replay")
+                .is_err()
+        );
+        let mut malformed = serde_json::to_value(proof)?;
+        malformed["future_permission"] = true.into();
+        assert!(serde_json::from_value::<Proof>(malformed).is_err());
+        let mut malformed = serde_json::to_value(signed)?;
+        malformed["roster"]["future_permission"] = true.into();
+        assert!(serde_json::from_value::<SignedRoster>(malformed).is_err());
+        Ok(())
     }
 }

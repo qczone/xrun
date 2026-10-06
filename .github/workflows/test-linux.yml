@@ -16,6 +16,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           persist-credentials: false
+          fetch-depth: 0
       - name: Rust toolchain
         id: toolchain
         shell: bash
@@ -86,6 +87,11 @@ jobs:
         env:
           WRANGLER_SEND_METRICS: 'false'
         run: bun run test:interop
+      - name: Test previous compatible release builds
+        timeout-minutes: 20
+        env:
+          WRANGLER_SEND_METRICS: 'false'
+        run: bun scripts/test-compatibility.ts
       - name: Upload failed test process logs
         if: failure()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1

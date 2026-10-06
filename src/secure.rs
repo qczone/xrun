@@ -98,7 +98,7 @@ impl AsyncWrite for Tunnel {
     }
 }
 #[derive(Serialize, Deserialize)]
-#[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
+#[serde(tag = "type", rename_all = "snake_case")]
 enum FlowControl {
     Ack { bytes: usize },
 }
@@ -305,9 +305,9 @@ pub(crate) async fn server_with_flow(
     Ok((ws, peer))
 }
 #[derive(Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
 struct RosterExchange {
     version: String,
+    protocol: ProtocolRange,
     roster: SignedRoster,
 }
 async fn receive_roster(ws: &mut Ws) -> Result<RosterExchange> {
@@ -339,6 +339,7 @@ pub async fn exchange_client(
         ws,
         &RosterExchange {
             version: VERSION.into(),
+            protocol: ProtocolRange::CURRENT,
             roster,
         },
     )
@@ -347,9 +348,7 @@ pub async fn exchange_client(
     // caller still waits for verified peer state and Ready before any request.
     net::send(ws, purpose).await?;
     let peer = receive_roster(ws).await?;
-    if peer.version != VERSION {
-        bail!(ErrorCode::VersionMismatch.error("peer release differs"))
-    }
+    ProtocolRange::CURRENT.negotiate(peer.protocol)?;
     observe(cache, network, &peer.roster)?;
     let current = cache.load(network)?;
     current.peer(cert, Some(target))?;
@@ -360,11 +359,9 @@ pub async fn exchange_server(
     cache: &RosterCache,
     network: &str,
     cert: &[u8],
-) -> Result<(SignedRoster, String)> {
+) -> Result<(SignedRoster, String, u32)> {
     let peer = receive_roster(ws).await?;
-    if peer.version != VERSION {
-        bail!(ErrorCode::VersionMismatch.error("peer release differs"))
-    }
+    let selected = ProtocolRange::CURRENT.negotiate(peer.protocol)?;
     observe(cache, network, &peer.roster)?;
     let current = cache.load(network)?;
     let source = current.peer(cert, None)?.device_id.clone();
@@ -372,15 +369,16 @@ pub async fn exchange_server(
         ws,
         &RosterExchange {
             version: VERSION.into(),
+            protocol: ProtocolRange::CURRENT,
             roster: current.clone(),
         },
     )
     .await?;
-    Ok((current, source))
+    Ok((current, source, selected))
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-#[serde(tag = "purpose", rename_all = "snake_case", deny_unknown_fields)]
+#[serde(tag = "purpose", rename_all = "snake_case")]
 pub enum Purpose {
     Execute,
     State,

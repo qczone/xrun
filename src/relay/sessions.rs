@@ -19,14 +19,16 @@ pub(super) async fn source_route(
     headers: HeaderMap,
     ws: WebSocketUpgrade,
 ) -> ApiResult<Response> {
-    version(&headers)?;
-    Ok(ws
-        .max_message_size(MAX_MESSAGE)
-        .max_frame_size(MAX_MESSAGE)
-        .on_upgrade(move |mut ws| async move {
-            let result = source(&app, &network, &target, peer.ip(), &mut ws, &permit).await;
-            finish(&mut ws, result).await;
-        }))
+    let selected = protocol(&headers)?;
+    Ok(negotiated(
+        ws.max_message_size(MAX_MESSAGE)
+            .max_frame_size(MAX_MESSAGE)
+            .on_upgrade(move |mut ws| async move {
+                let result = source(&app, &network, &target, peer.ip(), &mut ws, &permit).await;
+                finish(&mut ws, result).await;
+            }),
+        selected,
+    ))
 }
 async fn source(
     app: &App,
@@ -113,56 +115,59 @@ pub(super) async fn attach_route(
     headers: HeaderMap,
     ws: WebSocketUpgrade,
 ) -> ApiResult<Response> {
-    version(&headers)?;
-    Ok(ws
-        .max_message_size(MAX_MESSAGE)
-        .max_frame_size(MAX_MESSAGE)
-        .on_upgrade(move |mut ws| async move {
-            let result = async {
-                // The generation and session ID reach only the authenticated
-                // control connection, so a matching attach needs no new proof.
-                let sender = {
-                    let mut connections = app.connections.lock().await;
-                    let control = connections
-                        .controls
-                        .get(&(network.clone(), target.clone()))
-                        .context(ErrorCode::InvalidSession.error("target control is missing"))?;
-                    if control.generation != generation {
-                        bail!(ErrorCode::InvalidSession.error("control binding mismatch"))
-                    }
-                    let session = connections.sessions.get_mut(&sid).context(
-                        ErrorCode::InvalidSession.error("session is missing or expired"),
-                    )?;
-                    if session.network != network
-                        || session.target != target
-                        || session.generation != generation
-                        || *session.cancel.borrow()
-                    {
-                        bail!(ErrorCode::InvalidSession.error("session binding mismatch"))
-                    }
-                    session
-                        .claim
-                        .take()
-                        .context(ErrorCode::InvalidSession.error("session was already claimed"))?
-                };
-                permit.authenticated();
-                send(
-                    &mut ws,
-                    &RelayMessage::Connected {
-                        flow_control: false,
-                    },
-                )
-                .await?;
-                sender.send(Ok(ws)).map_err(|_| {
-                    anyhow::anyhow!(ErrorCode::ConnectionClosed.error("source disappeared"))
-                })?;
-                Ok::<_, anyhow::Error>(())
-            }
-            .await;
-            if let Err(error) = result {
-                tracing::debug!(%error, "target attachment failed");
-            }
-        }))
+    let selected = protocol(&headers)?;
+    Ok(negotiated(
+        ws.max_message_size(MAX_MESSAGE)
+            .max_frame_size(MAX_MESSAGE)
+            .on_upgrade(move |mut ws| async move {
+                let result = async {
+                    // The generation and session ID reach only the authenticated
+                    // control connection, so a matching attach needs no new proof.
+                    let sender = {
+                        let mut connections = app.connections.lock().await;
+                        let control = connections
+                            .controls
+                            .get(&(network.clone(), target.clone()))
+                            .context(
+                                ErrorCode::InvalidSession.error("target control is missing"),
+                            )?;
+                        if control.generation != generation {
+                            bail!(ErrorCode::InvalidSession.error("control binding mismatch"))
+                        }
+                        let session = connections.sessions.get_mut(&sid).context(
+                            ErrorCode::InvalidSession.error("session is missing or expired"),
+                        )?;
+                        if session.network != network
+                            || session.target != target
+                            || session.generation != generation
+                            || *session.cancel.borrow()
+                        {
+                            bail!(ErrorCode::InvalidSession.error("session binding mismatch"))
+                        }
+                        session.claim.take().context(
+                            ErrorCode::InvalidSession.error("session was already claimed"),
+                        )?
+                    };
+                    permit.authenticated();
+                    send(
+                        &mut ws,
+                        &RelayMessage::Connected {
+                            flow_control: false,
+                        },
+                    )
+                    .await?;
+                    sender.send(Ok(ws)).map_err(|_| {
+                        anyhow::anyhow!(ErrorCode::ConnectionClosed.error("source disappeared"))
+                    })?;
+                    Ok::<_, anyhow::Error>(())
+                }
+                .await;
+                if let Err(error) = result {
+                    tracing::debug!(%error, "target attachment failed");
+                }
+            }),
+        selected,
+    ))
 }
 async fn bridge(
     source: &mut WebSocket,

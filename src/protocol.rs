@@ -1,10 +1,12 @@
-//! Current-version wire messages and shared limits.
+//! Negotiated wire messages and shared limits.
 #![deny(missing_docs)]
 mod relay;
+mod version;
 pub use relay::{ChallengeBinding, Proof, RelayMessage, valid_relay_route};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
-/// Package and wire protocol version; peers must agree before accepting operations.
+pub use version::{PROTOCOL, ProtocolRange, SIGNATURE_FORMAT};
+/// Package release for display, diagnostics and local CLI/daemon IPC.
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 /// Maximum serialized JSON frame size in bytes.
 pub const MAX_MESSAGE: usize = 1024 * 1024;
@@ -45,7 +47,7 @@ pub struct Device {
     /// Peer-reported CPU architecture, if available.
     pub arch: Option<String>,
     #[serde(rename = "daemon_version")]
-    /// Peer package/wire version.
+    /// Peer package release for display and diagnostics.
     pub version: Option<String>,
     /// Peer-reported hostname, if available.
     pub hostname: Option<String>,
@@ -65,11 +67,12 @@ pub struct Registration {
     pub allow_inviter: bool,
 }
 #[derive(Debug, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
 /// Anonymous pairing request, restricted to the network manager.
 pub struct PairRequest {
-    /// Peer package/wire version.
+    /// Peer package release for diagnostics.
     pub version: String,
+    /// Implemented protocol range, negotiated before consuming an invitation.
+    pub protocol: ProtocolRange,
     /// Single-use bearer invitation secret.
     pub token: String,
     /// Human-readable device name.
@@ -78,7 +81,6 @@ pub struct PairRequest {
     pub csr_base64: String,
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
 /// Persisted execution intent; request identity enables deduplication without replay.
 pub struct Execution {
     /// Caller-chosen idempotency key, scoped to source and target identity.
@@ -103,7 +105,6 @@ pub struct Execution {
     pub input_sha256: String,
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
 /// Streaming execution intent whose lifetime is tied to the connection.
 pub struct StreamExecution {
     /// Executable name or path.
@@ -118,7 +119,6 @@ pub struct StreamExecution {
     pub timeout: u64,
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
 /// Final streaming process outcome, sent after output and before the exit acknowledgment.
 pub struct StreamResult {
     /// Process exit code when available; separate from protocol/CLI failure status.
@@ -231,7 +231,7 @@ pub struct LogEvent {
     pub data_base64: String,
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(tag = "op", rename_all = "snake_case", deny_unknown_fields)]
+#[serde(tag = "op", rename_all = "snake_case")]
 /// Authenticated operation within an end-to-end peer session.
 pub enum Request {
     /// Accept or deduplicate a persisted execution intent.
@@ -311,8 +311,26 @@ pub enum Request {
         execution: StreamExecution,
     },
 }
+impl Request {
+    /// Oldest protocol that implements this operation and its semantic options.
+    /// New operations and behavior-changing fields must add explicit version gates here.
+    pub fn minimum_protocol(&self) -> u32 {
+        match self {
+            Self::Exec { .. }
+            | Self::Jobs { .. }
+            | Self::Logs { .. }
+            | Self::Kill { .. }
+            | Self::Wait { .. }
+            | Self::Push { .. }
+            | Self::Pull { .. }
+            | Self::Screenshot
+            | Self::Forward { .. }
+            | Self::StreamExec { .. } => 1,
+        }
+    }
+}
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
+#[serde(tag = "type", rename_all = "snake_case")]
 /// Endpoint request/response messages; Complete bounds one cached-session operation.
 pub enum Data {
     /// Checks a cached session before sending an operation. A roster change
@@ -325,8 +343,12 @@ pub enum Data {
     Complete,
     /// Authenticated endpoint identity, storage generation and execution default.
     Ready {
-        /// Peer package/wire version.
+        /// Peer package release for diagnostics.
         version: String,
+        /// Implemented protocol range.
+        protocol: ProtocolRange,
+        /// Highest common version selected during authenticated roster exchange.
+        selected_protocol: u32,
         /// Immutable device ID.
         device_id: String,
         /// Database generation that prevents replay after storage reset.
@@ -456,6 +478,33 @@ pub fn valid_name(name: &str) -> bool {
 #[cfg(test)]
 mod limit_tests {
     use super::*;
+    #[test]
+    fn ordinary_messages_ignore_safe_metadata_but_keep_required_fields() {
+        let request: Request = serde_json::from_value(serde_json::json!({
+            "op":"forward", "port":1234, "diagnostic":"optional metadata",
+        }))
+        .unwrap();
+        assert!(matches!(request, Request::Forward { port: 1234 }));
+        assert_eq!(request.minimum_protocol(), 1);
+        assert!(serde_json::from_value::<Request>(serde_json::json!({"op":"forward"})).is_err());
+        let ready: Data = serde_json::from_value(serde_json::json!({
+            "type":"ready", "version":"future-release", "protocol":{"min":1,"max":2},
+            "selected_protocol":1, "device_id":"device", "db_id":"db", "default_cwd":"/tmp",
+            "diagnostic":"optional metadata",
+        }))
+        .unwrap();
+        let Data::Ready {
+            protocol,
+            selected_protocol,
+            ..
+        } = ready
+        else {
+            panic!("ready")
+        };
+        ProtocolRange::CURRENT
+            .confirm(protocol, selected_protocol)
+            .unwrap();
+    }
     #[test]
     fn relay_limits_match_the_cross_implementation_contract() {
         let contract: serde_json::Value =

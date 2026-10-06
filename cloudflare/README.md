@@ -22,7 +22,9 @@ bun run --cwd cloudflare deploy --name xrun-relay
 发起端到端配对，仍需要有效成员邀请。
 
 Cloudflare 使用公共 HTTPS 证书，内部继续使用网络自己的双向 TLS。
-端点的完整版本必须与 Worker 一致；部署命令读取根 Cargo.toml。
+端点与 Worker 按协议范围协商；发布号用于诊断。部署写入代码支持的
+`XRUN_PROTOCOL_MIN` / `XRUN_PROTOCOL_MAX`。协议 1 和独立签名格式 1 从
+beta.4 开始，旧 beta 需要重新组网。
 
 ## 检查和测试
 

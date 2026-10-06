@@ -17,7 +17,6 @@ use super::transport::{authenticate, open_via, peer_session, receive};
 use super::{authority, current, observe};
 
 #[derive(Debug, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
 pub struct PeerState {
     pub device: Device,
     pub ack: ReceiptAck,

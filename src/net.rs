@@ -85,6 +85,10 @@ pub async fn websocket_at(address: &str, path: &str, tls: Arc<rustls::ClientConf
     request
         .headers_mut()
         .insert("x-xrun-version", HeaderValue::from_static(VERSION));
+    request.headers_mut().insert(
+        "x-xrun-protocol",
+        HeaderValue::from_str(&ProtocolRange::CURRENT.header())?,
+    );
     let config = WebSocketConfig::default()
         .max_message_size(Some(MAX_MESSAGE))
         .max_frame_size(Some(MAX_MESSAGE));
@@ -94,7 +98,16 @@ pub async fn websocket_at(address: &str, path: &str, tls: Arc<rustls::ClientConf
         .await?;
     let result = client_async_with_config(request, Box::new(tls) as Io, Some(config)).await;
     match result {
-        Ok((ws, _)) => Ok(ws),
+        Ok((ws, response)) => {
+            let selected = response
+                .headers()
+                .get("x-xrun-protocol")
+                .and_then(|value| value.to_str().ok())
+                .and_then(|value| value.parse::<u32>().ok())
+                .context(ErrorCode::VersionMismatch.error("relay omitted selected protocol"))?;
+            ProtocolRange::require(selected, 1)?;
+            Ok(ws)
+        }
         Err(tokio_tungstenite::tungstenite::Error::Http(r)) => {
             if let Some(body) = r.body()
                 && let Ok(Data::Error { code, message }) = serde_json::from_slice(body)

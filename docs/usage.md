@@ -22,7 +22,7 @@
 
 ## 安装
 
-CLI 和 daemon 是同一个 Rust 二进制，运行已构建程序不需要 Rust、Node.js 或 Bun。桌面 App 管理网络、授权与服务，远程执行和文件传输使用 CLI。所有组件必须使用相同的完整发布版本，当前为 `0.0.1-beta.3`。
+CLI 和 daemon 是同一个 Rust 二进制，运行已构建程序不需要 Rust、Node.js 或 Bun。桌面 App 管理网络、授权与服务，远程执行和文件传输使用 CLI。当前版本为 `0.0.1-beta.3`；本机 CLI 与 daemon 要求发布版本一致，设备与中转按协议范围协商互通。
 
 | 平台 | 安装方式 |
 | --- | --- |
@@ -373,8 +373,8 @@ xrun win1 jobs --request-id '<request_id>'
 | SOURCE_NOT_ALLOWED | 在被控设备 allow-from 来源 |
 | ACCESS_PAUSED | 在被控设备 daemon resume |
 | DEVICE_OFFLINE / 连接失败 | 检查目标 daemon、中转和网络，不排队执行 |
-| VERSION_MISMATCH | 中转、CLI、daemon 和 App helper 成套使用相同完整版本 |
-| INVALID_SIGNATURE | 检查旧版本成员记录或损坏数据；当前没有跨版本签名迁移 |
+| VERSION_MISMATCH | 检查网络组件是否支持共同协议；本机 CLI/App helper 与 daemon 需使用同一发布版本并重启服务 |
+| INVALID_SIGNATURE | 检查旧签名格式或损坏数据；beta.4 不迁移旧 beta 的签名 |
 | PROGRAM_NOT_FOUND | 检查目标 PATH，或用程序完整路径 |
 | INVALID_CWD | -C 使用目标存在的绝对目录 |
 | NO_DISPLAY | 目标需要可访问桌面；网页可用无头浏览器 |
@@ -384,9 +384,9 @@ xrun win1 jobs --request-id '<request_id>'
 
 ## 升级与移除
 
-所有参与调用的 CLI、daemon、App helper 和中转检查完整版本，不进行版本协商。同一版本号的开发部署也应来自同一源码，不混用不同协议。
+设备与中转按支持的协议范围选择共同版本，发布号不同也可以互通。本机 CLI、App helper 与 daemon 仍需使用相同发布版本，替换程序后重启 daemon。
 
-同一完整版本、同一协议构建的程序替换可以复用原身份和数据库：等待任务结束、停止服务，替换固定位置程序，启动并检查。
+协议、签名格式与数据库结构兼容的升级可以复用身份和记录：等待任务结束、停止本机服务，替换固定位置程序，启动并检查。
 
 ```bash
 xrun daemon stop
@@ -396,7 +396,7 @@ xrun daemon start
 xrun status
 ```
 
-跨版本需单独处理数据兼容。持久成员清单、配对回执等记录的签名包含完整发布版本，没有签名迁移或旧协议兼容层；直接保留旧记录可能报 INVALID_SIGNATURE。beta.2 → beta.3 需要重新创建网络、加入并授权。清理数据会删除身份、任务与日志，应在明确不需要这些数据后进行，不能当作普通重启。
+beta.4 开始使用协议 1 和独立签名格式 1，不兼容旧 beta；从 beta.3 或更早版本升级需要重新创建网络、加入并授权。这次切换之后，普通发布号变化不会使已保存的签名失效；未来协议、签名或数据库格式变化以对应发布说明为准。清理数据会删除身份、任务与日志，应在明确不需要这些数据后进行，不能当作普通重启。
 
 移除本机服务保留数据使用 `down`，清理本机数据使用 `down --purge`，需要交互终端确认：
 

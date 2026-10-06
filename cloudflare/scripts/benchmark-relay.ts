@@ -1,3 +1,4 @@
+import { PROTOCOL, PROTOCOL_HEADER } from "../src/protocol";
 import {
   mkdtemp,
   mkdir,
@@ -49,7 +50,7 @@ async function measure(entry: string, sessions: number) {
       durableObjects: { NETWORKS: { className: "TestRelay", useSQLite: true } },
       bindings: {
         RELAY_ROUTE: secret,
-        XRUN_VERSION: VERSION,
+        XRUN_PROTOCOL_MIN: PROTOCOL.min, XRUN_PROTOCOL_MAX: PROTOCOL.max,
         XRUN_TEST_PROOF_GATE: "http://127.0.0.1",
       },
     }),
@@ -63,7 +64,7 @@ async function measure(entry: string, sessions: number) {
       const response = await runtime.dispatchFetch(
         `${origin}/${secret}${path}`,
         {
-          headers: { Upgrade: "websocket", "X-Xrun-Version": VERSION },
+          headers: { Upgrade: "websocket", "X-Xrun-Version": VERSION, "X-Xrun-Protocol": PROTOCOL_HEADER },
         },
       );
       if (!response.webSocket) throw new Error(`Upgrade ${response.status}`);

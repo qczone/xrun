@@ -7,28 +7,30 @@ pub(super) async fn status_route(
     headers: HeaderMap,
     ws: WebSocketUpgrade,
 ) -> ApiResult<Response> {
-    version(&headers)?;
-    Ok(ws
-        .max_message_size(MAX_MESSAGE)
-        .max_frame_size(MAX_MESSAGE)
-        .on_upgrade(move |mut ws| async move {
-            let result = async {
-                let path = format!("/networks/{network}/status");
-                member(&mut ws, &network, &path, &permit).await?;
-                let devices = app
-                    .connections
-                    .lock()
-                    .await
-                    .controls
-                    .keys()
-                    .filter(|(n, _)| n == &network)
-                    .map(|(_, id)| id.clone())
-                    .collect();
-                send(&mut ws, &RelayMessage::Status { devices }).await
-            }
-            .await;
-            finish(&mut ws, result).await;
-        }))
+    let selected = protocol(&headers)?;
+    Ok(negotiated(
+        ws.max_message_size(MAX_MESSAGE)
+            .max_frame_size(MAX_MESSAGE)
+            .on_upgrade(move |mut ws| async move {
+                let result = async {
+                    let path = format!("/networks/{network}/status");
+                    member(&mut ws, &network, &path, &permit).await?;
+                    let devices = app
+                        .connections
+                        .lock()
+                        .await
+                        .controls
+                        .keys()
+                        .filter(|(n, _)| n == &network)
+                        .map(|(_, id)| id.clone())
+                        .collect();
+                    send(&mut ws, &RelayMessage::Status { devices }).await
+                }
+                .await;
+                finish(&mut ws, result).await;
+            }),
+        selected,
+    ))
 }
 pub(super) async fn control_route(
     State(app): State<Arc<App>>,
@@ -37,14 +39,16 @@ pub(super) async fn control_route(
     headers: HeaderMap,
     ws: WebSocketUpgrade,
 ) -> ApiResult<Response> {
-    version(&headers)?;
-    Ok(ws
-        .max_message_size(MAX_MESSAGE)
-        .max_frame_size(MAX_MESSAGE)
-        .on_upgrade(move |mut ws| async move {
-            let result = control(&app, &network, &mut ws, &permit).await;
-            finish(&mut ws, result).await;
-        }))
+    let selected = protocol(&headers)?;
+    Ok(negotiated(
+        ws.max_message_size(MAX_MESSAGE)
+            .max_frame_size(MAX_MESSAGE)
+            .on_upgrade(move |mut ws| async move {
+                let result = control(&app, &network, &mut ws, &permit).await;
+                finish(&mut ws, result).await;
+            }),
+        selected,
+    ))
 }
 async fn control(
     app: &App,

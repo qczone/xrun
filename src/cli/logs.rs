@@ -1,10 +1,6 @@
 //! Sequence-based output consumption and incomplete-output reporting.
 use crate::error::{CodedError, ErrorCode};
-use crate::{
-    config::Identity,
-    net::{self, Ws},
-    protocol::*,
-};
+use crate::{config::Identity, net::Ws, protocol::*};
 use anyhow::{Context, Result, bail};
 use base64::{Engine, engine::general_purpose::STANDARD};
 use std::io::Write;
@@ -65,16 +61,11 @@ pub(super) async fn stream_logs(
         bail!(ErrorCode::DbReset.error("original task database no longer exists"))
     }
     cursor.db_id = Some(s.db_id.clone());
-    net::send(
-        &mut s.ws,
-        &Data::Request {
-            request: Request::Logs {
-                id: job.into(),
-                after: cursor.after,
-                follow,
-            },
-        },
-    )
+    s.send_request(Request::Logs {
+        id: job.into(),
+        after: cursor.after,
+        follow,
+    })
     .await?;
     let job = receive_logs(&mut s.ws, json, cursor).await?;
     s.finish().await;
@@ -113,16 +104,11 @@ pub(super) async fn collect_logs(
     after: u64,
 ) -> Result<(Vec<LogEvent>, Job)> {
     let mut s = session(id, target).await?;
-    net::send(
-        &mut s.ws,
-        &Data::Request {
-            request: Request::Logs {
-                id: job.into(),
-                after,
-                follow: false,
-            },
-        },
-    )
+    s.send_request(Request::Logs {
+        id: job.into(),
+        after,
+        follow: false,
+    })
     .await?;
     let mut events = vec![];
     let mut state = None;

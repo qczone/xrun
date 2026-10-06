@@ -1,6 +1,6 @@
 //! Loopback listener and forwarding connection lifecycle.
 use crate::error::ErrorCode;
-use crate::{config::Identity, net, protocol::*};
+use crate::{config::Identity, protocol::*};
 use anyhow::{Context, Result, bail};
 use std::time::Duration;
 
@@ -35,7 +35,7 @@ pub(super) async fn run(id: Identity, target: &str, ports: (u16, u16), json: boo
                 let target = target.clone();
                 connections.spawn(async move {
                     let mut session = session(&id, &target).await?;
-                    net::send(&mut session.ws, &Data::Request { request: Request::Forward { port: ports.1 } }).await?;
+                    session.send_request(Request::Forward { port: ports.1 }).await?;
                     match tokio::time::timeout(Duration::from_secs(10), response(&mut session.ws)).await
                         .context(ErrorCode::ForwardTimeout.error("target did not acknowledge the connection"))?? {
                         Data::ForwardReady { port } if port == ports.1 => crate::forwarding::bridge(&mut session.ws, tcp).await,

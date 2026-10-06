@@ -1,3 +1,4 @@
+import { PROTOCOL_HEADER } from "../src/protocol";
 /** Explicit network client used by deployed acceptance, with no application heartbeat. */
 export class RelaySocket {
   readonly socket: WebSocket;
@@ -15,7 +16,10 @@ export class RelaySocket {
       new (url: string, options: Bun.WebSocketOptions): WebSocket;
     };
     this.socket = new NetworkWebSocket(url, {
-      headers: { "X-Xrun-Version": version },
+      headers: {
+        "X-Xrun-Version": version,
+        "X-Xrun-Protocol": PROTOCOL_HEADER,
+      },
     });
     this.socket.binaryType = "arraybuffer";
     this.ready = new Promise((resolve, reject) => {

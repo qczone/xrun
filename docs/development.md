@@ -10,7 +10,7 @@
 cargo build --locked --release
 ```
 
-将 `target/release/xrun`（Windows 为 `xrun.exe`）放到固定目录并加入 PATH，再安装服务。CLI、daemon 和 Linux Rust 中转使用同一个二进制；Cloudflare 中转单独部署。参与调用的 CLI、daemon 和中转必须使用相同的完整发布版本。开发构建应使用同一份源码成套更新，发布要求见 [design.md 的版本说明](design.md#63-版本和限制)。
+将 `target/release/xrun`（Windows 为 `xrun.exe`）放到固定目录并加入 PATH，再安装服务。CLI、daemon 和 Linux Rust 中转使用同一个二进制；Cloudflare 中转单独部署。网络组件按支持的协议范围协商，本机 CLI / App helper 与 daemon 要求发布版本一致。发布要求见 [design.md 的版本说明](design.md#63-版本和限制)。
 
 GitHub Actions 的 `Package` 工作流可手动构建三个平台的 CLI 压缩包，以及 macOS Apple Silicon DMG、App ZIP 和 Windows x86_64 用户级 NSIS 安装包；macOS App 和 DMG 的签名、公证需要配置工作流列出的凭据。每个平台的产物还包含版本和 SHA-256 清单，macOS、Windows 同时提供自动安装脚本。
 
@@ -97,4 +97,10 @@ XRUN_TEST_CF_LINK_FILE=/绝对路径/私有地址文件 \
   cargo test --locked --test cloudflare -- --ignored --nocapture
 ```
 
-测试用正式 CLI / daemon 创建隔离网络，覆盖任务、64 MiB 文件、流式执行、转发、管理设备离线、空闲恢复和撤销。本地 workerd 不能代替真实 Cloudflare 休眠验证。子项目说明见 [cloudflare/README.md](../cloudflare/README.md)。
+测试用正式 CLI / daemon 创建隔离网络，覆盖任务、64 MiB 文件、流式执行、转发、管理设备离线、空闲恢复和撤销。本地 workerd 不能代替真实 Cloudflare 休眠验证。`cloudflare/tests/workerd/deployed-probe.ts` 仅用于临时部署；`cloudflare/scripts/hibernation.ts` 用静默前后的实例标识变化直接证明重建，并校验附件中的额度、期限和恢复后的 ACK。验收结束后清理临时 Worker / DO；探针不进入生产入口。子项目说明见 [cloudflare/README.md](../cloudflare/README.md)。
+
+## 版本与兼容性
+
+只修复实现或增加可安全忽略的诊断字段，提升发布版本即可。改变操作或执行选项的语义时，提升 `PROTOCOL`，实际实现相邻旧协议后调整支持范围；发送端通过 `Request::minimum_protocol` 与 `Session::send_request` 检查协商结果，接收端也检查。改变签名结构或编码时，提升 `SIGNATURE_FORMAT` 并明确重签 / 过渡方案，禁止因修改字段顺序而无意改变签名字节。固定测试向量位于 `tests/fixtures/signatures.json`，Rust 与 Cloudflare 的测试共同约束它。
+
+Linux CI 的 `bun scripts/test-compatibility.ts` 选择最近的兼容发布 tag，构建真实历史 CLI 与 Worker，在两种来源 / 目标组合和两套中转上验证加入、执行、文件传输、清单同步和撤销。协议 1 的首版没有兼容历史 tag，只报告初始化基线；beta.3 及更早版本不属于兼容测试范围。也可以显式传入兼容的 Git ref 做开发验收；这不等于已发布版本兼容证据。首次签名 / 协议切换不迁移历史网络。

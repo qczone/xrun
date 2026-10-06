@@ -31,7 +31,8 @@ import {
 export interface Env {
   NETWORKS: DurableObjectNamespace<XrunRelay>;
   RELAY_ROUTE: string;
-  XRUN_VERSION: string;
+  XRUN_PROTOCOL_MIN: number;
+  XRUN_PROTOCOL_MAX: number;
 }
 export function error(code: string, message: string, status = 400): Response {
   return Response.json({ type: "error", code, message }, { status });
@@ -213,20 +214,21 @@ export class XrunRelay extends DurableObject<Env> {
       this.send(server, { type: "challenge", nonce });
     }
     await this.schedule();
-    return new Response(null, { status: 101, webSocket: client });
+    return new Response(null, {
+      status: 101,
+      webSocket: client,
+      headers: {
+        "X-Xrun-Protocol":
+          request.headers.get("X-Xrun-Negotiated-Protocol") ?? "",
+      },
+    });
   }
   protected async proof(
     value: unknown,
     state: ChallengeState,
   ): Promise<{ device: string; manager: boolean } | undefined> {
     if (value == null) return;
-    return verifyProof(
-      value,
-      state.network,
-      state.path,
-      state.nonce,
-      this.env.XRUN_VERSION,
-    );
+    return verifyProof(value, state.network, state.path, state.nonce);
   }
   private async authenticate(
     ws: WebSocket,
@@ -236,7 +238,7 @@ export class XrunRelay extends DurableObject<Env> {
     if (message.length > PROOF_MESSAGE_BYTES || expired(state, Date.now()))
       throw new Error("Invalid proof size or timeout");
     const value: unknown = JSON.parse(message);
-    if (!object(value, ["type", "proof"]) || value.type !== "authenticate")
+    if (!object(value) || value.type !== "authenticate")
       throw new Error("Expected member proof");
     this.connections.save(ws, { ...state, role: "verifying" });
     const proof = await this.proof(value.proof, state);
@@ -320,14 +322,14 @@ export class XrunRelay extends DurableObject<Env> {
       throw new Error("Invalid control message");
     const value: unknown = JSON.parse(message);
     if (
-      !object(value, ["type", "session_id", "error"]) ||
+      !object(value) ||
       value.type !== "reject" ||
       typeof value.session_id !== "string"
     ) {
       throw new Error("Invalid rejection");
     }
     if (
-      !object(value.error, ["type", "code", "message"]) ||
+      !object(value.error) ||
       value.error.type !== "error" ||
       typeof value.error.code !== "string" ||
       typeof value.error.message !== "string"
@@ -361,7 +363,7 @@ export class XrunRelay extends DurableObject<Env> {
         throw new Error("Invalid acknowledgement");
       const value: unknown = JSON.parse(message);
       if (
-        !object(value, ["type", "bytes"]) ||
+        !object(value) ||
         value.type !== "ack" ||
         typeof value.bytes !== "number" ||
         !Number.isSafeInteger(value.bytes) ||

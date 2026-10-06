@@ -17,7 +17,17 @@ pub fn binary() -> std::path::PathBuf {
         .expect("test binary must exist")
 }
 pub fn command(home: &Path, args: &[&str]) -> Command {
-    let mut cmd = Command::new(binary());
+    let previous = std::env::var_os("XRUN_TEST_PREVIOUS_BINARY");
+    let side = std::env::var_os("XRUN_TEST_PREVIOUS_SIDE");
+    let use_previous = previous.is_some() && side.as_deref() == home.file_name();
+    let executable = if use_previous {
+        std::path::PathBuf::from(previous.unwrap())
+            .canonicalize()
+            .expect("previous binary must exist")
+    } else {
+        binary()
+    };
+    let mut cmd = Command::new(executable);
     cmd.env("HOME", home)
         .env("USERPROFILE", home)
         .args(args)

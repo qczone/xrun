@@ -1,0 +1,95 @@
+{
+  "purpose": "Public test-only keys and frozen payload bytes; never use these identities in a real network.",
+  "signature_format": 1,
+  "protocol": {
+    "min": 1,
+    "max": 1
+  },
+  "root_pem": "-----BEGIN CERTIFICATE-----\nMIIBSTCB8KADAgECAgEBMAoGCCqGSM49BAMCMBwxGjAYBgNVBAMTEXhydW4gbmV0\nd29yayByb290MB4XDTI1MDEwMTAwMDAwMFoXDTQ1MDEwMTAwMDAwMFowHDEaMBgG\nA1UEAxMReHJ1biBuZXR3b3JrIHJvb3QwWTATBgcqhkjOPQIBBggqhkjOPQMBBwNC\nAAQh/9j5V5kiUPkhpCUPgi3R0OWhYfwyyMvcmySWh6q5P92VQmq2v+hcRc7HYB18\nOdhFoVDRl7Hl+AdL7Wvmu2Z3oyMwITAPBgNVHRMBAf8EBTADAQH/MA4GA1UdDwEB\n/wQEAwICBDAKBggqhkjOPQQDAgNIADBFAiATfPYsO9Tv6vvZemJcYVAf8exQQAD8\nTmN01Ldkk8118wIhAJ1bGOeIzWaqbrpFsy7iZ/tKwSODSfq7UVMlVstUiYXl\n-----END CERTIFICATE-----",
+  "member_pem": "-----BEGIN CERTIFICATE-----\nMIIBnTCCAUSgAwIBAgIBAjAKBggqhkjOPQQDAjAcMRowGAYDVQQDExF4cnVuIG5l\ndHdvcmsgcm9vdDAeFw0yNTAxMDEwMDAwMDBaFw00NTAxMDEwMDAwMDBaMC8xLTAr\nBgNVBAMMJGRldl8wMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMjBZMBMG\nByqGSM49AgEGCCqGSM49AwEHA0IABCA1WeQGGSLHKlEFOuI4mUcFjzwVJPVHyouR\npkZ2IQMb8laZizHvSdaXrvjwwmXub6x4axemUOlASN6iANFQpyWjZDBiMA4GA1Ud\nDwEB/wQEAwIHgDAdBgNVHSUEFjAUBggrBgEFBQcDAQYIKwYBBQUHAwIwMQYDVR0R\nBCowKIImZDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAyLnhydW4wCgYI\nKoZIzj0EAwIDRwAwRAIgR9Z0vadXiXlD25/KncXxUVe3eidIYbkaooMM6y7/chcC\nIFTRgw6DaXfzlY2OV7P9gg1QQCMDdUuJH0Dz1l455yf7\n-----END CERTIFICATE-----",
+  "root_private_key_pem": "-----BEGIN PRIVATE KEY-----\nMIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQgMz0qXsIEmOUCfVVe\nOPxd2XmspYzavqRenZ/S4Lbd95mhRANCAAQh/9j5V5kiUPkhpCUPgi3R0OWhYfwy\nyMvcmySWh6q5P92VQmq2v+hcRc7HYB18OdhFoVDRl7Hl+AdL7Wvmu2Z3\n-----END PRIVATE KEY-----\n",
+  "member_private_key_pem": "-----BEGIN PRIVATE KEY-----\nMIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQg5r/OGT7VLd92recf\nxhRpiyoEwnbgOWSc6jY9buDWzzuhRANCAAQgNVnkBhkixypRBTriOJlHBY88FST1\nR8qLkaZGdiEDG/JWmYsx70nWl6748MJl7m+seGsXplDpQEjeogDRUKcl\n-----END PRIVATE KEY-----\n",
+  "records": {
+    "roster": {
+      "value": [
+        {
+          "network_id": "net_tpu5dixsnflzdsjdpxsawsx26olu3ci5zf65zgmubc4xebk6co5q",
+          "version": 7,
+          "manager_id": "dev_00000000000000000000000000000001",
+          "members": [
+            {
+              "device_id": "dev_00000000000000000000000000000001",
+              "name": "manager",
+              "key_fp": "9be9d1a2f2695791c9237de40b4afaf3974d891dc97ddc999408b972055e13bb",
+              "revoked": false
+            },
+            {
+              "device_id": "dev_00000000000000000000000000000002",
+              "name": "member",
+              "key_fp": "daf892b377896e8c9def0ddfa1ef239ed4b36fb0035ab0f33352b3ab0677c163",
+              "revoked": false
+            }
+          ],
+          "relay_addresses": [
+            "https://relay.example.com/abcdefghijklmnopqrstuvwxy2"
+          ],
+          "relay_ca_pem": ""
+        },
+        "19d6355e1fbefc03eff9631120e75e1936a95f5a8576e9afdc89c4e25427574b"
+      ],
+      "payload_utf8": "xrun/sig-v1/roster\u0000[{\"network_id\":\"net_tpu5dixsnflzdsjdpxsawsx26olu3ci5zf65zgmubc4xebk6co5q\",\"version\":7,\"manager_id\":\"dev_00000000000000000000000000000001\",\"members\":[{\"device_id\":\"dev_00000000000000000000000000000001\",\"name\":\"manager\",\"key_fp\":\"9be9d1a2f2695791c9237de40b4afaf3974d891dc97ddc999408b972055e13bb\",\"revoked\":false},{\"device_id\":\"dev_00000000000000000000000000000002\",\"name\":\"member\",\"key_fp\":\"daf892b377896e8c9def0ddfa1ef239ed4b36fb0035ab0f33352b3ab0677c163\",\"revoked\":false}],\"relay_addresses\":[\"https://relay.example.com/abcdefghijklmnopqrstuvwxy2\"],\"relay_ca_pem\":\"\"},\"19d6355e1fbefc03eff9631120e75e1936a95f5a8576e9afdc89c4e25427574b\"]",
+      "signature": "MEUCICcx4Y23ym+RGspjfcC0Mx/RDog+vq/aLuE4x/MOu7wUAiEA5UDnXGEYSVmQAeKpFGhc92R/Uqjbrp1L9JF9tnlDHjA=",
+      "signer": "root"
+    },
+    "pairing": {
+      "value": {
+        "network_id": "net_tpu5dixsnflzdsjdpxsawsx26olu3ci5zf65zgmubc4xebk6co5q",
+        "manager_id": "dev_00000000000000000000000000000001",
+        "device_id": "dev_00000000000000000000000000000002",
+        "allow": true
+      },
+      "payload_utf8": "xrun/sig-v1/pairing\u0000{\"network_id\":\"net_tpu5dixsnflzdsjdpxsawsx26olu3ci5zf65zgmubc4xebk6co5q\",\"manager_id\":\"dev_00000000000000000000000000000001\",\"device_id\":\"dev_00000000000000000000000000000002\",\"allow\":true}",
+      "signature": "MEYCIQDMUFBu60dCaC26WYD1LwUeolktnRcqki0u7nWPXPk+QgIhAL8Dlk8cIvC/ayW94Y4gt/wZSd8sR2JpQ9hj1OYkzXWF",
+      "signer": "root"
+    },
+    "roster-ack": {
+      "value": {
+        "device_id": "dev_00000000000000000000000000000002",
+        "hash": "74363ac0cbad54e8062f68aefcbbf12382eaddf0bfc89b4e1d13e23349de3f2a",
+        "network": "net_tpu5dixsnflzdsjdpxsawsx26olu3ci5zf65zgmubc4xebk6co5q",
+        "version": 7
+      },
+      "payload_utf8": "xrun/sig-v1/roster-ack\u0000{\"device_id\":\"dev_00000000000000000000000000000002\",\"hash\":\"74363ac0cbad54e8062f68aefcbbf12382eaddf0bfc89b4e1d13e23349de3f2a\",\"network\":\"net_tpu5dixsnflzdsjdpxsawsx26olu3ci5zf65zgmubc4xebk6co5q\",\"version\":7}",
+      "signature": "MEUCICQeRyEK0d4nbg26eGg+S98yIuJG4/1WrW+dKWa0Rn3FAiEA3yz0uxd+HYZ/8e3S4WuIESSqvqT5WNPnYgE/82qcD54=",
+      "signer": "member"
+    },
+    "relay-proof": {
+      "value": {
+        "network": "net_tpu5dixsnflzdsjdpxsawsx26olu3ci5zf65zgmubc4xebk6co5q",
+        "device": "dev_00000000000000000000000000000002",
+        "path": "/networks/net_tpu5dixsnflzdsjdpxsawsx26olu3ci5zf65zgmubc4xebk6co5q/control",
+        "nonce": "fixed-vector-challenge"
+      },
+      "payload_utf8": "xrun/sig-v1/relay-proof\u0000{\"network\":\"net_tpu5dixsnflzdsjdpxsawsx26olu3ci5zf65zgmubc4xebk6co5q\",\"device\":\"dev_00000000000000000000000000000002\",\"path\":\"/networks/net_tpu5dixsnflzdsjdpxsawsx26olu3ci5zf65zgmubc4xebk6co5q/control\",\"nonce\":\"fixed-vector-challenge\"}",
+      "signature": "MEUCIQDifcHwUWtJRRx9O7E+BsvhZbb5vMNmUUY35Fmv8VoT0wIgQlI8yR4ywIyn9xDWUQfR0+xBWM0vM4kOYXRWhenSHho=",
+      "signer": "member"
+    },
+    "relay-manager": {
+      "value": {
+        "network": "net_tpu5dixsnflzdsjdpxsawsx26olu3ci5zf65zgmubc4xebk6co5q",
+        "device": "dev_00000000000000000000000000000002",
+        "path": "/networks/net_tpu5dixsnflzdsjdpxsawsx26olu3ci5zf65zgmubc4xebk6co5q/control",
+        "nonce": "fixed-vector-challenge"
+      },
+      "payload_utf8": "xrun/sig-v1/relay-manager\u0000{\"network\":\"net_tpu5dixsnflzdsjdpxsawsx26olu3ci5zf65zgmubc4xebk6co5q\",\"device\":\"dev_00000000000000000000000000000002\",\"path\":\"/networks/net_tpu5dixsnflzdsjdpxsawsx26olu3ci5zf65zgmubc4xebk6co5q/control\",\"nonce\":\"fixed-vector-challenge\"}",
+      "signature": "MEUCIQC0/TMCE6CSHhi9uJgqy31kbSQoaFf4PSKfPWO4KHVv2QIgGsgmDV7X/5/RzsX9RgX1tbwGtYSwLiVvOgCTHb6SIPY=",
+      "signer": "root"
+    },
+    "key-check": {
+      "value": "manager",
+      "payload_utf8": "xrun/sig-v1/key-check\u0000\"manager\"",
+      "signature": "MEUCIQDQghtToFycNCExYRdRpP5d7nql/piUtgVC9SVAZme4+wIgbCLXSDk28vJMzUUViJCQL2uyrRWSvVMM8IqQ4C9Ev3Q=",
+      "signer": "root"
+    }
+  }
+}

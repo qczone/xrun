@@ -25,8 +25,8 @@ async fn registration_permissions_migration_and_manager_offline_execution() -> R
         std::fs::create_dir_all(&ordinary)?;
         let invite = json(cli(&lab.source, &["invite", "--json"]).await);
         assert_eq!(invite["allow"], false);
-        // The encrypted manager endpoint checks releases itself, even if an
-        // untrusted relay accepts a mismatched component. The token survives.
+        // The encrypted manager rejects disjoint protocols before consuming
+        // an invitation, even if a relay accepts the outer connection.
         let network=&lab.source_identity.network.as_ref().unwrap().network_id;
         let roster=RosterCache::open(&lab.source.join(".xrun/roster.db"))?.load(network)?;
         let mut outer=common::relay_socket(None,&roster,
@@ -35,6 +35,7 @@ async fn registration_permissions_migration_and_manager_offline_execution() -> R
         let (mut peer,_)=xrun::testing::secure::pairing_client(outer,&xrun::testing::crypto::ca_spki_pin(&roster.ca_pem)?,&lab.source_identity.device_id).await?;
         xrun::testing::net::send(&mut peer,&xrun::protocol::PairRequest {
             version:"incompatible".into(),token:invite["link"].as_str().unwrap().split_once('#').unwrap().1.into(),
+            protocol: xrun::protocol::ProtocolRange { min: 2, max: 2 },
             name:"ordinary1".into(),csr_base64:STANDARD.encode(xrun::testing::crypto::new_device_request()?.1),
         }).await?;
         assert!(matches!(xrun::testing::net::receive::<xrun::protocol::Data>(&mut peer).await?,xrun::protocol::Data::Error{code,..} if code=="VERSION_MISMATCH"));
@@ -268,7 +269,7 @@ async fn device_operations_connect_directly_while_info_still_queries_live_state(
                     RelayMessage::Connected { .. }
                 ));
                 let (mut ws, certificate) = secure::server(outer, &lab.target_identity).await?;
-                let (_, source) = secure::exchange_server(
+                let (_, source, _) = secure::exchange_server(
                     &mut ws,
                     &cache,
                     network,
@@ -296,6 +297,8 @@ async fn device_operations_connect_directly_while_info_still_queries_live_state(
                         &mut ws,
                         &Data::Ready {
                             version: VERSION.into(),
+                            protocol: xrun::protocol::ProtocolRange::CURRENT,
+                            selected_protocol: 1,
                             device_id: lab.target_identity.device_id.clone(),
                             db_id: "test-database".into(),
                             default_cwd: lab.target.to_string_lossy().into(),
