@@ -835,6 +835,8 @@ CLI、Rust 中转和 daemon 使用核心包中的完整发布版本，与 `xrun 
 
 Rust workspace 的核心 package 提供 CLI、daemon 和 Rust 中转；桌面 package 位于 `desktop/src-tauri`。按现有职责划分：membership 管理签名清单与权威状态，network 处理创建/加入和端点同步，relay 接通外层连接，secure 建立端到端 TLS，ipc/session/pool 处理本机通信、CLI 会话与后台连接缓存，daemon/store 管理可靠任务，process 处理原生进程，transfer/screenshot/forwarding/streaming 处理相应业务，service/control/history 提供本机服务与只读历史。Cloudflare Worker、部署脚本和 workerd 测试位于 `cloudflare/`。
 
+`cli.rs` 只负责命令入口，参数、本机操作、远端选择、可靠提交、任务查询、日志、文件和转发分别位于 `src/cli/`。`daemon.rs` 持有共享资源并负责启动、恢复和退出；`src/daemon/requests.rs` 统一检查会话权限并建立审计生命周期，再分发给可靠任务、文件和连接型操作模块。各操作保留接收输入后的权限复查、并发配额和进程启动门锁。`network.rs` 保留对外 API 与本机网络状态校验，连接认证、设备同步、链接校验、创建、配对和续证分别位于 `src/network/`；新增请求种类必须显式加入穷尽分发。
+
 App 使用 Tauri 2、React、TypeScript、Vite 和 Bun，生产包包含静态前端与配套 Rust helper，不包含 Bun。根目录 `bun run --cwd desktop build` 根据平台生成 macOS DMG 或 Windows 当前用户 NSIS 安装包；`--debug` 使用调试目录。macOS 本地包默认 ad-hoc 签名，正式包使用 Developer ID 签名、公证 App 与 DMG 并附票据；Windows 安装包当前未签名。服务使用固定位置的包内 helper，升级前正常停止。
 
 Rust 与 Cloudflare 中转使用同一套连接认证和端到端会话协议，CLI 与 daemon 不依赖中转保存成员状态。
