@@ -6,7 +6,7 @@ use crate::error::ErrorCode;
 use crate::{config::restrict_dir, protocol::*};
 use anyhow::{Context, Result, bail};
 use base64::{Engine, engine::general_purpose::STANDARD};
-use rusqlite::{Connection, OptionalExtension, params};
+use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
 use serde::{Deserialize, Serialize};
 use std::{path::Path, sync::Mutex};
 pub(crate) use submissions::{Submission, SubmissionStore};
@@ -28,9 +28,9 @@ fn open(path: &Path, create: bool) -> Result<Connection> {
     std::fs::create_dir_all(parent)?;
     restrict_dir(parent)?;
     let db = Connection::open(path)?;
+    db.busy_timeout(std::time::Duration::from_secs(5))?;
     db.pragma_update(None, "journal_mode", "WAL")?;
     db.pragma_update(None, "synchronous", "FULL")?;
-    db.busy_timeout(std::time::Duration::from_secs(5))?;
     let integrity: String = db.query_row("PRAGMA quick_check", [], |r| r.get(0))?;
     if integrity != "ok" {
         bail!(ErrorCode::DbCorrupt.error(integrity.to_string()))

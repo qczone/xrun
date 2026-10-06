@@ -637,7 +637,11 @@ mod tests {
                     let job = tokio::time::timeout(Duration::from_secs(5), async {
                         loop {
                             let job = rt.store.get(&accepted.job_id)?.unwrap();
-                            if job.state.terminal() {
+                            // The commit becomes visible before execute returns
+                            // and the background task removes its cancel marker.
+                            if job.state.terminal()
+                                && !rt.canceled.lock().unwrap().contains(&job.job_id)
+                            {
                                 return Ok::<_, anyhow::Error>(job);
                             }
                             tokio::time::sleep(Duration::from_millis(10)).await;

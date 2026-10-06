@@ -20,7 +20,9 @@ impl Database {
             .collect::<rusqlite::Result<_>>()?)
     }
     pub(super) fn append(&mut self, id: &str, stream: &str, bytes: &[u8]) -> Result<Option<u64>> {
-        let transaction = self.db.transaction()?;
+        let transaction = self
+            .db
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
         let mut job = LogState::load(&transaction, id)?;
         if job.terminal {
             return Ok(None);
@@ -83,7 +85,9 @@ impl Database {
         Ok(sequence)
     }
     pub(super) fn prune(&mut self) -> Result<()> {
-        let transaction = self.db.transaction()?;
+        let transaction = self
+            .db
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
         transaction.execute(
             "DELETE FROM audit WHERE time<?1",
             [now_ms() - AUDIT_RETENTION_MS],

@@ -241,7 +241,11 @@ impl Database {
         id: &str,
         change: impl FnOnce(&mut Job) -> Result<()>,
     ) -> Result<Job> {
-        let transaction = self.db.transaction()?;
+        // Reserve the writer before reading; another connection cannot invalidate
+        // this snapshot while a lifecycle update is being prepared.
+        let transaction = self
+            .db
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
         let mut job = job_at(&transaction, id)?
             .context(ErrorCode::JobNotFound.error("unknown accepted task"))?;
         if job.state.terminal() {
@@ -394,6 +398,34 @@ mod tests {
             )?))?,
             0
         );
+        Ok(())
+    }
+    #[test]
+    fn lifecycle_update_reserves_the_writer_before_reading() -> Result<()> {
+        let dir = tempfile::tempdir()?;
+        let path = dir.path().join("tasks.db");
+        let store = TaskStore::open(&path, true)?;
+        store.insert(&job(&store))?;
+        let competing_writer = Connection::open(&path)?;
+        competing_writer.busy_timeout(std::time::Duration::ZERO)?;
+        let updated = store.worker.call(move |database| {
+            database.update("TEST01", |job| {
+                // This step runs after the task snapshot was read. An external
+                // writer must wait rather than making that snapshot stale.
+                let write =
+                    competing_writer.execute("UPDATE jobs SET last_seq=999 WHERE id='TEST01'", []);
+                anyhow::ensure!(
+                    matches!(write, Err(rusqlite::Error::SqliteFailure(error, _))
+                        if error.code == rusqlite::ErrorCode::DatabaseBusy),
+                    "another writer changed the task during its lifecycle update"
+                );
+                job.state = JobState::Canceled;
+                Ok(())
+            })
+        })?;
+        assert_eq!(updated.state, JobState::Canceled);
+        assert_eq!(updated.last_seq, 0);
+        assert_eq!(store.get("TEST01")?.unwrap().last_seq, 0);
         Ok(())
     }
     #[tokio::test]
