@@ -1,6 +1,6 @@
 use anyhow::Result;
 
-pub fn elapsed_clock_ms() -> Result<u64> {
+pub(crate) fn elapsed_clock_ms() -> Result<u64> {
     #[cfg(target_os = "linux")]
     {
         let mut ts = libc::timespec {

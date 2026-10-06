@@ -5,8 +5,8 @@ use crate::{
     crypto, daemon,
     membership::{Manager, Pairing},
     net::{self, Ws},
+    protocol::RelayMessage,
     protocol::*,
-    relay::RelayMessage,
     secure,
 };
 use anyhow::{Result, bail};
@@ -38,7 +38,7 @@ pub async fn invite(id: &Identity, allow: bool) -> Result<serde_json::Value> {
     let token = manager.invite(allow)?;
     Ok(serde_json::json!({"link":invitation_link(&roster,&token)?,"allow":allow,"expires_in":600}))
 }
-pub async fn revoke(id: &Identity, selector: &str) -> Result<serde_json::Value> {
+pub(crate) async fn revoke(id: &Identity, selector: &str) -> Result<serde_json::Value> {
     let manager = manager(id)?;
     let roster = manager.revoke(selector)?;
     let target = roster.member(selector)?.device_id.clone();
@@ -110,7 +110,7 @@ fn validate_pair(
     pair.receipt.verify(&pair.roster, &pair.member.device_id)?;
     Ok(())
 }
-pub async fn join(link: &str, name: String) -> Result<Identity> {
+pub(crate) async fn join(link: &str, name: String) -> Result<Identity> {
     let invite = parse_link(link)?;
     let dir = config::device_dir()?;
     let existing = if dir.join("identity.toml").exists() {
@@ -245,7 +245,7 @@ pub async fn join(link: &str, name: String) -> Result<Identity> {
         anyhow::anyhow!(ErrorCode::ConnectFailed.error("no relay is reachable"))
     }))
 }
-pub async fn renew(id: &mut Identity) -> Result<()> {
+pub(crate) async fn renew(id: &mut Identity) -> Result<()> {
     authority(id)?;
     // A manager whose key still exists can renew its own leaf without a relay.
     if !crypto::certificate_expiring(&id.cert_pem, 30)? {
@@ -333,7 +333,7 @@ pub async fn renew(id: &mut Identity) -> Result<()> {
         }
     }
 }
-pub async fn serve_pair(id: &Identity, ws: &mut Ws) -> Result<()> {
+pub(crate) async fn serve_pair(id: &Identity, ws: &mut Ws) -> Result<()> {
     let manager = manager(id)?;
     let request: PairRequest =
         tokio::time::timeout(Duration::from_secs(10), net::receive(ws)).await??;

@@ -23,7 +23,7 @@ pub trait Transport: AsyncRead + AsyncWrite + Unpin + Send {}
 impl<T: AsyncRead + AsyncWrite + Unpin + Send> Transport for T {}
 pub type Io = Box<dyn Transport>;
 pub type Ws = WebSocketStream<Io>;
-pub async fn tcp(url: &url::Url) -> Result<TcpStream> {
+pub(crate) async fn tcp(url: &url::Url) -> Result<TcpStream> {
     let host = url.host_str().context("missing host")?;
     let port = url.port_or_known_default().context("missing port")?;
     let addresses = tokio::net::lookup_host((host, port)).await?;
@@ -45,13 +45,7 @@ pub async fn tcp(url: &url::Url) -> Result<TcpStream> {
         )
     )
 }
-pub fn ordered(id: &Identity) -> Vec<String> {
-    ordered_addresses(
-        &id.addresses,
-        &crypto::ca_spki_pin(&id.ca_pem).unwrap_or_default(),
-    )
-}
-pub fn ordered_addresses(values: &[String], pin: &str) -> Vec<String> {
+pub(crate) fn ordered_addresses(values: &[String], pin: &str) -> Vec<String> {
     let mut addresses = values.to_vec();
     if let Ok(path) = device_dir().map(|p| p.join("last-address.json"))
         && let Ok(bytes) = std::fs::read(path)
@@ -112,17 +106,10 @@ pub async fn websocket_at(address: &str, path: &str, tls: Arc<rustls::ClientConf
         Err(e) => Err(e.into()),
     }
 }
-pub async fn websocket(id: &Identity, path: &str) -> Result<(Ws, String)> {
-    let target = path
-        .strip_prefix("/devices/")
-        .and_then(|p| p.strip_suffix("/session"))
-        .context(ErrorCode::InvalidRequest.error("expected a device session"))?;
-    crate::network::session(id, target).await
-}
-pub fn explicit(e: &anyhow::Error) -> bool {
+pub(crate) fn explicit(e: &anyhow::Error) -> bool {
     crate::error::code(e).is_some_and(|code| code.is_explicit())
 }
-pub async fn http<T: DeserializeOwned>(
+pub(crate) async fn http<T: DeserializeOwned>(
     id: &Identity,
     method: reqwest::Method,
     path: &str,
@@ -178,10 +165,14 @@ pub async fn receive_bytes(ws: &mut Ws, size: u64, hash: &str, max: u64) -> Resu
     receive_body(ws, &mut bytes, size, hash, max).await?;
     Ok(bytes)
 }
-pub async fn receive_file(ws: &mut Ws, size: u64, hash: &str) -> Result<tempfile::NamedTempFile> {
+pub(crate) async fn receive_file(
+    ws: &mut Ws,
+    size: u64,
+    hash: &str,
+) -> Result<tempfile::NamedTempFile> {
     receive_file_with_prefix(ws, size, hash, "xrun-upload-").await
 }
-pub async fn receive_file_with_prefix(
+pub(crate) async fn receive_file_with_prefix(
     ws: &mut Ws,
     size: u64,
     hash: &str,
@@ -255,6 +246,6 @@ async fn receive_body<W: AsyncWrite + Unpin>(
     }
     Ok(())
 }
-pub async fn renew_identity(id: &mut Identity) -> Result<()> {
+pub(crate) async fn renew_identity(id: &mut Identity) -> Result<()> {
     crate::network::renew(id).await
 }

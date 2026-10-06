@@ -1,6 +1,6 @@
 use super::*;
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Submission {
+pub(crate) struct Submission {
     pub request_id: String,
     pub source_device_id: String,
     pub target_device_id: String,
@@ -14,9 +14,9 @@ pub struct Submission {
     pub job_id: Option<String>,
     pub status: String,
 }
-pub struct SubmissionStore(Mutex<Connection>);
+pub(crate) struct SubmissionStore(Mutex<Connection>);
 impl SubmissionStore {
-    pub fn open(path: &Path) -> Result<Self> {
+    pub(crate) fn open(path: &Path) -> Result<Self> {
         let mut db = open(path, true)?;
         crate::database::initialize(
             &mut db,
@@ -33,7 +33,7 @@ impl SubmissionStore {
         )?;
         Ok(Self(Mutex::new(db)))
     }
-    pub fn get(&self, id: &str) -> Result<Option<Submission>> {
+    pub(crate) fn get(&self, id: &str) -> Result<Option<Submission>> {
         let v: Option<String> = self
             .0
             .lock()
@@ -44,7 +44,7 @@ impl SubmissionStore {
             .optional()?;
         v.map(decode).transpose()
     }
-    pub fn save(&self, s: &Submission) -> Result<()> {
+    pub(crate) fn save(&self, s: &Submission) -> Result<()> {
         self.0.lock().unwrap().execute(
             "INSERT INTO submissions VALUES(?1,?2,?3)
              ON CONFLICT(id) DO UPDATE SET data=excluded.data",
@@ -52,7 +52,7 @@ impl SubmissionStore {
         )?;
         Ok(())
     }
-    pub fn recent(&self) -> Result<Vec<Submission>> {
+    pub(crate) fn recent(&self) -> Result<Vec<Submission>> {
         let db = self.0.lock().unwrap();
         let mut s = db.prepare("SELECT data FROM submissions WHERE time>=?1 ORDER BY time DESC")?;
         s.query_map([now_ms() - 86_400_000], |r| r.get::<_, String>(0))?

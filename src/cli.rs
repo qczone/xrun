@@ -17,7 +17,7 @@ use args::{DeviceCli, LocalCli, Remote};
 use clap::{CommandFactory, Parser};
 use support::{diagnostic, network_error};
 
-pub async fn run() -> i32 {
+pub(crate) async fn run() -> i32 {
     let mut args: Vec<String> = std::env::args().collect();
     let first = args
         .iter()

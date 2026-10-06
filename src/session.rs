@@ -16,7 +16,7 @@ pub(crate) struct Session {
     pooled: bool,
 }
 impl Session {
-    pub async fn open(id: &Identity, target: &str) -> Result<Self> {
+    pub(crate) async fn open(id: &Identity, target: &str) -> Result<Self> {
         if let Some(ws) = crate::ipc::connect(id, target).await? {
             Self::ready(ws, target, true).await
         } else {
@@ -58,7 +58,7 @@ impl Session {
     }
     // Recycling is optional. A confirmed operation must not become a failure
     // just because the daemon/socket disappears after the final response.
-    pub async fn finish(mut self) {
+    pub(crate) async fn finish(mut self) {
         let result = tokio::time::timeout(Duration::from_secs(2), async {
             if !matches!(net::receive::<Data>(&mut self.ws).await?, Data::Complete) {
                 bail!(ErrorCode::InvalidMessage.error("expected request completion"));

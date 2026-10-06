@@ -8,7 +8,7 @@ use tokio_tungstenite::{
     WebSocketStream,
     tungstenite::{Message, protocol::Role},
 };
-use xrun::{
+use xrun::testing::{
     config::{Identity, ServerConfig},
     crypto,
     membership::*,

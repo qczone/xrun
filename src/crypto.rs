@@ -19,7 +19,7 @@ use std::{
 };
 use time::{Duration, OffsetDateTime};
 
-pub fn base32(bytes: &[u8]) -> String {
+pub(crate) fn base32(bytes: &[u8]) -> String {
     const ABC: &[u8] = b"abcdefghijklmnopqrstuvwxyz234567";
     let (mut acc, mut bits) = (0u32, 0usize);
     let mut out = String::new();
@@ -36,7 +36,7 @@ pub fn base32(bytes: &[u8]) -> String {
     }
     out
 }
-pub fn random_token() -> String {
+pub(crate) fn random_token() -> String {
     let mut bytes = [0u8; 16];
     getrandom::fill(&mut bytes).expect("OS random source");
     base32(&bytes)
@@ -50,7 +50,7 @@ pub fn cert_der(pem: &str) -> Result<CertificateDer<'static>> {
 fn private_key(pem: &str) -> Result<PrivateKeyDer<'static>> {
     rustls_pemfile::private_key(&mut Cursor::new(pem.as_bytes()))?.context("missing private key")
 }
-pub fn pem(der: &[u8]) -> String {
+pub(crate) fn pem(der: &[u8]) -> String {
     let encoded = STANDARD.encode(der);
     format!(
         "-----BEGIN CERTIFICATE-----\n{}\n-----END CERTIFICATE-----\n",
@@ -71,7 +71,7 @@ pub fn ca_spki_pin(ca: &str) -> Result<String> {
         cert.tbs_certificate.subject_pki.raw,
     )))
 }
-pub fn peer_identity(der: &[u8]) -> Result<(String, String)> {
+pub(crate) fn peer_identity(der: &[u8]) -> Result<(String, String)> {
     let (_, cert) = x509_parser::parse_x509_certificate(der)
         .map_err(|e| anyhow::anyhow!("invalid certificate: {e}"))?;
     let id = cert
@@ -83,7 +83,7 @@ pub fn peer_identity(der: &[u8]) -> Result<(String, String)> {
         .to_string();
     Ok((id, sha256(cert.tbs_certificate.subject_pki.raw)))
 }
-pub fn csr_key(csr: &[u8]) -> Result<String> {
+pub(crate) fn csr_key(csr: &[u8]) -> Result<String> {
     CertificateSigningRequestParams::from_der(&csr.into())?; // verifies proof of possession
     let (_, csr) = x509_parser::certification_request::X509CertificationRequest::from_der(csr)
         .map_err(|e| anyhow::anyhow!(ErrorCode::InvalidCsr.error(format!("{e}"))))?;
@@ -187,7 +187,7 @@ pub fn renew_device_request(pem: &str) -> Result<Vec<u8>> {
         .der()
         .to_vec())
 }
-pub fn client_tls_config(id: &Identity) -> Result<Arc<rustls::ClientConfig>> {
+pub(crate) fn client_tls_config(id: &Identity) -> Result<Arc<rustls::ClientConfig>> {
     let mut roots = rustls::RootCertStore::empty();
     roots.add(cert_der(&id.ca_pem)?)?;
     Ok(Arc::new(

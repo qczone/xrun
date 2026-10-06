@@ -19,7 +19,7 @@ use tokio::{
 };
 use tokio_tungstenite::tungstenite::Message;
 
-pub async fn connect_loopback(port: u16) -> Result<TcpStream> {
+pub(crate) async fn connect_loopback(port: u16) -> Result<TcpStream> {
     if port == 0 {
         bail!(ErrorCode::InvalidPort.error("remote port must be 1..65535"))
     }
@@ -42,7 +42,7 @@ pub async fn connect_loopback(port: u16) -> Result<TcpStream> {
 
 // Each direction advances independently, with at most eight 64-KiB messages
 // queued. End marks a TCP write-half close, not a WebSocket disconnect.
-pub async fn bridge(ws: &mut Ws, tcp: TcpStream) -> Result<()> {
+pub(crate) async fn bridge(ws: &mut Ws, tcp: TcpStream) -> Result<()> {
     tcp.set_nodelay(true)?;
     let (mut socket_tx, mut socket_rx) = ws.split();
     let (mut input, mut output) = tcp.into_split();

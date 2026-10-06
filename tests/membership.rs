@@ -1,6 +1,6 @@
 use anyhow::Result;
 use std::sync::Arc;
-use xrun::{config::ServerConfig, crypto, membership::*, protocol::sha256};
+use xrun::testing::{config::ServerConfig, crypto, membership::*, protocol::sha256};
 
 fn manager(path: &std::path::Path) -> Result<Manager> {
     let relay = crypto::load_or_create_server(&ServerConfig {

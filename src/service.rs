@@ -8,7 +8,7 @@ use std::path::PathBuf;
 use std::{path::Path, time::Duration};
 
 #[cfg(target_os = "macos")]
-pub const APP_DAEMON_LABEL: &str = "dev.qczone.xrun.daemon";
+pub(crate) const APP_DAEMON_LABEL: &str = "dev.qczone.xrun.daemon";
 
 async fn command(program: &str, args: &[&str]) -> Result<()> {
     let mut cmd = tokio::process::Command::new(program);
@@ -45,13 +45,13 @@ fn systemd_quote(value: &str) -> String {
     )
 }
 #[cfg(target_os = "linux")]
-pub async fn install(kind: &str) -> Result<()> {
+pub(crate) async fn install(kind: &str) -> Result<()> {
     install_with_executable(kind, &std::env::current_exe()?).await
 }
 
 /// The desktop application must register the bundled CLI, never its own executable.
 #[cfg(target_os = "linux")]
-pub async fn install_with_executable(kind: &str, exe: &Path) -> Result<()> {
+pub(crate) async fn install_with_executable(kind: &str, exe: &Path) -> Result<()> {
     if !["server", "daemon"].contains(&kind) {
         bail!(ErrorCode::InvalidService.error(kind.to_string()))
     }
@@ -81,7 +81,7 @@ pub async fn install_with_executable(kind: &str, exe: &Path) -> Result<()> {
     .await
 }
 #[cfg(target_os = "linux")]
-pub async fn uninstall(kind: &str) -> Result<()> {
+pub(crate) async fn uninstall(kind: &str) -> Result<()> {
     let path = unit_path(kind)?;
     if path.exists() {
         command(
@@ -113,11 +113,11 @@ fn xml(s: &str) -> String {
         .replace('"', "&quot;")
 }
 #[cfg(target_os = "macos")]
-pub async fn install(kind: &str) -> Result<()> {
+pub(crate) async fn install(kind: &str) -> Result<()> {
     install_with_executable(kind, &std::env::current_exe()?).await
 }
 #[cfg(target_os = "macos")]
-pub async fn install_with_executable(kind: &str, exe: &Path) -> Result<()> {
+pub(crate) async fn install_with_executable(kind: &str, exe: &Path) -> Result<()> {
     if kind != "daemon" {
         bail!(ErrorCode::UnsupportedPlatform.error("Server requires Linux"))
     }
@@ -164,7 +164,7 @@ pub async fn install_with_executable(kind: &str, exe: &Path) -> Result<()> {
     .await
 }
 #[cfg(target_os = "macos")]
-pub async fn uninstall(kind: &str) -> Result<()> {
+pub(crate) async fn uninstall(kind: &str) -> Result<()> {
     let path = unit_path(kind)?;
     if path.exists() {
         let domain = format!("gui/{}/com.xrun.{kind}", unsafe { libc::getuid() });
@@ -174,11 +174,11 @@ pub async fn uninstall(kind: &str) -> Result<()> {
     Ok(())
 }
 #[cfg(windows)]
-pub async fn install(kind: &str) -> Result<()> {
+pub(crate) async fn install(kind: &str) -> Result<()> {
     install_with_executable(kind, &std::env::current_exe()?).await
 }
 #[cfg(windows)]
-pub async fn install_with_executable(kind: &str, exe: &Path) -> Result<()> {
+pub(crate) async fn install_with_executable(kind: &str, exe: &Path) -> Result<()> {
     if kind != "daemon" {
         bail!(ErrorCode::UnsupportedPlatform.error("Server requires Linux"))
     }
@@ -207,7 +207,7 @@ Start-ScheduledTask -TaskName xrun-daemon
     Ok(())
 }
 
-pub async fn start(kind: &str) -> Result<()> {
+pub(crate) async fn start(kind: &str) -> Result<()> {
     if !installed(kind)? {
         bail!(ErrorCode::ServiceNotInstalled.error(kind.to_string()))
     }
@@ -243,7 +243,7 @@ pub async fn start(kind: &str) -> Result<()> {
 }
 
 /// A successful daemon exit is deliberately not restarted by its supervisor.
-pub async fn stop_daemon() -> Result<()> {
+pub(crate) async fn stop_daemon() -> Result<()> {
     let dir = config::device_dir()?;
     if !config::instance_running(&dir.join("daemon.lock"))? {
         return Ok(());
@@ -281,7 +281,7 @@ pub async fn stop_daemon() -> Result<()> {
     .context(ErrorCode::DaemonStopTimeout.error("daemon did not finish cleanup"))?
 }
 #[cfg(windows)]
-pub async fn uninstall(kind: &str) -> Result<()> {
+pub(crate) async fn uninstall(kind: &str) -> Result<()> {
     if kind == "daemon" && device_dir()?.join("daemon.service").exists() {
         let _ = command("schtasks", &["/End", "/TN", "xrun-daemon"]).await;
         command("schtasks", &["/Delete", "/TN", "xrun-daemon", "/F"]).await?;
@@ -289,7 +289,7 @@ pub async fn uninstall(kind: &str) -> Result<()> {
     }
     Ok(())
 }
-pub fn installed(kind: &str) -> Result<bool> {
+pub(crate) fn installed(kind: &str) -> Result<bool> {
     #[cfg(target_os = "linux")]
     {
         Ok(unit_path(kind)?.exists())
@@ -316,12 +316,12 @@ pub fn installed(kind: &str) -> Result<bool> {
 }
 
 #[cfg(target_os = "macos")]
-pub fn cli_daemon_installed() -> Result<bool> {
+pub(crate) fn cli_daemon_installed() -> Result<bool> {
     Ok(unit_path("daemon")?.exists())
 }
 
 #[cfg(target_os = "linux")]
-pub async fn restart(kind: &str) -> Result<()> {
+pub(crate) async fn restart(kind: &str) -> Result<()> {
     command(
         "systemctl",
         &["--user", "restart", &format!("xrun-{kind}.service")],
@@ -329,7 +329,7 @@ pub async fn restart(kind: &str) -> Result<()> {
     .await
 }
 #[cfg(not(target_os = "linux"))]
-pub async fn restart(_kind: &str) -> Result<()> {
+pub(crate) async fn restart(_kind: &str) -> Result<()> {
     bail!(ErrorCode::UnsupportedPlatform.error("Server requires Linux"))
 }
 

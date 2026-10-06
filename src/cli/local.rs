@@ -1,8 +1,8 @@
 //! Local network, access and daemon management commands.
 use crate::error::ErrorCode;
 use crate::{
-    config::{self, Identity, ServerConfig},
-    daemon, net, service,
+    config::{self, ServerConfig},
+    daemon, service,
     store::SubmissionStore,
 };
 use anyhow::{Context, Result, bail};
@@ -45,8 +45,7 @@ pub(super) async fn run(cli: LocalCli) -> Result<i32> {
             name,
             no_daemon,
         } => {
-            crate::client::join(&link, name).await?;
-            let id = Identity::load()?;
+            let id = crate::client::join(&link, name).await?;
             daemon::init()?;
             if !no_daemon {
                 service::install("daemon").await?
@@ -58,14 +57,7 @@ pub(super) async fn run(cli: LocalCli) -> Result<i32> {
             );
         }
         Local::Invite { allow } => {
-            let id = identity().await?;
-            let value: serde_json::Value = net::http(
-                &id,
-                reqwest::Method::POST,
-                "/invites",
-                Some(serde_json::json!({"allow":allow})),
-            )
-            .await?;
+            let value = serde_json::to_value(crate::client::invite(allow).await?)?;
             if value["allow"].as_bool() != Some(allow) {
                 bail!(
                     ErrorCode::VersionMismatch
@@ -80,14 +72,7 @@ pub(super) async fn run(cli: LocalCli) -> Result<i32> {
         Local::AllowFrom(args) => permission(args, true, json).await?,
         Local::DenyFrom(args) => permission(args, false, json).await?,
         Local::Revoke { device } => {
-            let id = identity().await?;
-            let v: serde_json::Value = net::http(
-                &id,
-                reqwest::Method::POST,
-                "/admin/revoke",
-                Some(serde_json::json!({"device":device})),
-            )
-            .await?;
+            let v = serde_json::to_value(crate::client::revoke(&device).await?)?;
             print(json, &v, || {
                 println!(
                     "revoked {} (roster {})",
@@ -170,12 +155,10 @@ pub(super) async fn run(cli: LocalCli) -> Result<i32> {
             Some(DaemonCommand::Stop) => service::stop_daemon().await?,
             Some(DaemonCommand::Reset) => daemon::reset()?,
             Some(DaemonCommand::Pause) => {
-                config::pause_remote_access(true)?;
-                crate::control::refresh_access().await?;
+                crate::client::pause_access(true).await?;
             }
             Some(DaemonCommand::Resume) => {
-                config::pause_remote_access(false)?;
-                crate::control::refresh_access().await?;
+                crate::client::pause_access(false).await?;
             }
         },
         Local::Doc { topic, list } => super::docs::print(topic, list),
@@ -253,8 +236,7 @@ async fn status(json: bool) -> Result<i32> {
 }
 async fn permission(args: PermissionArgs, allow: bool, json: bool) -> Result<()> {
     if args.all {
-        config::update_all_permissions(allow)?;
-        crate::control::refresh_access().await?;
+        crate::client::set_all_permissions(allow).await?;
         print(
             json,
             &serde_json::json!({"all":true,"allowed":allow}),
@@ -292,21 +274,18 @@ async fn up(
     allow: bool,
     json: bool,
 ) -> Result<()> {
-    let id = crate::network::create(relay, name).await?;
+    let id = crate::client::create_network(relay, name).await?;
     daemon::init()?;
     if !no_daemon {
         service::install("daemon").await?;
     }
-    let invitation = crate::network::invite(&id, allow).await?;
+    let invitation = crate::client::invite(allow).await?;
     print(
         json,
-        &serde_json::json!({"device_id":id.device_id,"network_id":crate::network::authority(&id)?.network_id,"link":invitation["link"],"addresses":id.addresses,"allow":allow}),
+        &serde_json::json!({"device_id":id.device_id,"network_id":id.network_id,"link":invitation.link,"addresses":id.relay_addresses,"allow":allow}),
         || {
             println!("manager: {} ({})", id.name, id.device_id);
-            println!(
-                "xrun join '{}'",
-                invitation["link"].as_str().unwrap_or_default()
-            );
+            println!("xrun join '{}'", invitation.link);
         },
     );
     invitation_notice(allow);

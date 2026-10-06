@@ -1,18 +1,21 @@
-//! Network state and compatibility facade for the public network API.
+//! Network operations backed by manager authority and encrypted peer sessions.
 mod bootstrap;
 mod links;
 mod pairing;
 mod peers;
 mod transport;
 
-pub use bootstrap::create;
-pub use links::invitation_link;
-pub use pairing::{invite, join, manager, renew, revoke, serve_pair};
-pub use peers::{
-    PeerState, connected_devices, device, devices, local_device, refresh, refresh_one, synchronize,
+pub(crate) use bootstrap::create;
+#[cfg(test)]
+use links::invitation_link;
+pub use pairing::{invite, manager};
+pub(crate) use pairing::{join, renew, revoke, serve_pair};
+pub use peers::PeerState;
+pub(crate) use peers::{
+    connected_devices, device, devices, local_device, refresh_one, synchronize,
 };
-pub(crate) use transport::session_with_expiry;
-pub use transport::{attach, authenticate, control, open, receive, session};
+pub use transport::authenticate;
+pub(crate) use transport::{attach, control, receive, session, session_with_expiry};
 
 use crate::error::ErrorCode;
 use crate::{
@@ -23,7 +26,7 @@ use crate::{
 use anyhow::{Context, Result, bail};
 use serde::de::DeserializeOwned;
 
-pub fn authority(id: &Identity) -> Result<&NetworkIdentity> {
+pub(crate) fn authority(id: &Identity) -> Result<&NetworkIdentity> {
     let network = id.network.as_ref().context(
         ErrorCode::MigrationRequired
             .error("stop old services, then create or join an end-to-end network"),
@@ -33,10 +36,10 @@ pub fn authority(id: &Identity) -> Result<&NetworkIdentity> {
     }
     Ok(network)
 }
-pub fn cache() -> Result<RosterCache> {
+pub(crate) fn cache() -> Result<RosterCache> {
     RosterCache::open(&config::device_dir()?.join("roster.db"))
 }
-pub fn current(id: &Identity) -> Result<SignedRoster> {
+pub(crate) fn current(id: &Identity) -> Result<SignedRoster> {
     let network = authority(id)?;
     let path = config::device_dir()?.join("roster.db");
     if !path.exists() {
@@ -85,7 +88,7 @@ fn archive_legacy(dir: &std::path::Path) -> Result<()> {
     }
     Ok(())
 }
-pub async fn http<T: DeserializeOwned>(
+pub(crate) async fn http<T: DeserializeOwned>(
     id: &Identity,
     method: reqwest::Method,
     path: &str,

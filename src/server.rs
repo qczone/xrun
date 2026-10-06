@@ -146,7 +146,7 @@ impl AsyncWrite for LimitedTcp {
         Pin::new(&mut self.inner).poll_shutdown(cx)
     }
 }
-pub fn instance_lock(dir: &std::path::Path) -> Result<std::fs::File> {
+pub(crate) fn instance_lock(dir: &std::path::Path) -> Result<std::fs::File> {
     std::fs::create_dir_all(dir)?;
     crate::config::restrict_dir(dir)?;
     let lock = std::fs::OpenOptions::new()

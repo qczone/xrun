@@ -10,11 +10,11 @@ use tokio::{
     io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader},
     process::Child,
 };
-use xrun::{
+use xrun::testing::{
     config::Identity,
     membership::RosterCache,
+    protocol::RelayMessage,
     protocol::{MAX_FILE, VERSION, sha256},
-    relay::{Proof, RelayMessage},
 };
 
 struct CloudLab {
@@ -124,21 +124,21 @@ async fn public_relay_executes_transfers_streams_and_rejects_route_takeover() ->
         assert_eq!(completed["job"]["exit_code"], 0);
         assert!(ok(run(&lab.source, &["target1", "logs", job_id]).await).contains(VERSION));
         println!("network creation, pairing, execution and job history: passed");
-        let source: Identity = xrun::config::read(&lab.source.join(".xrun/identity.toml"))?;
-        let target: Identity = xrun::config::read(&lab.target.join(".xrun/identity.toml"))?;
+        let source: Identity = xrun::testing::config::read(&lab.source.join(".xrun/identity.toml"))?;
+        let target: Identity = xrun::testing::config::read(&lab.target.join(".xrun/identity.toml"))?;
         let network = &source.network.as_ref().context("network")?.network_id;
         let roster = RosterCache::open(&lab.source.join(".xrun/roster.db"))?.load(network)?;
         let path = format!("/networks/{network}/control");
-        let mut attacker = xrun::net::websocket_at(&roster.roster.relay_addresses[0], &path, xrun::crypto::relay_tls_config(&roster.roster.relay_ca_pem)?).await?;
-        let RelayMessage::Challenge { nonce } = xrun::net::receive(&mut attacker).await? else { anyhow::bail!("challenge") };
-        let mut proof = Proof::create(&source, network, &path, &nonce, None)?;
+        let mut attacker = xrun::testing::net::websocket_at(&roster.roster.relay_addresses[0], &path, xrun::testing::crypto::relay_tls_config(&roster.roster.relay_ca_pem)?).await?;
+        let RelayMessage::Challenge { nonce } = xrun::testing::net::receive(&mut attacker).await? else { anyhow::bail!("challenge") };
+        let mut proof = xrun::testing::relay_proof(&source, network, &path, &nonce, None)?;
         proof.device_id = target.device_id.clone();
-        xrun::net::send(&mut attacker, &RelayMessage::Authenticate { proof: Some(proof) }).await?;
-        assert!(matches!(xrun::net::receive(&mut attacker).await?, RelayMessage::Error { code, .. } if code == "UNAUTHENTICATED"));
+        xrun::testing::net::send(&mut attacker, &RelayMessage::Authenticate { proof: Some(proof) }).await?;
+        assert!(matches!(xrun::testing::net::receive(&mut attacker).await?, RelayMessage::Error { code, .. } if code == "UNAUTHENTICATED"));
         let connect = format!("/networks/{network}/connect/{}", target.device_id);
-        let mut anonymous = xrun::net::websocket_at(&roster.roster.relay_addresses[0], &connect, xrun::crypto::relay_tls_config(&roster.roster.relay_ca_pem)?).await?;
-        xrun::network::authenticate(&mut anonymous, None, network, &connect, None).await?;
-        assert!(matches!(xrun::net::receive(&mut anonymous).await?, RelayMessage::Error { code, .. } if code == "UNAUTHENTICATED"));
+        let mut anonymous = xrun::testing::net::websocket_at(&roster.roster.relay_addresses[0], &connect, xrun::testing::crypto::relay_tls_config(&roster.roster.relay_ca_pem)?).await?;
+        xrun::testing::network::authenticate(&mut anonymous, None, network, &connect, None).await?;
+        assert!(matches!(xrun::testing::net::receive(&mut anonymous).await?, RelayMessage::Error { code, .. } if code == "UNAUTHENTICATED"));
         cloud_online(&lab.source, "target1").await?;
         println!("certificate interoperability and route takeover rejection: passed");
         // Exercise the actual product file limit, rather than a small fixture.

@@ -4,8 +4,8 @@ use crate::{
     config::{self, Identity},
     membership::{Member, ReceiptAck, SignedRoster},
     net,
+    protocol::RelayMessage,
     protocol::*,
-    relay::RelayMessage,
     secure,
 };
 use anyhow::{Context, Result, bail};
@@ -22,7 +22,7 @@ pub struct PeerState {
     pub device: Device,
     pub ack: ReceiptAck,
 }
-pub fn local_device(id: &Identity, cwd: String) -> Result<Device> {
+pub(crate) fn local_device(id: &Identity, cwd: String) -> Result<Device> {
     let roster = current(id)?;
     Ok(Device {
         device_id: id.device_id.clone(),
@@ -140,7 +140,7 @@ fn listed_device(roster: &SignedRoster, member: &Member, info: Option<&Device>) 
 }
 
 /// Relay presence is a routing hint, not proof that an endpoint can execute.
-pub async fn connected_devices(id: &Identity) -> Result<Vec<Device>> {
+pub(crate) async fn connected_devices(id: &Identity) -> Result<Vec<Device>> {
     let ids = online_ids(id, &current(id)?).await?;
     let roster = current(id)?;
     Ok(roster
@@ -155,7 +155,7 @@ pub async fn connected_devices(id: &Identity) -> Result<Vec<Device>> {
         .collect())
 }
 
-pub async fn device(id: &Identity, selector: &str) -> Result<Device> {
+pub(crate) async fn device(id: &Identity, selector: &str) -> Result<Device> {
     let via = current(id)?;
     let member = via.member(selector)?;
     if member.revoked {
@@ -179,7 +179,7 @@ pub async fn device(id: &Identity, selector: &str) -> Result<Device> {
     Ok(listed_device(&roster, member, info.as_ref()))
 }
 
-pub async fn devices(id: &Identity) -> Result<(Vec<Device>, Vec<ReceiptAck>)> {
+pub(crate) async fn devices(id: &Identity) -> Result<(Vec<Device>, Vec<ReceiptAck>)> {
     let via = current(id)?;
     let ids = online_ids(id, &via).await?;
     let mut states = states_for(id, &via, ids.clone()).await?;
@@ -218,12 +218,12 @@ pub async fn devices(id: &Identity) -> Result<(Vec<Device>, Vec<ReceiptAck>)> {
         .collect();
     Ok((devices, acks))
 }
-pub async fn refresh(id: &Identity) -> Result<()> {
+pub(crate) async fn refresh(id: &Identity) -> Result<()> {
     let via = current(id)?;
     states_for(id, &via, online_ids(id, &via).await?).await?;
     Ok(())
 }
-pub async fn refresh_one(id: &Identity, cursor: &mut usize) -> Result<()> {
+pub(crate) async fn refresh_one(id: &Identity, cursor: &mut usize) -> Result<()> {
     let via = current(id)?;
     let peers: Vec<_> = online_ids(id, &via)
         .await?
@@ -245,7 +245,7 @@ pub async fn refresh_one(id: &Identity, cursor: &mut usize) -> Result<()> {
     peer_state(id, fallback, &via).await?;
     Ok(())
 }
-pub async fn synchronize(roster: &SignedRoster) -> Result<()> {
+pub(crate) async fn synchronize(roster: &SignedRoster) -> Result<()> {
     let id = Identity::load()?;
     if authority(&id)?.network_id != roster.roster.network_id {
         bail!(ErrorCode::NetworkMismatch.error("local identity differs from the signed roster"))

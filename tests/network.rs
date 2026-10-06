@@ -3,7 +3,7 @@ use anyhow::Result;
 use base64::{Engine, engine::general_purpose::STANDARD};
 use common::*;
 use std::time::Duration;
-use xrun::{
+use xrun::testing::{
     config::{DaemonConfig, Identity},
     membership::RosterCache,
     store::TaskStore,
@@ -15,7 +15,7 @@ async fn registration_permissions_migration_and_manager_offline_execution() -> R
         let mut lab = Lab::new().await?;
         let invalid = lab.root.path().join("invalid-route");
         std::fs::create_dir_all(&invalid)?;
-        let link = xrun::relay::deployment_link(&lab.relay.config)?;
+        let link = xrun::testing::relay::deployment_link(&lab.relay.config)?;
         let wrong = format!("{}#{}", link.split_once('#').unwrap().0, "a".repeat(26));
         let denied = cli(&invalid, &["up", "--relay", &wrong, "--no-daemon"]).await;
         assert_eq!(denied.status.code(), Some(125));
@@ -31,13 +31,13 @@ async fn registration_permissions_migration_and_manager_offline_execution() -> R
         let roster=RosterCache::open(&lab.source.join(".xrun/roster.db"))?.load(network)?;
         let mut outer=common::relay_socket(None,&roster,
             &format!("/networks/{network}/connect/{}", lab.source_identity.device_id)).await?;
-        assert!(matches!(xrun::net::receive(&mut outer).await?,xrun::relay::RelayMessage::Connected { .. }));
-        let (mut peer,_)=xrun::secure::pairing_client(outer,&xrun::crypto::ca_spki_pin(&roster.ca_pem)?,&lab.source_identity.device_id).await?;
-        xrun::net::send(&mut peer,&xrun::protocol::PairRequest {
+        assert!(matches!(xrun::testing::net::receive(&mut outer).await?,xrun::protocol::RelayMessage::Connected { .. }));
+        let (mut peer,_)=xrun::testing::secure::pairing_client(outer,&xrun::testing::crypto::ca_spki_pin(&roster.ca_pem)?,&lab.source_identity.device_id).await?;
+        xrun::testing::net::send(&mut peer,&xrun::protocol::PairRequest {
             version:"incompatible".into(),token:invite["link"].as_str().unwrap().split_once('#').unwrap().1.into(),
-            name:"ordinary1".into(),csr_base64:STANDARD.encode(xrun::crypto::new_device_request()?.1),
+            name:"ordinary1".into(),csr_base64:STANDARD.encode(xrun::testing::crypto::new_device_request()?.1),
         }).await?;
-        assert!(matches!(xrun::net::receive::<xrun::protocol::Data>(&mut peer).await?,xrun::protocol::Data::Error{code,..} if code=="VERSION_MISMATCH"));
+        assert!(matches!(xrun::testing::net::receive::<xrun::protocol::Data>(&mut peer).await?,xrun::protocol::Data::Error{code,..} if code=="VERSION_MISMATCH"));
         drop(peer);
         ok(cli(
             &ordinary,
@@ -66,16 +66,16 @@ async fn registration_permissions_migration_and_manager_offline_execution() -> R
         // pairing with the manager, never execution or task-history access.
         let path = format!("/networks/{network}/connect/{}", lab.target_identity.device_id);
         let mut outer = common::relay_socket(None, &roster, &path).await?;
-        assert!(matches!(xrun::net::receive(&mut outer).await?, xrun::relay::RelayMessage::Error { code, .. } if code == "UNAUTHENTICATED"));
+        assert!(matches!(xrun::testing::net::receive(&mut outer).await?, xrun::protocol::RelayMessage::Error { code, .. } if code == "UNAUTHENTICATED"));
         let manager = &lab.source_identity.device_id;
         let mut outer = common::relay_socket(None, &roster, &format!("/networks/{network}/connect/{manager}")).await?;
-        assert!(matches!(xrun::net::receive(&mut outer).await?, xrun::relay::RelayMessage::Connected { .. }));
-        let (mut anonymous, _) = xrun::secure::pairing_client(outer, &xrun::crypto::ca_spki_pin(&roster.ca_pem)?, manager).await?;
+        assert!(matches!(xrun::testing::net::receive(&mut outer).await?, xrun::protocol::RelayMessage::Connected { .. }));
+        let (mut anonymous, _) = xrun::testing::secure::pairing_client(outer, &xrun::testing::crypto::ca_spki_pin(&roster.ca_pem)?, manager).await?;
         // The manager may reject and close before reading the request, so a
         // failed write is a refusal too.
         let answer = async {
-            xrun::net::send(&mut anonymous, &xrun::protocol::Data::Request { request: xrun::protocol::Request::Jobs { id: None, running: false, request_id: None, limit: 10, offset: 0 } }).await?;
-            xrun::net::receive::<xrun::protocol::Data>(&mut anonymous).await
+            xrun::testing::net::send(&mut anonymous, &xrun::protocol::Data::Request { request: xrun::protocol::Request::Jobs { id: None, running: false, request_id: None, limit: 10, offset: 0 } }).await?;
+            xrun::testing::net::receive::<xrun::protocol::Data>(&mut anonymous).await
         }.await;
         assert!(matches!(answer, Err(_) | Ok(xrun::protocol::Data::Error { .. })));
         // Registration alone grants neither direction of execution.
@@ -97,7 +97,7 @@ async fn registration_permissions_migration_and_manager_offline_execution() -> R
         std::fs::create_dir_all(&dir)?;
         let mut old = lab.target_identity.clone();
         old.network = None;
-        xrun::config::write(&dir.join("identity.toml"), &old)?;
+        xrun::testing::config::write(&dir.join("identity.toml"), &old)?;
         let old_cfg = DaemonConfig {
             allow_from: vec!["dev_01234567890123456789012345678901".into()],
             deny_from: vec!["dev_11234567890123456789012345678901".into()],
@@ -106,7 +106,7 @@ async fn registration_permissions_migration_and_manager_offline_execution() -> R
             pause_generation: 7,
             ..Default::default()
         };
-        xrun::config::write(&dir.join("daemon.toml"), &old_cfg)?;
+        xrun::testing::config::write(&dir.join("daemon.toml"), &old_cfg)?;
         let history = TaskStore::open(&dir.join("daemon.db"), true)?;
         history.audit(serde_json::json!({"op":"old-history","preserve":true}))?;
         std::fs::write(dir.join("daemon.initialized"), b"2\n")?;
@@ -122,7 +122,7 @@ async fn registration_permissions_migration_and_manager_offline_execution() -> R
             ],
         )
         .await);
-        let policy: DaemonConfig = xrun::config::read(&dir.join("daemon.toml"))?;
+        let policy: DaemonConfig = xrun::testing::config::read(&dir.join("daemon.toml"))?;
         assert_eq!(
             policy.allow_from,
             vec![lab.source_identity.device_id.clone()]
@@ -131,10 +131,10 @@ async fn registration_permissions_migration_and_manager_offline_execution() -> R
         assert!(!policy.allow_all);
         assert!(policy.remote_access_paused);
         assert_eq!(policy.pause_generation, 7);
-        let saved: Identity = xrun::config::read(&dir.join("identity.previous.toml"))?;
+        let saved: Identity = xrun::testing::config::read(&dir.join("identity.previous.toml"))?;
         assert_eq!(saved.device_id, old.device_id);
         assert!(
-            xrun::config::read::<Identity>(&dir.join("identity.toml"))?
+            xrun::testing::config::read::<Identity>(&dir.join("identity.toml"))?
                 .network
                 .is_some()
         );
@@ -148,7 +148,7 @@ async fn registration_permissions_migration_and_manager_offline_execution() -> R
         // A missing local cache is an error; it cannot be silently recreated
         // from whatever older record an untrusted relay supplies.
         let cache_path = ordinary.join(".xrun/roster.db");
-        let ordinary_id: Identity = xrun::config::read(&ordinary.join(".xrun/identity.toml"))?;
+        let ordinary_id: Identity = xrun::testing::config::read(&ordinary.join(".xrun/identity.toml"))?;
         let cache = RosterCache::open(&cache_path)?;
         let roster = cache.load(&ordinary_id.network.as_ref().unwrap().network_id)?;
         assert!(
@@ -198,9 +198,9 @@ async fn registration_permissions_migration_and_manager_offline_execution() -> R
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn device_operations_connect_directly_while_info_still_queries_live_state() -> Result<()> {
     use anyhow::Context;
-    use xrun::{
-        crypto, membership::ReceiptAck, net, network::PeerState, protocol::*, relay::RelayMessage,
-        secure,
+    use xrun::testing::{
+        crypto, membership::ReceiptAck, net, network::PeerState, protocol::RelayMessage,
+        protocol::*, secure,
     };
     tokio::time::timeout(Duration::from_secs(15), async {
         let mut lab = Lab::new().await?;
@@ -220,7 +220,8 @@ async fn device_operations_connect_directly_while_info_still_queries_live_state(
             ],
         )
         .await);
-        let observer_id: Identity = xrun::config::read(&observer.join(".xrun/identity.toml"))?;
+        let observer_id: Identity =
+            xrun::testing::config::read(&observer.join(".xrun/identity.toml"))?;
         stop_daemon(&lab.source, &mut lab.source_daemon).await?;
         stop_daemon(&lab.target, &mut lab.daemon).await?;
         let cache = RosterCache::open(&lab.target.join(".xrun/roster.db"))?;
@@ -349,7 +350,7 @@ async fn device_operations_connect_directly_while_info_still_queries_live_state(
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn status_filters_known_revocations_without_claiming_roster_synchronization() -> Result<()> {
-    use xrun::{net, relay::RelayMessage};
+    use xrun::testing::{net, protocol::RelayMessage};
     tokio::time::timeout(Duration::from_secs(25), async {
         let mut lab = Lab::new().await?;
         let observer = lab.root.path().join("observer");

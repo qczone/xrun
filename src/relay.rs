@@ -1,8 +1,10 @@
+//! Rust relay assembly, shared socket validation and private deployment state.
+mod control;
+mod sessions;
 use crate::error::ErrorCode;
 use crate::{
-    config::{Identity, ServerConfig},
+    config::ServerConfig,
     crypto,
-    membership::{self, Manager},
     protocol::*,
     server::{self, TransportPermit},
 };
@@ -17,8 +19,9 @@ use axum::{
     response::{IntoResponse, Response},
     routing::get,
 };
+use control::{control_route, status_route};
 use futures_util::{SinkExt, StreamExt};
-use serde::{Deserialize, Serialize};
+use sessions::{attach_route, source_route};
 use std::{collections::HashMap, sync::Arc, time::Instant};
 use tokio::sync::{Mutex, mpsc, oneshot, watch};
 
@@ -29,119 +32,6 @@ const MAX_TARGET_SESSIONS: usize = 32;
 const MAX_SOURCE_SESSIONS: usize = 16;
 const MAX_ANONYMOUS_TARGET_SESSIONS: usize = 4;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct Proof {
-    pub device_id: String,
-    pub cert_pem: String,
-    pub root_pem: String,
-    pub signature: String,
-    /// Only the manager'session control connection carries this root-key signature,
-    /// so pairing without a member certificate reaches no other device.
-    pub manager_signature: Option<String>,
-}
-#[derive(Debug, Serialize)]
-pub struct ChallengeBinding<'a> {
-    pub network: &'a str,
-    pub device: &'a str,
-    pub path: &'a str,
-    pub nonce: &'a str,
-}
-impl Proof {
-    pub fn create(
-        id: &Identity,
-        network: &str,
-        path: &str,
-        nonce: &str,
-        manager: Option<&Manager>,
-    ) -> Result<Self> {
-        let binding = ChallengeBinding {
-            network,
-            device: &id.device_id,
-            path,
-            nonce,
-        };
-        Ok(Self {
-            device_id: id.device_id.clone(),
-            cert_pem: id.cert_pem.clone(),
-            root_pem: id.ca_pem.clone(),
-            signature: membership::sign(&id.key_pem, "relay-proof", &binding)?,
-            manager_signature: manager.map(|m| m.sign_relay(&binding)).transpose()?,
-        })
-    }
-    /// The network ID is the root key fingerprint, so the relay verifies
-    /// members without storing a roster. Revocation remains an endpoint check;
-    /// a revoked device can only appear as itself until its certificate expires.
-    /// Returns whether the proof also holds the network root key.
-    pub fn verify(&self, network: &str, path: &str, nonce: &str) -> Result<bool> {
-        if network != format!("net_{}", crypto::ca_spki_pin(&self.root_pem)?) {
-            bail!(ErrorCode::Unauthenticated.error("proof belongs to another network"))
-        }
-        crypto::verify_member_certificate(&self.cert_pem, &self.root_pem, &self.device_id)
-            .map_err(|e| {
-                anyhow::anyhow!(
-                    ErrorCode::Unauthenticated.error(format!("invalid member certificate: {e}"))
-                )
-            })?;
-        let binding = ChallengeBinding {
-            network,
-            device: &self.device_id,
-            path,
-            nonce,
-        };
-        membership::verify(&self.cert_pem, "relay-proof", &binding, &self.signature).map_err(
-            |_| anyhow::anyhow!(ErrorCode::Unauthenticated.error("invalid member proof")),
-        )?;
-        let Some(signature) = &self.manager_signature else {
-            return Ok(false);
-        };
-        membership::verify(&self.root_pem, "relay-manager", &binding, signature).map_err(|_| {
-            anyhow::anyhow!(ErrorCode::Unauthenticated.error("invalid manager proof"))
-        })?;
-        Ok(true)
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
-pub enum RelayMessage {
-    Challenge {
-        nonce: String,
-    },
-    /// None only for pairing, which the relay routes to the manager alone.
-    Authenticate {
-        proof: Option<Proof>,
-    },
-    HelloAck {
-        generation: String,
-    },
-    Incoming {
-        session_id: String,
-    },
-    Reject {
-        session_id: String,
-        error: Box<Data>,
-    },
-    Connected {
-        #[serde(default)]
-        flow_control: bool,
-    },
-    Status {
-        devices: Vec<String>,
-    },
-    Error {
-        code: String,
-        message: String,
-    },
-}
-impl RelayMessage {
-    fn error(error: &anyhow::Error) -> Self {
-        let Data::Error { code, message } = Data::error(error) else {
-            unreachable!()
-        };
-        Self::Error { code, message }
-    }
-}
 async fn send(ws: &mut WebSocket, message: &RelayMessage) -> Result<()> {
     let text = serde_json::to_string(message)?;
     if text.len() > MAX_MESSAGE {
@@ -245,367 +135,11 @@ struct App {
     connections: Mutex<Connections>,
 }
 
-async fn status_route(
-    State(app): State<Arc<App>>,
-    Path(network): Path<String>,
-    Extension(permit): Extension<TransportPermit>,
-    headers: HeaderMap,
-    ws: WebSocketUpgrade,
-) -> ApiResult<Response> {
-    version(&headers)?;
-    Ok(ws
-        .max_message_size(MAX_MESSAGE)
-        .max_frame_size(MAX_MESSAGE)
-        .on_upgrade(move |mut ws| async move {
-            let result = async {
-                let path = format!("/networks/{network}/status");
-                member(&mut ws, &network, &path, &permit).await?;
-                let devices = app
-                    .connections
-                    .lock()
-                    .await
-                    .controls
-                    .keys()
-                    .filter(|(n, _)| n == &network)
-                    .map(|(_, id)| id.clone())
-                    .collect();
-                send(&mut ws, &RelayMessage::Status { devices }).await
-            }
-            .await;
-            finish(&mut ws, result).await;
-        }))
-}
-async fn control_route(
-    State(app): State<Arc<App>>,
-    Path(network): Path<String>,
-    Extension(permit): Extension<TransportPermit>,
-    headers: HeaderMap,
-    ws: WebSocketUpgrade,
-) -> ApiResult<Response> {
-    version(&headers)?;
-    Ok(ws
-        .max_message_size(MAX_MESSAGE)
-        .max_frame_size(MAX_MESSAGE)
-        .on_upgrade(move |mut ws| async move {
-            let result = control(&app, &network, &mut ws, &permit).await;
-            finish(&mut ws, result).await;
-        }))
-}
 async fn finish(ws: &mut WebSocket, result: Result<()>) {
     if let Err(error) = result {
         let _ = send(ws, &RelayMessage::error(&error)).await;
     }
     let _ = tokio::time::timeout(CLOSE_TIMEOUT, ws.close()).await;
-}
-async fn control(
-    app: &App,
-    network: &str,
-    ws: &mut WebSocket,
-    permit: &TransportPermit,
-) -> Result<()> {
-    // Only the holder of a device key can take over that device'session routing slot.
-    // Authorization still happens inside the end-to-end tunnel.
-    let path = format!("/networks/{network}/control");
-    let (id, manager) = member(ws, network, &path, permit).await?;
-    let key = (network.to_owned(), id.clone());
-    let generation = uuid::Uuid::new_v4().simple().to_string();
-    let (tx, mut rx) = mpsc::channel(16);
-    let (cancel, mut closed) = watch::channel(false);
-    {
-        let mut connections = app.connections.lock().await;
-        if !connections.controls.contains_key(&key)
-            && (connections.controls.len() >= MAX_CONTROL_CONNECTIONS
-                || connections
-                    .controls
-                    .keys()
-                    .filter(|(n, _)| n == network)
-                    .count()
-                    >= MAX_NETWORK_CONTROLS)
-        {
-            bail!(ErrorCode::ConnectionLimit.error("too many control connections"))
-        }
-        if let Some(old) = connections.controls.insert(
-            key.clone(),
-            ControlConnection {
-                generation: generation.clone(),
-                manager,
-                tx,
-                cancel,
-            },
-        ) {
-            let _ = old.cancel.send(true);
-        }
-        for session in connections.sessions.values() {
-            if session.network == network && session.target == id {
-                let _ = session.cancel.send(true);
-            }
-        }
-    }
-    let result = async {
-        send(ws, &RelayMessage::HelloAck { generation: generation.clone() }).await?;
-        let mut tick = tokio::time::interval(HEARTBEAT_INTERVAL);
-        let mut last = Instant::now();
-        loop {
-            tokio::select! {
-                _ = closed.changed() => return Ok(()),
-                _ = tick.tick() => control_heartbeat(ws, last).await?,
-                message = rx.recv() => send(ws, &message.context(ErrorCode::ConnectionClosed.error("control sender stopped"))?).await?,
-                message = ws.next() => control_message(app, ws, message, network, &id, &generation, &mut last).await?,
-            }
-        }
-    }.await;
-    let mut connections = app.connections.lock().await;
-    if connections
-        .controls
-        .get(&key)
-        .is_some_and(|v| v.generation == generation)
-    {
-        connections.controls.remove(&key);
-        for session in connections.sessions.values() {
-            if session.network == network && session.target == id {
-                let _ = session.cancel.send(true);
-            }
-        }
-    }
-    result
-}
-async fn control_heartbeat(ws: &mut WebSocket, last: Instant) -> Result<()> {
-    if last.elapsed() > HEARTBEAT_TIMEOUT {
-        bail!(ErrorCode::ControlTimeout.error("endpoint stopped responding"));
-    }
-    tokio::time::timeout(CONNECT_TIMEOUT, ws.send(Message::Ping(vec![].into()))).await??;
-    Ok(())
-}
-async fn control_message(
-    app: &App,
-    ws: &mut WebSocket,
-    message: Option<std::result::Result<Message, axum::Error>>,
-    network: &str,
-    device: &str,
-    generation: &str,
-    last: &mut Instant,
-) -> Result<()> {
-    match message.context(ErrorCode::ConnectionClosed.error("control socket closed"))?? {
-        Message::Ping(bytes) => {
-            *last = Instant::now();
-            ws.send(Message::Pong(bytes)).await?;
-        }
-        Message::Pong(_) => *last = Instant::now(),
-        Message::Text(text) => {
-            *last = Instant::now();
-            let RelayMessage::Reject { session_id, error } = serde_json::from_str(&text)? else {
-                bail!(ErrorCode::InvalidMessage.error("unexpected control message"));
-            };
-            let mut connections = app.connections.lock().await;
-            if let Some(session) = connections.sessions.get_mut(&session_id)
-                && session.network == network
-                && session.target == device
-                && session.generation == generation
-                && let Some(sender) = session.claim.take()
-            {
-                let _ = sender.send(Err(*error));
-            }
-        }
-        _ => bail!(ErrorCode::ConnectionClosed.error("control socket closed")),
-    }
-    Ok(())
-}
-async fn claimed_session(
-    receiver: oneshot::Receiver<std::result::Result<WebSocket, Data>>,
-) -> Result<WebSocket> {
-    match tokio::time::timeout(CONNECT_TIMEOUT, receiver).await?? {
-        Ok(socket) => Ok(socket),
-        Err(Data::Error { code, message }) => {
-            bail!(crate::error::CodedError::from_wire(code, message))
-        }
-        _ => bail!(ErrorCode::InvalidMessage.error("invalid session rejection")),
-    }
-}
-async fn source_route(
-    State(app): State<Arc<App>>,
-    Path((network, target)): Path<(String, String)>,
-    Extension(permit): Extension<TransportPermit>,
-    Extension(peer): Extension<std::net::SocketAddr>,
-    headers: HeaderMap,
-    ws: WebSocketUpgrade,
-) -> ApiResult<Response> {
-    version(&headers)?;
-    Ok(ws
-        .max_message_size(MAX_MESSAGE)
-        .max_frame_size(MAX_MESSAGE)
-        .on_upgrade(move |mut ws| async move {
-            let result = source(&app, &network, &target, peer.ip(), &mut ws, &permit).await;
-            finish(&mut ws, result).await;
-        }))
-}
-async fn source(
-    app: &App,
-    network: &str,
-    target: &str,
-    source: std::net::IpAddr,
-    ws: &mut WebSocket,
-    permit: &TransportPermit,
-) -> Result<()> {
-    let path = format!("/networks/{network}/connect/{target}");
-    let anonymous = authenticate(ws, network, &path, permit).await?.is_none();
-    let sid = uuid::Uuid::new_v4().simple().to_string();
-    let (tx, rx) = oneshot::channel();
-    let (cancel, mut closed) = watch::channel(false);
-    {
-        let mut connections = app.connections.lock().await;
-        let to_target = |session: &&Session| session.network == network && session.target == target;
-        if connections.sessions.len() >= MAX_RELAY_SESSIONS
-            || connections.sessions.values().filter(to_target).count() >= MAX_TARGET_SESSIONS
-            || connections
-                .sessions
-                .values()
-                .filter(|session| session.source == source)
-                .count()
-                >= MAX_SOURCE_SESSIONS
-            || (anonymous
-                && connections
-                    .sessions
-                    .values()
-                    .filter(to_target)
-                    .filter(|session| session.anonymous)
-                    .count()
-                    >= MAX_ANONYMOUS_TARGET_SESSIONS)
-        {
-            bail!(ErrorCode::SessionLimit.error("too many concurrent relay sessions"))
-        }
-        let control = connections
-            .controls
-            .get(&(network.into(), target.into()))
-            .context(ErrorCode::DeviceOffline.error("target is offline"))?;
-        // Joining and renewal clients have no usable member certificate; they
-        // may only reach the device that proved it holds the network root key.
-        if anonymous && !control.manager {
-            bail!(ErrorCode::Unauthenticated.error("member proof required"))
-        }
-        let generation = control.generation.clone();
-        control
-            .tx
-            .try_send(RelayMessage::Incoming {
-                session_id: sid.clone(),
-            })
-            .context(ErrorCode::DeviceBusy.error("control queue is full"))?;
-        connections.sessions.insert(
-            sid.clone(),
-            Session {
-                network: network.into(),
-                source,
-                anonymous,
-                target: target.into(),
-                generation,
-                claim: Some(tx),
-                cancel,
-            },
-        );
-    }
-    let result = async {
-        let mut target = tokio::select! {
-            value = claimed_session(rx) => value?,
-            _ = closed.changed() => bail!(ErrorCode::ConnectionClosed.error("session was cancelled")),
-            _ = ws.next() => bail!(ErrorCode::ConnectionClosed.error("source disconnected before session establishment")),
-        };
-        send(ws, &RelayMessage::Connected { flow_control: false }).await?;
-        let result = bridge(ws, &mut target, &mut closed).await;
-        let _ = tokio::time::timeout(CLOSE_TIMEOUT, target.close()).await;
-        result
-    }.await;
-    app.connections.lock().await.sessions.remove(&sid);
-    result
-}
-async fn attach_route(
-    State(app): State<Arc<App>>,
-    Path((network, target, generation, sid)): Path<(String, String, String, String)>,
-    Extension(permit): Extension<TransportPermit>,
-    headers: HeaderMap,
-    ws: WebSocketUpgrade,
-) -> ApiResult<Response> {
-    version(&headers)?;
-    Ok(ws
-        .max_message_size(MAX_MESSAGE)
-        .max_frame_size(MAX_MESSAGE)
-        .on_upgrade(move |mut ws| async move {
-            let result = async {
-                // The generation and session ID reach only the authenticated
-                // control connection, so a matching attach needs no new proof.
-                let sender = {
-                    let mut connections = app.connections.lock().await;
-                    let control = connections
-                        .controls
-                        .get(&(network.clone(), target.clone()))
-                        .context(ErrorCode::InvalidSession.error("target control is missing"))?;
-                    if control.generation != generation {
-                        bail!(ErrorCode::InvalidSession.error("control binding mismatch"))
-                    }
-                    let session = connections.sessions.get_mut(&sid).context(
-                        ErrorCode::InvalidSession.error("session is missing or expired"),
-                    )?;
-                    if session.network != network
-                        || session.target != target
-                        || session.generation != generation
-                        || *session.cancel.borrow()
-                    {
-                        bail!(ErrorCode::InvalidSession.error("session binding mismatch"))
-                    }
-                    session
-                        .claim
-                        .take()
-                        .context(ErrorCode::InvalidSession.error("session was already claimed"))?
-                };
-                permit.authenticated();
-                send(
-                    &mut ws,
-                    &RelayMessage::Connected {
-                        flow_control: false,
-                    },
-                )
-                .await?;
-                sender.send(Ok(ws)).map_err(|_| {
-                    anyhow::anyhow!(ErrorCode::ConnectionClosed.error("source disappeared"))
-                })?;
-                Ok::<_, anyhow::Error>(())
-            }
-            .await;
-            if let Err(error) = result {
-                tracing::debug!(%error, "target attachment failed");
-            }
-        }))
-}
-async fn bridge(
-    source: &mut WebSocket,
-    target: &mut WebSocket,
-    closed: &mut watch::Receiver<bool>,
-) -> Result<()> {
-    let (source_tx, source_rx) = source.split();
-    let (target_tx, target_rx) = target.split();
-    tokio::select! {
-        result=direction(source_rx,target_tx)=>result,
-        result=direction(target_rx,source_tx)=>result,
-        _=closed.changed()=>Ok(()),
-    }
-}
-async fn direction<R, W>(mut reader: R, mut writer: W) -> Result<()>
-where
-    R: futures_util::Stream<Item = std::result::Result<Message, axum::Error>> + Unpin,
-    W: futures_util::Sink<Message, Error = axum::Error> + Unpin,
-{
-    loop {
-        let message = tokio::time::timeout(RELAY_IDLE_TIMEOUT, reader.next())
-            .await?
-            .context(ErrorCode::ConnectionClosed.error("ciphertext stream ended"))??;
-        match &message {
-            Message::Binary(bytes) if bytes.len() <= FILE_CHUNK => {}
-            Message::Ping(_) | Message::Pong(_) => {}
-            Message::Close(_) => return Ok(()),
-            _ => {
-                bail!(ErrorCode::InvalidMessage.error("relay only accepts encrypted binary frames"))
-            }
-        }
-        tokio::time::timeout(RELAY_IDLE_TIMEOUT, writer.send(message)).await??;
-    }
 }
 pub async fn run(config: ServerConfig) -> Result<()> {
     let _lock = server::instance_lock(&config.data_dir)?;
@@ -630,12 +164,6 @@ pub async fn run(config: ServerConfig) -> Result<()> {
     )
     .await
 }
-pub fn valid_route(value: &str) -> bool {
-    value.len() == 26
-        && value.bytes().all(|connections| {
-            connections.is_ascii_lowercase() || matches!(connections, b'2'..=b'7')
-        })
-}
 fn route(config: &ServerConfig) -> Result<String> {
     std::fs::create_dir_all(&config.data_dir)?;
     crate::config::restrict_dir(&config.data_dir)?;
@@ -648,7 +176,7 @@ fn route(config: &ServerConfig) -> Result<String> {
     lock.lock()?;
     let path = config.data_dir.join("route");
     match std::fs::read_to_string(&path) {
-        Ok(value) if valid_route(&value) => Ok(value),
+        Ok(value) if valid_relay_route(&value) => Ok(value),
         Ok(_) => bail!(ErrorCode::InvalidRelay.error("invalid local relay route")),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
             let value = crypto::random_token();

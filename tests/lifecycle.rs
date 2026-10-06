@@ -2,7 +2,7 @@ mod common;
 use anyhow::{Context, Result};
 use common::*;
 use std::{path::Path, time::Duration};
-use xrun::{
+use xrun::testing::{
     config::{self, Identity},
     crypto,
     membership::{RosterCache, device_name},
@@ -41,7 +41,7 @@ fn shorten_certificate(home: &Path, manager: &Path, days: i64) -> Result<String>
     config::write(&home.join(".xrun/identity.toml"), &id)?;
     Ok(id.cert_pem)
 }
-fn roster(home: &Path) -> Result<xrun::membership::SignedRoster> {
+fn roster(home: &Path) -> Result<xrun::testing::membership::SignedRoster> {
     let id = identity(home)?;
     RosterCache::open(&home.join(".xrun/roster.db"))?
         .load(&id.network.context("network")?.network_id)
@@ -169,7 +169,8 @@ fn main() {
         lab.relay.stop().await?;
         std::fs::write(finish, b"finish")?;
         // Observe completion in target-local storage with the relay still down.
-        let storage = xrun::store::TaskStore::open(&lab.target.join(".xrun/daemon.db"), false)?;
+        let storage =
+            xrun::testing::store::TaskStore::open(&lab.target.join(".xrun/daemon.db"), false)?;
         tokio::time::timeout(Duration::from_secs(10), async {
             loop {
                 let value = storage.get(id)?.context("accepted task missing")?;
@@ -219,7 +220,7 @@ async fn signed_relay_change_survives_device_restart_without_new_identity() -> R
         assert_eq!(current.roster.version, 3);
         assert_ne!(
             current.roster.relay_addresses,
-            xrun::relay::addresses(&lab.relay.config)?
+            xrun::testing::relay::addresses(&lab.relay.config)?
         );
         assert_eq!(
             identity(&lab.source)?.device_id,
@@ -284,7 +285,7 @@ async fn offline_device_receives_revocation_on_reconnect_and_reports_pending_del
         .await;
         assert_eq!(denied.status.code(), Some(125));
         assert!(String::from_utf8_lossy(&denied.stderr).contains("DEVICE_REVOKED"));
-        let policy: xrun::config::DaemonConfig =
+        let policy: xrun::testing::config::DaemonConfig =
             config::read(&lab.target.join(".xrun/daemon.toml"))?;
         assert!(policy.allow_from.contains(&other_id));
         Ok::<_, anyhow::Error>(())

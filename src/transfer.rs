@@ -10,7 +10,7 @@ use std::{
 };
 use tokio::sync::Mutex as AsyncMutex;
 
-pub fn remote_path(value: &str, cwd: &Path) -> Result<PathBuf> {
+pub(crate) fn remote_path(value: &str, cwd: &Path) -> Result<PathBuf> {
     if value.is_empty() || value.contains('\0') {
         bail!(ErrorCode::InvalidPath.error("empty path or NUL"))
     };
@@ -21,7 +21,7 @@ pub fn remote_path(value: &str, cwd: &Path) -> Result<PathBuf> {
         cwd.join(p)
     })
 }
-pub fn valid_hash(hash: &str) -> bool {
+pub(crate) fn valid_hash(hash: &str) -> bool {
     hash.len() == 64 && hash.bytes().all(|b| b.is_ascii_hexdigit())
 }
 fn open_file(path: &Path) -> Result<std::fs::File> {
@@ -50,7 +50,7 @@ fn open_file(path: &Path) -> Result<std::fs::File> {
     }
     Ok(file)
 }
-pub fn read_file(path: &Path) -> Result<Vec<u8>> {
+pub(crate) fn read_file(path: &Path) -> Result<Vec<u8>> {
     let file = open_file(path)?;
     let mut bytes = vec![];
     file.take(MAX_FILE + 1)
@@ -80,7 +80,7 @@ fn copy_hashed(file: impl Read, output: &mut impl std::io::Write) -> Result<(u64
     }
     Ok((size, hex::encode(digest.finalize())))
 }
-pub async fn snapshot(path: PathBuf) -> Result<(tempfile::NamedTempFile, u64, String)> {
+pub(crate) async fn snapshot(path: PathBuf) -> Result<(tempfile::NamedTempFile, u64, String)> {
     tokio::task::spawn_blocking(move || {
         let mut temp = tempfile::Builder::new()
             .prefix("xrun-download-")
@@ -142,7 +142,7 @@ fn destination_inner(path: &Path, mkdir: bool, depth: usize) -> Result<PathBuf> 
     ))
 }
 static LOCKS: OnceLock<Mutex<HashMap<PathBuf, Weak<AsyncMutex<()>>>>> = OnceLock::new();
-pub async fn push(
+pub(crate) async fn push(
     path: PathBuf,
     mut contents: tempfile::NamedTempFile,
     mkdir: bool,
@@ -286,7 +286,7 @@ pub fn prepare_upload(path: &Path) -> Result<(std::fs::File, u64, String)> {
     file.seek(SeekFrom::Start(0))?;
     Ok((file, size, hash))
 }
-pub fn snapshot_input(input: impl Read) -> Result<(tempfile::NamedTempFile, u64, String)> {
+pub(crate) fn snapshot_input(input: impl Read) -> Result<(tempfile::NamedTempFile, u64, String)> {
     let mut temp = tempfile::Builder::new().prefix("xrun-input-").tempfile()?;
     let (size, hash) = copy_hashed(input, temp.as_file_mut())?;
     temp.as_file_mut().seek(SeekFrom::Start(0))?;
@@ -295,7 +295,7 @@ pub fn snapshot_input(input: impl Read) -> Result<(tempfile::NamedTempFile, u64,
 pub fn save_local(path: &Path, bytes: &[u8]) -> Result<PathBuf> {
     save_local_reader(path, &mut std::io::Cursor::new(bytes))
 }
-pub fn save_local_reader(path: &Path, input: &mut impl Read) -> Result<PathBuf> {
+pub(crate) fn save_local_reader(path: &Path, input: &mut impl Read) -> Result<PathBuf> {
     // Resolve the chosen parent, never the final path component. Publication
     // replaces that directory entry rather than writing through a link.
     let name = path

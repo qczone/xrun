@@ -34,7 +34,7 @@ use tokio::sync::{Semaphore, watch};
 use self::control::{control_reconnect, membership_sync};
 use self::process_identity::{boot_id, process_start};
 
-pub fn init() -> Result<()> {
+pub(crate) fn init() -> Result<()> {
     let id = Identity::load()?;
     let dir = config::device_dir()?;
     std::fs::create_dir_all(&dir)?;
@@ -70,7 +70,7 @@ pub fn instance_lock() -> Result<std::fs::File> {
         .context(ErrorCode::DaemonRunning.error("stop daemon before this operation"))?;
     Ok(file)
 }
-pub fn reset() -> Result<()> {
+pub(crate) fn reset() -> Result<()> {
     let _lock = instance_lock()?;
     let dir = config::device_dir()?;
     for name in ["daemon.db", "daemon.db-wal", "daemon.db-shm"] {
@@ -210,7 +210,7 @@ impl Runtime {
         Ok(job)
     }
 }
-pub async fn shutdown_signal() {
+pub(crate) async fn shutdown_signal() {
     #[cfg(unix)]
     {
         let mut term = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())

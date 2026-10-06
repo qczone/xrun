@@ -1,6 +1,6 @@
 use anyhow::Result;
 use rusqlite::{Connection, params};
-use xrun::{protocol::*, store::TaskStore};
+use xrun::testing::{protocol::*, store::TaskStore};
 
 struct Store {
     tasks: TaskStore,
@@ -77,7 +77,7 @@ impl Store {
             if state.terminal() {
                 let mut job = self.tasks.get(&id)?.unwrap();
                 job.state = state;
-                self.tasks.replace_fixture(&job)?;
+                xrun::testing::replace_task_fixture(&self.tasks, &job)?;
             }
         }
         assert_eq!(self.total()?, 1024 * 1024 * 1024);
@@ -171,7 +171,7 @@ fn global_limit_never_evicts_running_jobs_and_can_resume_after_one_finishes() ->
     }
     let mut finished = s.tasks.get("job-0")?.unwrap();
     finished.state = JobState::Exited;
-    s.tasks.replace_fixture(&finished)?;
+    xrun::testing::replace_task_fixture(&s.tasks, &finished)?;
     assert_eq!(s.tasks.append("new", "stdout", b"resumed")?, Some(1));
     // Later output must not hide that an earlier chunk was lost.
     assert!(!s.tasks.get("new")?.unwrap().output_complete);

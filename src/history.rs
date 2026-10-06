@@ -1,4 +1,5 @@
 //! Local, read-only views of the daemon's existing task and file records.
+#![deny(missing_docs)]
 use crate::error::ErrorCode;
 use crate::{config, protocol::*};
 use anyhow::{Context, Result, bail};
@@ -11,33 +12,51 @@ const PAGE_SIZE: usize = 50;
 const LOG_PAGE_SIZE: usize = 32;
 
 #[derive(Serialize)]
+/// A page of local tasks from one database generation.
 pub struct TaskPage {
+    /// Database generation that prevents replay after storage reset.
     pub db_id: Option<String>,
+    /// Source-scoped task snapshots.
     pub jobs: Vec<Job>,
+    /// Opaque row cursor for the next older page; pass it back unchanged.
     pub next_cursor: Option<i64>,
 }
 
 #[derive(Debug, Serialize)]
+/// Task snapshot and one page of sequenced output from the same read transaction.
 pub struct TaskOutput {
+    /// Task snapshot associated with the response.
     pub job: Job,
+    /// Sequenced output events, possibly followed by a newer task snapshot.
     pub events: Vec<LogEvent>,
+    /// Whether another forward output page is available.
     pub has_more: bool,
 }
 
 #[derive(Deserialize, Serialize)]
+/// Persisted local file-operation audit record.
 pub struct FileRecord {
     #[serde(default)]
+    /// Audit timestamp in Unix milliseconds.
     pub time_ms: i64,
+    /// Immutable identity that submitted the task or file operation.
     pub source_device_id: String,
+    /// Recorded operation, push, pull or screenshot.
     pub op: String,
+    /// Operation path, resolved relative to cwd when permitted.
     pub path: Option<String>,
+    /// Declared file payload size in bytes.
     pub size: Option<u64>,
+    /// Final streaming process outcome.
     pub result: String,
 }
 
 #[derive(Serialize)]
+/// A page of local file-operation audit records.
 pub struct FilePage {
+    /// Local file-operation audit entries in reverse insertion order.
     pub entries: Vec<FileRecord>,
+    /// Opaque row cursor for the next older page; pass it back unchanged.
     pub next_cursor: Option<i64>,
 }
 
@@ -61,6 +80,9 @@ fn db_id(db: &Connection) -> Result<String> {
     Ok(db.query_row("SELECT value FROM meta WHERE key='db_id'", [], |r| r.get(0))?)
 }
 
+/// Read an older page of local tasks without creating the database. filter is all,
+/// running or failed; next_cursor is stable across new insertions. Unsupported schema
+/// and invalid filters fail explicitly; a missing database returns an empty page.
 pub fn tasks(before: Option<i64>, filter: &str) -> Result<TaskPage> {
     tasks_at(&config::device_dir()?.join("daemon.db"), before, filter)
 }
@@ -105,6 +127,9 @@ fn tasks_at(path: &Path, before: Option<i64>, filter: &str) -> Result<TaskPage> 
     })
 }
 
+/// Read local output and task status atomically. expected_db must match the task
+/// list generation or DB_RESET is returned. None requests the newest tail; a sequence
+/// requests forward paging. Missing tasks/databases fail, and records are never created.
 pub fn output(expected_db: &str, job: &str, after: Option<u64>) -> Result<TaskOutput> {
     output_at(
         &config::device_dir()?.join("daemon.db"),
@@ -163,6 +188,8 @@ fn output_at(path: &Path, expected_db: &str, job: &str, after: Option<u64>) -> R
     })
 }
 
+/// Read older local file-operation records without opening remote devices. A missing
+/// database returns an empty page; incompatible schemas fail without modifying data.
 pub fn files(before: Option<i64>) -> Result<FilePage> {
     files_at(&config::device_dir()?.join("daemon.db"), before)
 }

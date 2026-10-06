@@ -1,7 +1,9 @@
 mod common;
 use anyhow::{Context, Result, bail};
 use common::*;
-use xrun::{crypto, membership::RosterCache, net, protocol::*, relay::RelayMessage, secure};
+use xrun::testing::{
+    crypto, membership::RosterCache, net, protocol::RelayMessage, protocol::*, secure,
+};
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn screenshot_download_checks_metadata_integrity_errors_and_local_destination() -> Result<()>
@@ -200,7 +202,7 @@ async fn screenshot_download_checks_metadata_integrity_errors_and_local_destinat
 #[tokio::test]
 #[ignore = "requires Xvfb with a 1024x768 24-bit X11 display"]
 async fn x11_primary_display_png() {
-    let capture = xrun::screenshot::capture().await.unwrap();
+    let capture = xrun::testing::screenshot::capture().await.unwrap();
     assert_eq!((capture.width, capture.height), (1024, 768));
     assert!(capture.at.ends_with('Z'));
     let decoder = png::Decoder::new(std::io::Cursor::new(capture.bytes));

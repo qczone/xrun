@@ -1,7 +1,7 @@
 mod common;
 use anyhow::Result;
 use common::*;
-use xrun::{
+use xrun::testing::{
     config::{self, Identity},
     crypto,
     membership::Manager,
@@ -12,7 +12,7 @@ async fn initial_creation_recovers_only_matching_pending_authority() -> Result<(
     let root = tempfile::tempdir()?;
     let (mut relay, link) = TestRelay::new(&root.path().join("relay")).await?;
     let ca = std::fs::read_to_string(relay.config.data_dir.join("ca.pem"))?;
-    let addresses = xrun::relay::addresses(&relay.config)?;
+    let addresses = xrun::testing::relay::addresses(&relay.config)?;
     for case in [
         "missing-key",
         "wrong-key",
@@ -164,7 +164,10 @@ async fn reconnect_after_identity_replacement_stops_instead_of_impersonating_the
     assert!(!config::instance_running(
         &lab.target.join(".xrun/daemon.lock")
     )?);
-    assert!(xrun::control::state(&lab.target.join(".xrun"))?.is_none_or(|state| !state.connected));
+    assert!(
+        xrun::testing::control::state(&lab.target.join(".xrun"))?
+            .is_none_or(|state| !state.connected)
+    );
     stop_daemon(&lab.source, &mut lab.source_daemon).await?;
     Ok(())
 }

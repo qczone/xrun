@@ -2,19 +2,19 @@ mod common;
 use anyhow::Result;
 use std::{sync::Arc, time::Duration};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use xrun::{config::ServerConfig, crypto};
+use xrun::testing::{config::ServerConfig, crypto};
 
 #[test]
 fn local_download_replaces_regular_files() -> Result<()> {
     let temp = tempfile::tempdir()?;
     let path = temp.path().join("output");
-    xrun::transfer::save_local(&path, b"first")?;
+    xrun::testing::transfer::save_local(&path, b"first")?;
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
         std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o640))?;
     }
-    xrun::transfer::save_local(&path, b"second")?;
+    xrun::testing::transfer::save_local(&path, b"second")?;
     assert_eq!(std::fs::read(&path)?, b"second");
     #[cfg(unix)]
     {
@@ -24,7 +24,7 @@ fn local_download_replaces_regular_files() -> Result<()> {
             0o640
         );
     }
-    assert!(xrun::transfer::save_local(temp.path(), b"bad").is_err());
+    assert!(xrun::testing::transfer::save_local(temp.path(), b"bad").is_err());
     Ok(())
 }
 
@@ -40,7 +40,7 @@ fn local_download_rejects_existing_and_dangling_links() -> Result<()> {
         #[cfg(windows)]
         std::os::windows::fs::symlink_file(target, &link)?;
         assert!(
-            xrun::transfer::save_local(&link, b"bad")
+            xrun::testing::transfer::save_local(&link, b"bad")
                 .unwrap_err()
                 .to_string()
                 .contains("INVALID_PATH")
@@ -56,7 +56,7 @@ fn local_download_rejects_existing_and_dangling_links() -> Result<()> {
 #[cfg(unix)]
 #[tokio::test]
 async fn exited_leader_remains_waitable_until_group_cleanup() -> Result<()> {
-    let mut child = xrun::process::spawn(
+    let mut child = xrun::testing::process::spawn(
         std::path::Path::new("/bin/sh"),
         &["-c".into(), "exit 7".into()],
         std::path::Path::new("/"),
@@ -66,8 +66,8 @@ async fn exited_leader_remains_waitable_until_group_cleanup() -> Result<()> {
     )?;
     assert_eq!(child.wait().await?.code(), Some(7));
     assert_eq!(child.wait().await?.code(), Some(7)); // WNOWAIT: the PID is still reserved.
-    xrun::process::terminate(child.pid);
-    xrun::process::force_kill(child.pid);
+    xrun::testing::process::terminate(child.pid);
+    xrun::testing::process::force_kill(child.pid);
     child.reap().await?;
     let mut status = 0;
     assert_eq!(
@@ -120,7 +120,7 @@ async fn anonymous_connection_limits_and_http_deadlines() -> Result<()> {
             .with_root_certificates(roots)
             .with_no_client_auth(),
     );
-    let server = Server(tokio::spawn(xrun::server::run(cfg)));
+    let server = Server(tokio::spawn(xrun::testing::server::run(cfg)));
     tokio::time::timeout(Duration::from_secs(5), async {
         loop {
             match tokio::net::TcpStream::connect(("127.0.0.1", port)).await {

@@ -5,8 +5,8 @@ use crate::{
     crypto, daemon,
     membership::Manager,
     net,
+    protocol::RelayMessage,
     protocol::*,
-    relay::RelayMessage,
 };
 use anyhow::{Context, Result, bail};
 use std::time::Duration;
@@ -16,7 +16,7 @@ use super::peers::{online_ids, states_for};
 use super::transport::receive;
 use super::{archive_legacy, cache, manager, observe};
 
-pub async fn create(relay_link: &str, name: Option<String>) -> Result<Identity> {
+pub(crate) async fn create(relay_link: &str, name: Option<String>) -> Result<Identity> {
     let endpoint = endpoint(relay_link)?;
     let mut root = None;
     let mut error = None;

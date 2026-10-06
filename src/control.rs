@@ -16,7 +16,7 @@ pub struct State {
 }
 type ReloadReply = tokio::sync::oneshot::Sender<std::result::Result<(), String>>;
 type ReloadRequests = tokio::sync::mpsc::Receiver<ReloadReply>;
-pub struct Control {
+pub(crate) struct Control {
     dir: PathBuf,
     value: Mutex<State>,
     stop: tokio::sync::watch::Sender<bool>,
@@ -24,7 +24,7 @@ pub struct Control {
     reload_requests: Mutex<Option<ReloadRequests>>,
 }
 impl Control {
-    pub fn new(dir: &Path) -> Result<Self> {
+    pub(crate) fn new(dir: &Path) -> Result<Self> {
         let value = State {
             generation: uuid::Uuid::new_v4().to_string(),
             connected: false,
@@ -56,7 +56,7 @@ impl Control {
             .await?
             .map_err(|message| anyhow::anyhow!(ErrorCode::StorageError.error(message)))
     }
-    pub fn connected(&self, connected: bool) -> Result<()> {
+    pub(crate) fn connected(&self, connected: bool) -> Result<()> {
         let mut value = self.value.lock().unwrap();
         value.connected = connected;
         config::atomic_private_write(
@@ -75,7 +75,7 @@ impl Control {
         self.stop.send_replace(true);
         Ok(())
     }
-    pub async fn shutdown(&self) -> Result<()> {
+    pub(crate) async fn shutdown(&self) -> Result<()> {
         let mut stop = self.stop.subscribe();
         stop.wait_for(|value| *value).await?;
         Ok(())
@@ -115,7 +115,7 @@ pub async fn request_shutdown(dir: &Path) -> Result<()> {
     }
 }
 /// Waits until a running daemon has applied a local authorization change.
-pub async fn refresh_access() -> Result<()> {
+pub(crate) async fn refresh_access() -> Result<()> {
     let dir = config::device_dir()?;
     if config::instance_running(&dir.join("daemon.lock"))? && dir.join("daemon-ipc.json").exists() {
         crate::ipc::refresh_access(&dir).await?;

@@ -1,21 +1,26 @@
 //! Stable machine-readable errors. Display text is for people, never dispatch.
+#![deny(missing_docs)]
 use std::fmt;
 
 macro_rules! codes {
     ($($variant:ident => $wire:literal,)*) => {
         #[derive(Debug, Clone, PartialEq, Eq)]
+        /// Explicit operation failure identity, preserved independently of display text.
         pub enum ErrorCode {
-            $($variant,)*
+            $(#[doc = concat!("Wire code `", $wire, "`; operation context supplies the diagnostic.")]
+            $variant,)*
             /// Preserve newer peers' codes without assigning local semantics.
             Unknown(String),
         }
         impl ErrorCode {
+            /// Decode a wire code, preserving unrecognized values without local classification.
             pub fn from_wire(code: String) -> Self {
                 match code.as_str() {
                     $($wire => Self::$variant,)*
                     _ => Self::Unknown(code),
                 }
             }
+            /// Return the stable uppercase wire representation, without formatting a message.
             pub fn as_str(&self) -> &str {
                 match self {
                     $(Self::$variant => $wire,)*
@@ -157,6 +162,7 @@ codes! {
 }
 
 impl ErrorCode {
+    /// Attach a human-readable reason while retaining this explicit machine identity.
     pub fn error(self, message: impl Into<String>) -> CodedError {
         CodedError {
             code: self,
@@ -164,6 +170,7 @@ impl ErrorCode {
         }
     }
 
+    /// Whether the peer definitively refused connection admission; do not retry another relay.
     pub fn is_explicit(&self) -> bool {
         matches!(
             self,
@@ -184,6 +191,7 @@ impl ErrorCode {
         )
     }
 
+    /// Whether CLI recovery should treat this as a transport failure.
     pub fn is_network(&self) -> bool {
         matches!(
             self,
@@ -228,11 +236,15 @@ impl ErrorCode {
 }
 
 #[derive(Debug)]
+/// Error carrying a machine code separately from its human-readable diagnostic.
 pub struct CodedError {
+    /// Explicit failure identity; formatting the message never changes it.
     pub code: ErrorCode,
+    /// Detail for people, without a duplicated code prefix.
     pub message: String,
 }
 impl CodedError {
+    /// Preserve a peer's code and diagnostic, including unknown codes.
     pub fn from_wire(code: impl Into<String>, message: impl Into<String>) -> Self {
         ErrorCode::from_wire(code.into()).error(message)
     }
@@ -251,10 +263,14 @@ pub fn code(error: &anyhow::Error) -> Option<ErrorCode> {
         .or_else(|| error.chain().find_map(|e| e.downcast_ref::<CodedError>()))
         .map(|e| e.code.clone())
 }
+/// Check typed error identity through context layers, without parsing display text.
 pub fn is(error: &anyhow::Error, expected: ErrorCode) -> bool {
     code(error).as_ref() == Some(&expected)
 }
 
+/// Project an error into a wire code and diagnostic. Untyped IO falls back to
+/// STORAGE_ERROR and other failures to EXECUTION_ERROR; neither proves rejection
+/// before task acceptance. Only explicit typed codes carry path/permission semantics.
 pub fn wire(error: &anyhow::Error) -> (String, String) {
     let code = code(error).unwrap_or_else(|| {
         match error

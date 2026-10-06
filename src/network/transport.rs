@@ -5,7 +5,7 @@ use crate::{
     crypto,
     membership::{Manager, SignedRoster},
     net::{self, Ws},
-    relay::{Proof, RelayMessage},
+    protocol::{Proof, RelayMessage},
     secure,
 };
 use anyhow::{Result, bail};
@@ -13,7 +13,7 @@ use std::time::Duration;
 
 use super::{authority, cache, current, manager};
 
-pub async fn receive(ws: &mut Ws) -> Result<RelayMessage> {
+pub(crate) async fn receive(ws: &mut Ws) -> Result<RelayMessage> {
     match net::receive::<RelayMessage>(ws).await? {
         RelayMessage::Error { code, message } => {
             bail!(crate::error::CodedError::from_wire(code, message))
@@ -56,11 +56,9 @@ pub(super) async fn open_via(
     Err(error
         .unwrap_or_else(|| anyhow::anyhow!(ErrorCode::ConnectFailed.error("no configured relay"))))
 }
-pub async fn open(id: &Identity, path: &str) -> Result<(Ws, String)> {
+async fn open(id: &Identity, path: &str) -> Result<(Ws, String)> {
     open_via(id, &current(id)?, path).await
 }
-/// Answers the relay challenge. Members prove their certificate; joining and
-/// renewing devices send no proof and can reach only the manager.
 pub async fn authenticate(
     ws: &mut Ws,
     id: Option<&Identity>,
@@ -76,7 +74,7 @@ pub async fn authenticate(
         .transpose()?;
     net::send(ws, &RelayMessage::Authenticate { proof }).await
 }
-pub async fn control(id: &Identity) -> Result<(Ws, String)> {
+pub(crate) async fn control(id: &Identity) -> Result<(Ws, String)> {
     let network = &authority(id)?.network_id;
     let path = format!("/networks/{network}/control");
     // The root-key signature lets the relay route pairing to the manager only.
@@ -89,7 +87,7 @@ pub async fn control(id: &Identity) -> Result<(Ws, String)> {
     authenticate(&mut ws, Some(id), network, &path, root.as_ref()).await?;
     Ok((ws, address))
 }
-pub async fn attach(
+pub(crate) async fn attach(
     id: &Identity,
     address: &str,
     generation: &str,
@@ -148,7 +146,7 @@ pub(super) async fn peer_session(
         .min(crypto::certificate_expiry(&id.ca_pem)?);
     Ok((ws, address, expires))
 }
-pub async fn session(id: &Identity, target: &str) -> Result<(Ws, String)> {
+pub(crate) async fn session(id: &Identity, target: &str) -> Result<(Ws, String)> {
     let (ws, address, _) = session_with_expiry(id, target).await?;
     Ok((ws, address))
 }

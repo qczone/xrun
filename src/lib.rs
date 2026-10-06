@@ -1,28 +1,36 @@
-pub mod cli;
+//! Remote execution core, with user operations and process entry points as its public boundary.
+#![deny(unreachable_pub)]
+mod cli;
 pub mod client;
-pub mod clock;
-pub mod config;
-pub mod control;
-pub mod crypto;
-pub mod daemon;
+mod clock;
+mod config;
+mod control;
+mod crypto;
+mod daemon;
 pub mod error;
-pub mod forwarding;
-pub mod history;
-pub mod membership;
-pub mod net;
-pub mod network;
-pub mod process;
+mod forwarding;
+mod history;
+mod membership;
+mod net;
+mod network;
+mod process;
 pub mod protocol;
-pub mod relay;
-pub mod screenshot;
-pub mod secure;
-pub mod server;
-pub mod service;
-pub mod store;
-pub mod streaming;
-pub mod transfer;
+mod relay;
+pub mod runtime;
+mod screenshot;
+mod secure;
+mod server;
+mod service;
+mod store;
+mod streaming;
+mod transfer;
 
 mod database;
 mod ipc;
 mod pool;
 mod session;
+
+/// Internal fixtures for protocol, adversarial, storage and process integration tests.
+/// These capabilities are deliberately excluded from the supported application API.
+#[doc(hidden)]
+pub mod testing;

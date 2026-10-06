@@ -7,5 +7,5 @@ mod desktop;
 
 fn main() {
     #[cfg(target_os = "macos")]
-    desktop::tests::native_ui::run().unwrap();
+    desktop::app::tests::native_ui::run().unwrap();
 }

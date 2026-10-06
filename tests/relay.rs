@@ -3,13 +3,13 @@ use anyhow::{Context, Result};
 use futures_util::{SinkExt, StreamExt};
 use std::time::Duration;
 use tokio_tungstenite::tungstenite::Message;
-use xrun::{
+use xrun::testing::{
     config::{Identity, ServerConfig},
     crypto,
     membership::Manager,
     net,
+    protocol::{Proof, RelayMessage},
     protocol::{Registration, VERSION},
-    relay::{Proof, RelayMessage},
 };
 
 struct Relay(tokio::task::JoinHandle<Result<()>>);
@@ -50,7 +50,7 @@ fn network(dir: &std::path::Path, cfg: &ServerConfig) -> Result<Network> {
     let (manager, member, key_pem, cert_pem) = Manager::create(
         dir,
         "manager1",
-        xrun::relay::addresses(cfg)?,
+        xrun::testing::relay::addresses(cfg)?,
         crypto::load_or_create_server(cfg)?.ca_pem,
     )?;
     let root = manager.roster()?.ca_pem;
@@ -80,7 +80,7 @@ fn network(dir: &std::path::Path, cfg: &ServerConfig) -> Result<Network> {
 async fn socket(cfg: &ServerConfig, path: &str) -> Result<net::Ws> {
     let keys = crypto::load_or_create_server(cfg)?;
     net::websocket_at(
-        &xrun::relay::addresses(cfg)?[0],
+        &xrun::testing::relay::addresses(cfg)?[0],
         path,
         crypto::anonymous_tls_config(&keys.ca_pem)?,
     )
@@ -94,7 +94,7 @@ async fn authed(
     manager: Option<&Manager>,
 ) -> Result<net::Ws> {
     let mut ws = socket(cfg, path).await?;
-    xrun::network::authenticate(&mut ws, id, network, path, manager).await?;
+    xrun::testing::network::authenticate(&mut ws, id, network, path, manager).await?;
     Ok(ws)
 }
 async fn forged(
@@ -182,14 +182,14 @@ async fn relay_routes_only_proven_members_and_keeps_binding_and_resource_limits(
             no_detect: true,
             data_dir: temp.path().join("relay"),
         };
-        let link = xrun::relay::deployment_link(&cfg)?;
-        assert_eq!(link, xrun::relay::deployment_link(&cfg)?);
+        let link = xrun::testing::relay::deployment_link(&cfg)?;
+        assert_eq!(link, xrun::testing::relay::deployment_link(&cfg)?);
         let keys = crypto::load_or_create_server(&cfg)?;
         let net = network(&temp.path().join("manager"), &cfg)?;
         let other = network(&temp.path().join("other"), &cfg)?;
         let n = net.id.clone();
         let target = net.target.device_id.clone();
-        let server = Relay(tokio::spawn(xrun::relay::run(cfg.clone())));
+        let server = Relay(tokio::spawn(xrun::testing::relay::run(cfg.clone())));
         tokio::time::timeout(Duration::from_secs(5), async {
             while tokio::net::TcpStream::connect(("127.0.0.1", port))
                 .await
@@ -209,7 +209,7 @@ async fn relay_routes_only_proven_members_and_keeps_binding_and_resource_limits(
         // Selecting public roots must not silently trust a private deployment.
         assert!(
             net::websocket_at(
-                &xrun::relay::addresses(&cfg)?[0],
+                &xrun::testing::relay::addresses(&cfg)?[0],
                 &format!("/networks/{n}/status"),
                 crypto::relay_tls_config("")?,
             )
@@ -220,7 +220,10 @@ async fn relay_routes_only_proven_members_and_keeps_binding_and_resource_limits(
         for url in [
             format!("{}/networks/{n}/status", cfg.urls()[0]),
             format!("{}/wrong/networks/{n}/status", cfg.urls()[0]),
-            format!("{}/networks/{n}/roster", xrun::relay::addresses(&cfg)?[0]),
+            format!(
+                "{}/networks/{n}/roster",
+                xrun::testing::relay::addresses(&cfg)?[0]
+            ),
         ] {
             assert_eq!(
                 client
@@ -241,27 +244,30 @@ async fn relay_routes_only_proven_members_and_keeps_binding_and_resource_limits(
         let takeovers = [
             // Another member's certificate cannot claim the target's ID.
             forged(&cfg, &control_path, |nonce| {
-                let mut proof = Proof::create(&net.source, &n, &control_path, nonce, None)?;
+                let mut proof =
+                    xrun::testing::relay_proof(&net.source, &n, &control_path, nonce, None)?;
                 proof.device_id = target.clone();
                 Ok(proof)
             })
             .await?,
             // The target's public certificate is useless without its key.
             forged(&cfg, &control_path, |nonce| {
-                let mut proof = Proof::create(&net.target, &n, &control_path, nonce, None)?;
+                let mut proof =
+                    xrun::testing::relay_proof(&net.target, &n, &control_path, nonce, None)?;
                 proof.signature =
-                    Proof::create(&net.source, &n, &control_path, nonce, None)?.signature;
+                    xrun::testing::relay_proof(&net.source, &n, &control_path, nonce, None)?
+                        .signature;
                 Ok(proof)
             })
             .await?,
             // Members of another network cannot use this network ID.
             forged(&cfg, &control_path, |nonce| {
-                Proof::create(&other.target, &n, &control_path, nonce, None)
+                xrun::testing::relay_proof(&other.target, &n, &control_path, nonce, None)
             })
             .await?,
             // A proof is bound to its challenge and path.
             forged(&cfg, &control_path, |_| {
-                Proof::create(&net.target, &n, &control_path, "replayed", None)
+                xrun::testing::relay_proof(&net.target, &n, &control_path, "replayed", None)
             })
             .await?,
         ];
@@ -326,7 +332,8 @@ async fn relay_routes_only_proven_members_and_keeps_binding_and_resource_limits(
         let mut pairing = source(&cfg, &n, &target, None).await?;
         refused(&mut pairing, "UNAUTHENTICATED").await?;
         let mut pretender = forged(&cfg, &control_path, |nonce| {
-            let mut proof = Proof::create(&net.source, &n, &control_path, nonce, None)?;
+            let mut proof =
+                xrun::testing::relay_proof(&net.source, &n, &control_path, nonce, None)?;
             proof.manager_signature = Some(proof.signature.clone());
             Ok(proof)
         })
@@ -355,7 +362,7 @@ async fn relay_routes_only_proven_members_and_keeps_binding_and_resource_limits(
         drop((pending, limit));
         assert!(!cfg.data_dir.join("relay.db").exists());
         drop(server);
-        assert_eq!(link, xrun::relay::deployment_link(&cfg)?);
+        assert_eq!(link, xrun::testing::relay::deployment_link(&cfg)?);
         Ok::<_, anyhow::Error>(())
     })
     .await?

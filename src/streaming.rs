@@ -21,20 +21,20 @@ use tokio::{
 use tokio_tungstenite::tungstenite::Message;
 
 #[derive(Serialize)]
-pub struct Outcome {
+pub(crate) struct Outcome {
     pub result: StreamResult,
     pub input_bytes: u64,
     pub stdout_bytes: u64,
     pub stderr_bytes: u64,
 }
 #[derive(Default)]
-pub struct Counts {
+pub(crate) struct Counts {
     pub input: AtomicU64,
     pub stdout: AtomicU64,
     pub stderr: AtomicU64,
 }
 impl Counts {
-    pub fn snapshot(&self) -> serde_json::Value {
+    pub(crate) fn snapshot(&self) -> serde_json::Value {
         serde_json::json!({"stdin_bytes_received":self.input.load(Ordering::Relaxed),
             "stdout_bytes_read":self.stdout.load(Ordering::Relaxed),
             "stderr_bytes_read":self.stderr.load(Ordering::Relaxed)})
@@ -88,7 +88,7 @@ async fn drain(
     }
 }
 
-pub async fn serve(
+pub(crate) async fn serve(
     ws: &mut Ws,
     mut child: ManagedChild,
     timeout: u64,
@@ -236,7 +236,7 @@ pub async fn serve(
     })
 }
 
-pub async fn client(ws: &mut Ws) -> Result<StreamResult> {
+pub(crate) async fn client(ws: &mut Ws) -> Result<StreamResult> {
     let (socket_tx, mut socket_rx) = ws.split();
     let (tx, rx) = mpsc::channel::<Message>(8);
     let (stop, mut stopped) = watch::channel(false);

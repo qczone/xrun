@@ -2,7 +2,7 @@ mod common;
 use anyhow::{Context, Result};
 use common::*;
 use std::{path::Path, time::Duration};
-use xrun::{net, protocol::*, store::TaskStore};
+use xrun::testing::{net, protocol::*, store::TaskStore};
 
 fn store(lab: &Lab) -> Result<TaskStore> {
     TaskStore::open(&lab.target.join(".xrun/daemon.db"), false)
@@ -262,9 +262,9 @@ async fn daemon_deduplicates_before_capacity_and_refuses_changed_execution_field
     let dir = lab.root.path().join("dedup");
     std::fs::create_dir(&dir)?;
     let config_path = lab.target.join(".xrun/daemon.toml");
-    let mut cfg: xrun::config::DaemonConfig = xrun::config::read(&config_path)?;
+    let mut cfg: xrun::testing::config::DaemonConfig = xrun::testing::config::read(&config_path)?;
     cfg.max_concurrent_jobs = 1;
-    xrun::config::write(&config_path, &cfg)?;
+    xrun::testing::config::write(&config_path, &cfg)?;
     let base = execution(&lab, &program, &["wait", dir.to_str().unwrap()])?;
     let job = accepted(submit(&lab, &base, &[]).await?);
     pid_file(&dir.join("pid")).await?;

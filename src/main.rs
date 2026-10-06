@@ -9,5 +9,5 @@ async fn main() {
         .with_writer(std::io::stderr)
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
         .init();
-    std::process::exit(xrun::cli::run().await);
+    std::process::exit(xrun::runtime::cli().await);
 }

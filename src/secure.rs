@@ -213,7 +213,7 @@ fn ws_config() -> WebSocketConfig {
 pub async fn client(outer: Ws, identity: &Identity, target: &str) -> Result<(Ws, Vec<u8>)> {
     client_with_flow(outer, identity, target, false).await
 }
-pub async fn client_with_flow(
+pub(crate) async fn client_with_flow(
     outer: Ws,
     identity: &Identity,
     target: &str,
@@ -269,7 +269,7 @@ async fn encrypted_websocket(
 pub async fn pairing_client(outer: Ws, pin: &str, manager: &str) -> Result<(Ws, String)> {
     pairing_client_with_flow(outer, pin, manager, false).await
 }
-pub async fn pairing_client_with_flow(
+pub(crate) async fn pairing_client_with_flow(
     outer: Ws,
     pin: &str,
     manager: &str,
@@ -288,7 +288,7 @@ pub async fn pairing_client_with_flow(
 pub async fn server(outer: Ws, identity: &Identity) -> Result<(Ws, Option<Vec<u8>>)> {
     server_with_flow(outer, identity, false).await
 }
-pub async fn server_with_flow(
+pub(crate) async fn server_with_flow(
     outer: Ws,
     identity: &Identity,
     flow_control: bool,

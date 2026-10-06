@@ -7,7 +7,7 @@ use std::{
     time::Duration,
 };
 use tokio::process::{Child, Command};
-use xrun::config::{Identity, ServerConfig};
+use xrun::testing::config::{Identity, ServerConfig};
 
 pub fn binary() -> std::path::PathBuf {
     std::env::var_os("XRUN_TEST_BINARY")
@@ -96,7 +96,7 @@ pub async fn online(home: &Path, name: &str) -> Result<()> {
     .context("device did not reconnect; see process logs")
 }
 pub async fn stop_daemon(home: &Path, child: &mut Child) -> Result<()> {
-    xrun::control::request_shutdown(&home.join(".xrun")).await?;
+    xrun::testing::control::request_shutdown(&home.join(".xrun")).await?;
     let status = tokio::time::timeout(Duration::from_secs(15), child.wait()).await??;
     anyhow::ensure!(status.success(), "daemon shutdown failed: {status}");
     Ok(())
@@ -130,8 +130,8 @@ impl TestRelay {
             no_detect: true,
             data_dir: home.join(".xrun/server"),
         };
-        xrun::config::write(&home.join(".xrun/config.toml"), &config)?;
-        let link = xrun::relay::deployment_link(&config)?;
+        xrun::testing::config::write(&home.join(".xrun/config.toml"), &config)?;
+        let link = xrun::testing::relay::deployment_link(&config)?;
         let mut relay = Self {
             config,
             home: home.into(),
@@ -148,14 +148,14 @@ impl TestRelay {
         );
         library_logs()?;
         let ca_pem = std::fs::read_to_string(self.config.data_dir.join("ca.pem"))?;
-        let probe = xrun::crypto::http_client(&ca_pem, None)?;
+        let probe = xrun::testing::crypto::http_client(&ca_pem, None)?;
         let url = format!("https://127.0.0.1:{}/", self.config.port);
         if cfg!(target_os = "linux") {
             self.process = Some(logged(&self.home, &["relay", "run"], "relay")?.spawn()?);
         } else {
             // Service deployment is Linux-only; other platforms exercise the
             // same relay library with the selected device binary on both ends.
-            self.task = Some(tokio::spawn(xrun::relay::run(self.config.clone())));
+            self.task = Some(tokio::spawn(xrun::testing::relay::run(self.config.clone())));
         }
         tokio::time::timeout(Duration::from_secs(10), async {
             loop {
@@ -173,7 +173,8 @@ impl TestRelay {
                                 .is_some_and(|e| e.kind() == std::io::ErrorKind::AddrInUse) =>
                         {
                             // Restarted listeners can race sockets still releasing the port.
-                            self.task = Some(tokio::spawn(xrun::relay::run(self.config.clone())));
+                            self.task =
+                                Some(tokio::spawn(xrun::testing::relay::run(self.config.clone())));
                         }
                         Err(error) => {
                             return Err(error.context("test relay exited before readiness"));
@@ -258,8 +259,8 @@ impl Lab {
             ],
         )
         .await);
-        let source_identity = xrun::config::read(&source.join(".xrun/identity.toml"))?;
-        let target_identity = xrun::config::read(&target.join(".xrun/identity.toml"))?;
+        let source_identity = xrun::testing::config::read(&source.join(".xrun/identity.toml"))?;
+        let target_identity = xrun::testing::config::read(&target.join(".xrun/identity.toml"))?;
         let daemon = logged(&target, &["daemon"], "target")?.spawn()?;
         let lab = Self {
             root,
@@ -279,21 +280,26 @@ impl Lab {
 /// Opens a relay socket and answers its challenge; None pairs anonymously.
 pub async fn relay_socket(
     id: Option<&Identity>,
-    roster: &xrun::membership::SignedRoster,
+    roster: &xrun::testing::membership::SignedRoster,
     path: &str,
-) -> Result<xrun::net::Ws> {
-    let mut ws = xrun::net::websocket_at(
+) -> Result<xrun::testing::net::Ws> {
+    let mut ws = xrun::testing::net::websocket_at(
         &roster.roster.relay_addresses[0],
         path,
-        xrun::crypto::anonymous_tls_config(&roster.roster.relay_ca_pem)?,
+        xrun::testing::crypto::anonymous_tls_config(&roster.roster.relay_ca_pem)?,
     )
     .await?;
-    xrun::network::authenticate(&mut ws, id, &roster.roster.network_id, path, None).await?;
+    xrun::testing::network::authenticate(&mut ws, id, &roster.roster.network_id, path, None)
+        .await?;
     Ok(ws)
 }
 
-pub async fn peer_session(home: &Path, id: &Identity, target: &str) -> Result<xrun::net::Ws> {
-    use xrun::{membership::RosterCache, net, relay::RelayMessage, secure};
+pub async fn peer_session(
+    home: &Path,
+    id: &Identity,
+    target: &str,
+) -> Result<xrun::testing::net::Ws> {
+    use xrun::testing::{membership::RosterCache, net, protocol::RelayMessage, secure};
     let cache = RosterCache::open(&home.join(".xrun/roster.db"))?;
     let network = &id.network.as_ref().context("network identity")?.network_id;
     let roster = cache.load(network)?;

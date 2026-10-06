@@ -64,7 +64,7 @@ async fn cli_registration_removal_and_interactive_purge_preserve_identity_until_
     }
     let home = lab.root.path().join("service-home");
     std::fs::create_dir(&home)?;
-    let link = xrun::relay::deployment_link(&lab.relay.config)?;
+    let link = xrun::testing::relay::deployment_link(&lab.relay.config)?;
     ok(
         service_command(&home, &bin, &["up", "--relay", &link, "--name", "managed1"])?
             .output()
@@ -114,12 +114,14 @@ async fn cli_registration_removal_and_interactive_purge_preserve_identity_until_
     )?
     .output()
     .await?);
-    let joined: xrun::config::Identity = xrun::config::read(&identity)?;
+    let joined: xrun::testing::config::Identity = xrun::testing::config::read(&identity)?;
     assert_eq!(joined.name, "joined1");
     assert_eq!(joined.network, lab.source_identity.network);
     assert_eq!(
-        xrun::config::read::<xrun::config::DaemonConfig>(&home.join(".xrun/daemon.toml"))?
-            .allow_from,
+        xrun::testing::config::read::<xrun::testing::config::DaemonConfig>(
+            &home.join(".xrun/daemon.toml")
+        )?
+        .allow_from,
         Vec::<String>::new()
     );
     stop_daemon(&lab.target, &mut lab.daemon).await?;

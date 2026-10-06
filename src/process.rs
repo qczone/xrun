@@ -2,8 +2,8 @@ use anyhow::Result;
 use std::{collections::BTreeMap, path::Path};
 use tokio::io::{AsyncRead, AsyncWrite};
 
-pub type Input = Box<dyn AsyncWrite + Unpin + Send>;
-pub type Output = Box<dyn AsyncRead + Unpin + Send>;
+pub(crate) type Input = Box<dyn AsyncWrite + Unpin + Send>;
+pub(crate) type Output = Box<dyn AsyncRead + Unpin + Send>;
 
 // Strip implicit build-session controls on every task launch, regardless of how
 // the daemon was started. Explicit config/request overrides are applied afterward.
@@ -182,11 +182,6 @@ pub fn force_kill(pid: u32) {
         libc::kill(-(pid as i32), libc::SIGKILL);
     }
 }
-#[cfg(unix)]
-pub fn gone(pid: u32) -> bool {
-    (unsafe { libc::kill(-(pid as i32), 0) }) == -1
-        && std::io::Error::last_os_error().raw_os_error() == Some(libc::ESRCH)
-}
 
 #[cfg(windows)]
 pub fn terminate(pid: u32) {
@@ -195,10 +190,6 @@ pub fn terminate(pid: u32) {
 #[cfg(windows)]
 pub fn force_kill(pid: u32) {
     windows::terminate(pid);
-}
-#[cfg(windows)]
-pub fn gone(_pid: u32) -> bool {
-    true
 }
 
 #[cfg(windows)]
@@ -240,7 +231,7 @@ mod windows {
     fn jobs() -> &'static Mutex<HashMap<u32, isize>> {
         JOBS.get_or_init(|| Mutex::new(HashMap::new()))
     }
-    pub fn terminate(pid: u32) {
+    pub(super) fn terminate(pid: u32) {
         if let Some(h) = jobs().lock().unwrap().get(&pid).copied() {
             unsafe {
                 TerminateJobObject(h as HANDLE, 1);
@@ -275,8 +266,8 @@ mod windows {
         }
     }
 
-    pub struct NativeChild {
-        pub pid: u32,
+    pub(super) struct NativeChild {
+        pub(super) pid: u32,
         _process: Arc<Handle>,
         job: Handle,
         waiter: tokio::task::JoinHandle<Result<u32>>,
@@ -288,7 +279,7 @@ mod windows {
         }
     }
     impl NativeChild {
-        pub async fn wait(&mut self) -> Result<std::process::ExitStatus> {
+        pub(super) async fn wait(&mut self) -> Result<std::process::ExitStatus> {
             use std::os::windows::process::ExitStatusExt;
             let code = if let Some(code) = self.exit {
                 code
@@ -301,12 +292,12 @@ mod windows {
         }
     }
 
-    pub struct Spawned {
-        pub pid: u32,
-        pub stdin: tokio::fs::File,
-        pub stdout: tokio::fs::File,
-        pub stderr: tokio::fs::File,
-        pub child: NativeChild,
+    pub(super) struct Spawned {
+        pub(super) pid: u32,
+        pub(super) stdin: tokio::fs::File,
+        pub(super) stdout: tokio::fs::File,
+        pub(super) stderr: tokio::fs::File,
+        pub(super) child: NativeChild,
     }
     fn wide(s: &OsStr) -> Vec<u16> {
         s.encode_wide().chain(std::iter::once(0)).collect()
@@ -386,7 +377,7 @@ mod windows {
         Ok((Handle::new(read)?, Handle::new(write)?))
     }
 
-    pub fn spawn(
+    pub(super) fn spawn(
         path: &Path,
         args: &[String],
         cwd: &Path,

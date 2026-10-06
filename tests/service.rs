@@ -3,7 +3,7 @@ mod common;
 use anyhow::{Context, Result};
 use common::*;
 use std::{path::Path, time::Duration};
-use xrun::{config, protocol::VERSION};
+use xrun::testing::{config, protocol::VERSION};
 
 async fn registered_cli(binary: &Path, args: &[&str]) -> Result<String> {
     let output = tokio::time::timeout(
@@ -26,7 +26,7 @@ async fn connected(dir: &Path) -> Result<()> {
     tokio::time::timeout(Duration::from_secs(15), async {
         loop {
             if config::instance_running(&dir.join("daemon.lock"))?
-                && xrun::control::state(dir)?.is_some_and(|s| s.connected)
+                && xrun::testing::control::state(dir)?.is_some_and(|s| s.connected)
             {
                 return Ok::<_, anyhow::Error>(());
             }
@@ -104,10 +104,10 @@ async fn systemd_install_stop_restart_upgrade_and_uninstall() -> Result<()> {
 
     registered_cli(&old, &["daemon", "install"]).await?;
     connected(&data).await?;
-    let generation = xrun::control::state(&data)?.unwrap().generation;
+    let generation = xrun::testing::control::state(&data)?.unwrap().generation;
     registered_cli(&old, &["daemon", "install"]).await?;
     assert_eq!(
-        xrun::control::state(&data)?.unwrap().generation,
+        xrun::testing::control::state(&data)?.unwrap().generation,
         generation,
         "reinstall restarted a healthy daemon"
     );
@@ -128,7 +128,7 @@ async fn systemd_install_stop_restart_upgrade_and_uninstall() -> Result<()> {
         .await?,
     )?;
     let job_id = job["job_id"].as_str().context("job id")?;
-    let store = xrun::store::TaskStore::open(&data.join("daemon.db"), false)?;
+    let store = xrun::testing::store::TaskStore::open(&data.join("daemon.db"), false)?;
     let pid = tokio::time::timeout(Duration::from_secs(5), async {
         loop {
             if let Some(process) = store.get(job_id)?.and_then(|j| j.process) {
@@ -149,7 +149,10 @@ async fn systemd_install_stop_restart_upgrade_and_uninstall() -> Result<()> {
     assert!(!config::instance_running(&data.join("daemon.lock"))?);
     registered_cli(&old, &["daemon", "start"]).await?;
     connected(&data).await?;
-    assert_ne!(xrun::control::state(&data)?.unwrap().generation, generation);
+    assert_ne!(
+        xrun::testing::control::state(&data)?.unwrap().generation,
+        generation
+    );
     registered_cli(&old, &["daemon", "stop"]).await?;
     registered_cli(&upgraded, &["daemon", "install"]).await?;
     connected(&data).await?;

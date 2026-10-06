@@ -2,7 +2,7 @@ mod common;
 use anyhow::{Context, Result};
 use common::*;
 use std::path::Path;
-use xrun::{
+use xrun::testing::{
     config::{self, DaemonConfig},
     protocol::VERSION,
 };
@@ -133,14 +133,14 @@ async fn concurrent_cli_requests_keep_outputs_and_request_ids_separate() -> Resu
     Ok(())
 }
 
-async fn local_wire(home: &Path) -> Result<(xrun::net::Ws, serde_json::Value)> {
+async fn local_wire(home: &Path) -> Result<(xrun::testing::net::Ws, serde_json::Value)> {
     let endpoint: serde_json::Value =
         serde_json::from_slice(&std::fs::read(home.join(".xrun/daemon-ipc.json"))?)?;
     let address = endpoint["address"].as_str().context("IPC address")?;
     #[cfg(unix)]
-    let io: xrun::net::Io = Box::new(tokio::net::UnixStream::connect(address).await?);
+    let io: xrun::testing::net::Io = Box::new(tokio::net::UnixStream::connect(address).await?);
     #[cfg(windows)]
-    let io: xrun::net::Io =
+    let io: xrun::testing::net::Io =
         Box::new(tokio::net::windows::named_pipe::ClientOptions::new().open(address)?);
     Ok((
         tokio_tungstenite::WebSocketStream::from_raw_socket(
@@ -154,7 +154,7 @@ async fn local_wire(home: &Path) -> Result<(xrun::net::Ws, serde_json::Value)> {
 }
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn private_ipc_rejects_bad_tokens_stale_stops_and_incomplete_releases() -> Result<()> {
-    use xrun::{
+    use xrun::testing::{
         net,
         protocol::{Data, sha256},
     };
@@ -203,7 +203,7 @@ async fn private_ipc_rejects_bad_tokens_stale_stops_and_incomplete_releases() ->
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn changed_upload_is_rejected_without_overwriting_the_destination() -> Result<()> {
-    use xrun::{
+    use xrun::testing::{
         net,
         protocol::{Data, Request},
     };
@@ -212,7 +212,7 @@ async fn changed_upload_is_rejected_without_overwriting_the_destination() -> Res
     let target = lab.target.join("protected-file");
     std::fs::write(&source, b"before")?;
     std::fs::write(&target, b"keep-existing")?;
-    let (file, size, hash) = xrun::transfer::prepare_upload(&source)?;
+    let (file, size, hash) = xrun::testing::transfer::prepare_upload(&source)?;
     std::fs::write(&source, b"after!")?;
     let mut ws = peer_session(
         &lab.source,

@@ -57,7 +57,7 @@ impl Identity {
     }
 }
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub struct PendingIdentity {
+pub(crate) struct PendingIdentity {
     pub key_pem: String,
     pub ca_pem: String,
     pub pin: String,
@@ -223,7 +223,7 @@ pub fn update_permission(device_id: &str, allow: bool) -> Result<()> {
     })
 }
 
-pub fn update_all_permissions(allow: bool) -> Result<()> {
+pub(crate) fn update_all_permissions(allow: bool) -> Result<()> {
     Identity::load()?;
     update_daemon_config(&device_dir()?, |cfg| {
         cfg.allow_all = allow;
@@ -231,12 +231,12 @@ pub fn update_all_permissions(allow: bool) -> Result<()> {
     })
 }
 
-pub fn pause_remote_access(paused: bool) -> Result<()> {
+pub(crate) fn pause_remote_access(paused: bool) -> Result<()> {
     Identity::load()?;
     update_daemon_config(&device_dir()?, |cfg| cfg.set_paused(paused))
 }
 
-pub fn update_execution(
+pub(crate) fn update_execution(
     default_cwd: Option<PathBuf>,
     max_concurrent_jobs: usize,
     path: Option<String>,
@@ -281,7 +281,7 @@ pub(crate) fn update_daemon_config(
     cfg.validate()?;
     write(&path, &cfg)
 }
-pub fn sync_parent(_path: &Path) -> Result<()> {
+pub(crate) fn sync_parent(_path: &Path) -> Result<()> {
     #[cfg(unix)]
     std::fs::File::open(_path.parent().context("missing parent")?)?.sync_all()?;
     Ok(())
@@ -305,7 +305,7 @@ pub fn atomic_private_write(path: &Path, bytes: &[u8]) -> Result<()> {
     Ok(())
 }
 
-pub fn restrict_dir(_path: &Path) -> Result<()> {
+pub(crate) fn restrict_dir(_path: &Path) -> Result<()> {
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;

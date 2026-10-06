@@ -3,7 +3,9 @@ use anyhow::{Context, Result, bail};
 use common::*;
 use std::{process::Stdio, time::Duration};
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, BufReader};
-use xrun::{crypto, membership::RosterCache, net, protocol::*, relay::RelayMessage, secure};
+use xrun::testing::{
+    crypto, membership::RosterCache, net, protocol::RelayMessage, protocol::*, secure,
+};
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn submission_rejection_and_uncertainty_keep_distinct_exit_codes() -> Result<()> {
@@ -326,7 +328,7 @@ fn main() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn pipelined_purpose_never_sends_execution_before_handshake_acceptance() -> Result<()> {
-    use xrun::membership::Manager;
+    use xrun::testing::membership::Manager;
     tokio::time::timeout(Duration::from_secs(20), async {
         let mut lab = Lab::new().await?;
         stop_daemon(&lab.source, &mut lab.source_daemon).await?;

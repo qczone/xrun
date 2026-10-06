@@ -122,7 +122,7 @@ pub(crate) fn merge_incomplete(previous: &mut Option<String>, next: Option<Strin
     }
 }
 #[derive(Clone)]
-pub struct JobOutcome {
+pub(crate) struct JobOutcome {
     pub state: JobState,
     pub exit_code: Option<i64>,
     pub signal: Option<i32>,

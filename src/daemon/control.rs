@@ -1,6 +1,6 @@
 //! Relay control connection, reconnect and background roster synchronization.
 use crate::error::ErrorCode;
-use crate::{config::Identity, net, network, protocol::*, relay::RelayMessage};
+use crate::{config::Identity, net, network, protocol::RelayMessage, protocol::*};
 use anyhow::{Context, Result, bail};
 use futures_util::{SinkExt, StreamExt};
 use std::{sync::Arc, time::Duration};

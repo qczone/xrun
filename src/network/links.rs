@@ -3,7 +3,7 @@ use crate::error::ErrorCode;
 use crate::{crypto, membership::SignedRoster};
 use anyhow::{Context, Result, bail};
 
-pub fn invitation_link(roster: &SignedRoster, token: &str) -> Result<String> {
+pub(crate) fn invitation_link(roster: &SignedRoster, token: &str) -> Result<String> {
     let r = &roster.roster;
     let addresses = r
         .relay_addresses
@@ -65,7 +65,7 @@ pub(super) fn parse_link(link: &str) -> Result<Invitation> {
                 .split_once('/')
                 .context(ErrorCode::InvalidLink.error("missing relay route"))?;
             crate::client::validate_address(host)?;
-            if !crate::relay::valid_route(route) {
+            if !crate::protocol::valid_relay_route(route) {
                 bail!(ErrorCode::InvalidLink.error("invalid relay route"))
             }
             Ok(format!("https://{a}"))
@@ -109,7 +109,7 @@ pub(super) fn endpoint(link: &str) -> Result<RelayEndpoint> {
             || url.password().is_some()
             || url.query().is_some()
             || url.fragment().is_some()
-            || !crate::relay::valid_route(url.path().trim_start_matches('/'))
+            || !crate::protocol::valid_relay_route(url.path().trim_start_matches('/'))
             || url.path().matches('/').count() != 1
         {
             bail!(
@@ -138,7 +138,7 @@ pub(super) fn endpoint(link: &str) -> Result<RelayEndpoint> {
             && s.bytes()
                 .all(|b| b.is_ascii_lowercase() || matches!(b, b'2'..=b'7'))
     };
-    if !valid(pin, 52) || !crate::relay::valid_route(route) {
+    if !valid(pin, 52) || !crate::protocol::valid_relay_route(route) {
         bail!(ErrorCode::InvalidRelay.error("malformed fingerprint or relay route"))
     }
     let addresses = addresses

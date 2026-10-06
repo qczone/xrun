@@ -9,7 +9,7 @@ use base64::{Engine, engine::general_purpose::STANDARD};
 use rusqlite::{Connection, OptionalExtension, params};
 use serde::{Deserialize, Serialize};
 use std::{path::Path, sync::Mutex};
-pub use submissions::{Submission, SubmissionStore};
+pub(crate) use submissions::{Submission, SubmissionStore};
 
 const MAX_JOB_LOG_BYTES: i64 = 64 * 1024 * 1024;
 const MAX_TOTAL_LOG_BYTES: i64 = 1024 * 1024 * 1024;
@@ -46,7 +46,7 @@ fn decode<T: serde::de::DeserializeOwned>(s: String) -> Result<T> {
     Ok(serde_json::from_str(&s)?)
 }
 
-pub use tasks::JobOutcome;
+pub(crate) use tasks::JobOutcome;
 pub(crate) use tasks::{JOB_COLUMNS, TASK_SCHEMA_VERSION, merge_incomplete, read_job};
 
 pub struct TaskStore {
@@ -119,8 +119,7 @@ impl TaskStore {
         let job = job.clone();
         self.worker.call(move |db| db.insert(&job))
     }
-    #[doc(hidden)]
-    pub fn replace_fixture(&self, job: &Job) -> Result<()> {
+    pub(crate) fn replace_fixture(&self, job: &Job) -> Result<()> {
         let job = job.clone();
         self.worker.call(move |db| db.replace_fixture(&job))
     }

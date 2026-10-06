@@ -136,7 +136,7 @@ pub(crate) struct Listener {
     listener: tokio::net::windows::named_pipe::NamedPipeServer,
 }
 impl Listener {
-    pub fn bind(dir: &Path) -> Result<Self> {
+    pub(crate) fn bind(dir: &Path) -> Result<Self> {
         config::restrict_dir(dir)?;
         let token = uuid::Uuid::new_v4().to_string();
         #[cfg(unix)]
@@ -168,7 +168,7 @@ impl Listener {
             _directory: directory,
         })
     }
-    pub async fn accept(&mut self) -> Result<Ws> {
+    pub(crate) async fn accept(&mut self) -> Result<Ws> {
         #[cfg(unix)]
         let io: Io = {
             let (stream, _) = self.listener.accept().await?;
@@ -185,7 +185,7 @@ impl Listener {
         };
         Ok(framed(io, Role::Server).await)
     }
-    pub fn token(&self) -> String {
+    pub(crate) fn token(&self) -> String {
         self.endpoint.token.clone()
     }
 }

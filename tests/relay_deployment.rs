@@ -3,7 +3,7 @@ mod common;
 use anyhow::{Context, Result};
 use common::*;
 use std::{os::unix::fs::PermissionsExt, path::Path, time::Duration};
-use xrun::config::{self, ServerConfig};
+use xrun::testing::config::{self, ServerConfig};
 
 struct Deployment {
     home: tempfile::TempDir,
