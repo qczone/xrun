@@ -45,6 +45,19 @@ jobs:
           sudo apt-get update -qq
           sudo apt-get install -y xvfb libx11-6 libxrandr2
           xvfb-run -a -s '-screen 0 1024x768x24' cargo test --locked --test screenshot -- --ignored
+      - name: Test real systemd service lifecycle
+        shell: bash
+        env:
+          XRUN_TEST_SYSTEM_SERVICE: '1'
+        run: |
+          sudo loginctl enable-linger "$(id -un)"
+          sudo systemctl start "user@$(id -u).service"
+          export XDG_RUNTIME_DIR="/run/user/$(id -u)"
+          export DBUS_SESSION_BUS_ADDRESS="unix:path=$XDG_RUNTIME_DIR/bus"
+          systemctl --user is-system-running --wait || test "$?" -eq 1
+          mkdir -p "$XRUN_TEST_LOG_DIR"
+          trap 'journalctl --user -u xrun-daemon.service --no-pager > "$XRUN_TEST_LOG_DIR/systemd.log" || true' EXIT
+          cargo test --locked --test service -- --ignored --nocapture
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
         with:
           bun-version-file: cloudflare/package.json

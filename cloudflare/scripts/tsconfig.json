@@ -4,5 +4,6 @@
     "lib": ["ES2022", "DOM"], "types": ["bun"],
     "strict": true, "noEmit": true, "skipLibCheck": true
   },
-  "include": ["*.ts", "../tests/**/*.ts", "../src/auth.ts"]
+  "include": ["*.ts", "../tests/**/*.ts", "../src/auth.ts"],
+  "exclude": ["../tests/workerd"]
 }

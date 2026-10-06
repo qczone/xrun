@@ -2,6 +2,8 @@
 
 mod network;
 mod platform;
+#[cfg(test)]
+mod tests;
 
 use serde::{Deserialize, Serialize};
 use std::sync::Mutex;
@@ -74,8 +76,8 @@ fn settings() -> Result<Settings, String> {
 }
 
 #[tauri::command]
-async fn save_settings(
-    app: tauri::AppHandle,
+async fn save_settings<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
     state: State<'_, Desktop>,
     execution: ExecutionSettings,
 ) -> Result<(), String> {
@@ -92,7 +94,9 @@ async fn save_settings(
 }
 
 #[tauri::command]
-async fn choose_directory(app: tauri::AppHandle) -> Result<Option<String>, String> {
+async fn choose_directory<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+) -> Result<Option<String>, String> {
     let (tx, rx) = tokio::sync::oneshot::channel();
     app.dialog()
         .file()
@@ -109,7 +113,7 @@ async fn choose_directory(app: tauri::AppHandle) -> Result<Option<String>, Strin
     .transpose()
 }
 
-fn local_status(app: &tauri::AppHandle) -> anyhow::Result<Status> {
+fn local_status<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> anyhow::Result<Status> {
     let mut local = xrun::client::local_status()?;
     let service = platform::status()?;
     local.daemon_installed = service.installed || service.legacy_installed;
@@ -136,7 +140,7 @@ fn local_status(app: &tauri::AppHandle) -> anyhow::Result<Status> {
     })
 }
 
-fn present(app: &tauri::AppHandle) {
+fn present<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
     if let Some(tray) = app.tray_by_id("xrun") {
         let _ = tray.set_visible(true);
     }
@@ -147,7 +151,10 @@ fn present(app: &tauri::AppHandle) {
     }
 }
 
-fn record<T>(app: &tauri::AppHandle, result: anyhow::Result<T>) -> Result<T, String> {
+fn record<T, R: tauri::Runtime>(
+    app: &tauri::AppHandle<R>,
+    result: anyhow::Result<T>,
+) -> Result<T, String> {
     let result = result.map_err(|e| e.to_string());
     let error = result.as_ref().err().cloned();
     *app.state::<Desktop>().error.lock().unwrap() = error.clone();
@@ -167,7 +174,7 @@ fn service_start_error(error: anyhow::Error) -> anyhow::Error {
 }
 
 #[tauri::command]
-fn status(app: tauri::AppHandle) -> Result<Status, String> {
+fn status<R: tauri::Runtime>(app: tauri::AppHandle<R>) -> Result<Status, String> {
     local_status(&app).map_err(|e| e.to_string())
 }
 
@@ -208,8 +215,8 @@ async fn file_history(before: Option<i64>) -> Result<xrun::history::FilePage, St
 }
 
 #[tauri::command]
-async fn invite(
-    app: tauri::AppHandle,
+async fn invite<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
     state: State<'_, Desktop>,
     allow: bool,
 ) -> Result<network::Invitation, String> {
@@ -225,8 +232,8 @@ async fn invite(
 }
 
 #[tauri::command]
-async fn revoke(
-    app: tauri::AppHandle,
+async fn revoke<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
     state: State<'_, Desktop>,
     device: String,
 ) -> Result<network::Revocation, String> {
@@ -242,7 +249,10 @@ async fn revoke(
 }
 
 #[tauri::command]
-fn copy_invitation(app: tauri::AppHandle, link: String) -> Result<(), String> {
+fn copy_invitation<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    link: String,
+) -> Result<(), String> {
     let result = (|| {
         anyhow::ensure!(
             link.starts_with("xrun://") && link.len() <= 4096,
@@ -255,8 +265,8 @@ fn copy_invitation(app: tauri::AppHandle, link: String) -> Result<(), String> {
 }
 
 #[tauri::command]
-async fn create_network(
-    app: tauri::AppHandle,
+async fn create_network<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
     state: State<'_, Desktop>,
     link: String,
     name: String,
@@ -272,8 +282,8 @@ async fn create_network(
 }
 
 #[tauri::command]
-async fn join(
-    app: tauri::AppHandle,
+async fn join<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
     state: State<'_, Desktop>,
     link: String,
     name: String,
@@ -289,23 +299,32 @@ async fn join(
 }
 
 #[tauri::command]
-async fn start(app: tauri::AppHandle, state: State<'_, Desktop>) -> Result<(), String> {
+async fn start<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    state: State<'_, Desktop>,
+) -> Result<(), String> {
     let _guard = state.action.lock().await;
     record(&app, platform::start().await)
 }
 #[tauri::command]
-async fn stop(app: tauri::AppHandle, state: State<'_, Desktop>) -> Result<(), String> {
+async fn stop<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    state: State<'_, Desktop>,
+) -> Result<(), String> {
     let _guard = state.action.lock().await;
     record(&app, xrun::service::stop_daemon().await)
 }
 #[tauri::command]
-async fn remove_service(app: tauri::AppHandle, state: State<'_, Desktop>) -> Result<(), String> {
+async fn remove_service<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    state: State<'_, Desktop>,
+) -> Result<(), String> {
     let _guard = state.action.lock().await;
     record(&app, platform::remove().await)
 }
 #[tauri::command]
-async fn autostart(
-    app: tauri::AppHandle,
+async fn autostart<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
     state: State<'_, Desktop>,
     enabled: bool,
 ) -> Result<(), String> {
@@ -313,8 +332,8 @@ async fn autostart(
     record(&app, platform::autostart(enabled))
 }
 #[tauri::command]
-async fn permission(
-    app: tauri::AppHandle,
+async fn permission<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
     state: State<'_, Desktop>,
     device: String,
     allow: bool,
@@ -328,8 +347,8 @@ async fn permission(
     )
 }
 #[tauri::command]
-async fn all_permissions(
-    app: tauri::AppHandle,
+async fn all_permissions<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
     state: State<'_, Desktop>,
     allow: bool,
 ) -> Result<(), String> {
@@ -337,8 +356,8 @@ async fn all_permissions(
     record(&app, xrun::config::update_all_permissions(allow))
 }
 #[tauri::command]
-async fn pause_access(
-    app: tauri::AppHandle,
+async fn pause_access<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
     state: State<'_, Desktop>,
     paused: bool,
 ) -> Result<(), String> {
@@ -346,7 +365,7 @@ async fn pause_access(
     record(&app, xrun::config::pause_remote_access(paused))
 }
 #[tauri::command]
-fn hide_icon(app: tauri::AppHandle) -> Result<(), String> {
+fn hide_icon<R: tauri::Runtime>(app: tauri::AppHandle<R>) -> Result<(), String> {
     if let Some(tray) = app.tray_by_id("xrun") {
         tray.set_visible(false).map_err(|e| e.to_string())?;
     }
@@ -422,6 +441,34 @@ fn tray(app: &tauri::App) -> tauri::Result<MenuItem<tauri::Wry>> {
     Ok(state)
 }
 
+fn commands<R: tauri::Runtime>(builder: tauri::Builder<R>) -> tauri::Builder<R> {
+    builder
+        .manage(Desktop::default())
+        .invoke_handler(tauri::generate_handler![
+            status,
+            devices,
+            task_history,
+            task_output,
+            file_history,
+            invite,
+            revoke,
+            copy_invitation,
+            create_network,
+            join,
+            start,
+            stop,
+            remove_service,
+            autostart,
+            permission,
+            all_permissions,
+            pause_access,
+            hide_icon,
+            settings,
+            save_settings,
+            choose_directory
+        ])
+}
+
 fn main() {
     if std::env::args().any(|arg| arg == "--self-check") {
         let result = tauri::async_runtime::block_on(platform::check_helper()).and_then(|()| {
@@ -453,34 +500,10 @@ fn main() {
         return;
     }
     let background = std::env::args().any(|arg| arg == "--background");
-    tauri::Builder::default()
+    commands(tauri::Builder::default())
         .plugin(tauri_plugin_single_instance::init(|app, _, _| present(app)))
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_clipboard_manager::init())
-        .manage(Desktop::default())
-        .invoke_handler(tauri::generate_handler![
-            status,
-            devices,
-            task_history,
-            task_output,
-            file_history,
-            invite,
-            revoke,
-            copy_invitation,
-            create_network,
-            join,
-            start,
-            stop,
-            remove_service,
-            autostart,
-            permission,
-            all_permissions,
-            pause_access,
-            hide_icon,
-            settings,
-            save_settings,
-            choose_directory
-        ])
         .setup(move |app| {
             #[cfg(target_os = "macos")]
             app.set_activation_policy(tauri::ActivationPolicy::Accessory);

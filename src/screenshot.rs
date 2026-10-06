@@ -8,7 +8,9 @@ pub struct Capture {
     pub at: String,
 }
 pub async fn capture() -> Result<Capture> {
-    let bytes = platform().await?;
+    decode(platform().await?)
+}
+fn decode(bytes: Vec<u8>) -> Result<Capture> {
     if bytes.len() as u64 > MAX_FILE {
         bail!(ErrorCode::FileTooLarge.error("screenshot exceeds 64 MiB"))
     }
@@ -32,7 +34,15 @@ async fn platform() -> Result<Vec<u8>> {
     unsafe extern "C" {
         fn CGPreflightScreenCaptureAccess() -> bool;
     }
-    if !unsafe { CGPreflightScreenCaptureAccess() } {
+    mac_capture(
+        unsafe { CGPreflightScreenCaptureAccess() },
+        std::path::Path::new("/usr/sbin/screencapture"),
+    )
+    .await
+}
+#[cfg(target_os = "macos")]
+async fn mac_capture(allowed: bool, program: &std::path::Path) -> Result<Vec<u8>> {
+    if !allowed {
         bail!(
             ErrorCode::PermissionDenied
                 .error("grant Screen Recording permission to the daemon executable")
@@ -43,7 +53,7 @@ async fn platform() -> Result<Vec<u8>> {
         .prefix("xrun-capture-")
         .suffix(".png")
         .tempfile()?;
-    let status = tokio::process::Command::new("/usr/sbin/screencapture")
+    let status = tokio::process::Command::new(program)
         .args(["-x", "-m"])
         .arg(temp.path())
         .stdin(std::process::Stdio::null())
@@ -68,12 +78,16 @@ fn windows_capture_path() -> Result<tempfile::TempPath> {
 }
 #[cfg(windows)]
 async fn platform() -> Result<Vec<u8>> {
-    let temp = windows_capture_path()?;
     let script = r#"$ErrorActionPreference='Stop'
 Add-Type -AssemblyName System.Windows.Forms; Add-Type -AssemblyName System.Drawing
 Add-Type -TypeDefinition 'using System; using System.Runtime.InteropServices; public class DesktopCheck { [DllImport("user32.dll", SetLastError=true)] public static extern IntPtr OpenInputDesktop(uint flags, bool inherit, uint access); [DllImport("user32.dll")] public static extern bool CloseDesktop(IntPtr handle); }'
 $d=[DesktopCheck]::OpenInputDesktop(0,$false,1); if($d -eq [IntPtr]::Zero){exit 77}; [void][DesktopCheck]::CloseDesktop($d)
 $r=[Windows.Forms.Screen]::PrimaryScreen.Bounds; $b=New-Object Drawing.Bitmap $r.Width,$r.Height; $g=[Drawing.Graphics]::FromImage($b); try{$g.CopyFromScreen($r.Location,[Drawing.Point]::Empty,$r.Size);$b.Save($env:XRUN_CAPTURE_PATH,[Drawing.Imaging.ImageFormat]::Png)}finally{$g.Dispose();$b.Dispose()}"#;
+    windows_capture(script).await
+}
+#[cfg(windows)]
+async fn windows_capture(script: &str) -> Result<Vec<u8>> {
+    let temp = windows_capture_path()?;
     let status = tokio::process::Command::new("powershell.exe")
         .args(["-NoProfile", "-NonInteractive", "-Command", script])
         .env("XRUN_CAPTURE_PATH", &temp)
@@ -92,35 +106,6 @@ $r=[Windows.Forms.Screen]::PrimaryScreen.Bounds; $b=New-Object Drawing.Bitmap $r
         .context(ErrorCode::ScreenshotFailed.error("cannot read captured PNG"))
 }
 
-#[cfg(all(test, windows))]
-mod tests {
-    #[test]
-    fn gdi_can_save_to_capture_path() {
-        let temp = super::windows_capture_path().unwrap();
-        // A bitmap in memory exercises the same GDI+ save operation without
-        // requiring an interactive desktop on the Windows CI runner.
-        let script = r#"$ErrorActionPreference='Stop'; Add-Type -AssemblyName System.Drawing
-$b=New-Object Drawing.Bitmap 1,1; try{$b.Save($env:XRUN_CAPTURE_PATH,[Drawing.Imaging.ImageFormat]::Png)}finally{$b.Dispose()}"#;
-        let output = std::process::Command::new("powershell.exe")
-            .args(["-NoProfile", "-NonInteractive", "-Command", script])
-            .env("XRUN_CAPTURE_PATH", &temp)
-            .output()
-            .unwrap();
-        assert!(
-            output.status.success(),
-            "GDI+ save failed: {}",
-            String::from_utf8_lossy(&output.stderr)
-        );
-        let bytes = crate::transfer::read_file(&temp).unwrap();
-        let reader = png::Decoder::new(std::io::Cursor::new(bytes))
-            .read_info()
-            .unwrap();
-        assert_eq!((reader.info().width, reader.info().height), (1, 1));
-        let path = temp.to_path_buf();
-        drop(temp);
-        assert!(!path.exists(), "capture file was not cleaned up");
-    }
-}
 #[cfg(target_os = "linux")]
 async fn platform() -> Result<Vec<u8>> {
     if std::env::var_os("WAYLAND_DISPLAY").is_some()
@@ -223,5 +208,107 @@ fn x11_capture() -> Result<Vec<u8>> {
             encoder.write_header()?.write_image_data(&pixels)?;
         }
         Ok(bytes)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    fn error<T>(result: Result<T>, expected: ErrorCode) {
+        let error = match result {
+            Ok(_) => panic!("expected {expected:?}"),
+            Err(error) => error,
+        };
+        assert!(crate::error::is(&error, expected), "{error:#}");
+    }
+
+    #[test]
+    fn png_metadata_and_invalid_or_oversized_output() -> Result<()> {
+        let mut bytes = Vec::new();
+        {
+            let mut encoder = png::Encoder::new(&mut bytes, 2, 1);
+            encoder.set_color(png::ColorType::Rgb);
+            encoder.set_depth(png::BitDepth::Eight);
+            encoder
+                .write_header()?
+                .write_image_data(&[255, 0, 0, 0, 255, 0])?;
+        }
+        let capture = decode(bytes.clone())?;
+        assert_eq!((capture.width, capture.height), (2, 1));
+        assert_eq!(capture.bytes, bytes);
+        assert!(capture.at.ends_with('Z'));
+        for bytes in [vec![], b"not a PNG".to_vec()] {
+            error(decode(bytes), ErrorCode::ScreenshotFailed);
+        }
+        error(
+            decode(vec![0; MAX_FILE as usize + 1]),
+            ErrorCode::FileTooLarge,
+        );
+        Ok(())
+    }
+
+    #[cfg(target_os = "macos")]
+    #[tokio::test]
+    async fn mac_permission_and_capture_failures_have_distinct_codes() -> Result<()> {
+        use std::os::unix::fs::PermissionsExt;
+        // Permission denial must return before attempting to execute anything.
+        error(
+            mac_capture(false, std::path::Path::new("/does-not-exist")).await,
+            ErrorCode::PermissionDenied,
+        );
+        let dir = tempfile::tempdir()?;
+        let program = dir.path().join("capture with spaces");
+        for (script, expected) in [
+            ("#!/bin/sh\nexit 1\n", ErrorCode::NoDisplay),
+            ("#!/bin/sh\nexit 0\n", ErrorCode::ScreenshotFailed),
+            (
+                "#!/bin/sh\nprintf invalid > \"$3\"\n",
+                ErrorCode::ScreenshotFailed,
+            ),
+        ] {
+            std::fs::write(&program, script)?;
+            std::fs::set_permissions(&program, std::fs::Permissions::from_mode(0o700))?;
+            error(mac_capture(true, &program).await.and_then(decode), expected);
+        }
+        Ok(())
+    }
+
+    #[cfg(windows)]
+    #[tokio::test]
+    async fn windows_locked_desktop_and_failed_capture_have_distinct_codes() {
+        error(windows_capture("exit 77").await, ErrorCode::ScreenLocked);
+        error(windows_capture("exit 1").await, ErrorCode::ScreenshotFailed);
+        error(
+            windows_capture("exit 0").await.and_then(decode),
+            ErrorCode::ScreenshotFailed,
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn gdi_can_save_to_capture_path() {
+        let temp = super::windows_capture_path().unwrap();
+        // A bitmap in memory exercises the same GDI+ save operation without
+        // requiring an interactive desktop on the Windows CI runner.
+        let script = r#"$ErrorActionPreference='Stop'; Add-Type -AssemblyName System.Drawing
+$b=New-Object Drawing.Bitmap 1,1; try{$b.Save($env:XRUN_CAPTURE_PATH,[Drawing.Imaging.ImageFormat]::Png)}finally{$b.Dispose()}"#;
+        let output = std::process::Command::new("powershell.exe")
+            .args(["-NoProfile", "-NonInteractive", "-Command", script])
+            .env("XRUN_CAPTURE_PATH", &temp)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "GDI+ save failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let bytes = crate::transfer::read_file(&temp).unwrap();
+        let reader = png::Decoder::new(std::io::Cursor::new(bytes))
+            .read_info()
+            .unwrap();
+        assert_eq!((reader.info().width, reader.info().height), (1, 1));
+        let path = temp.to_path_buf();
+        drop(temp);
+        assert!(!path.exists(), "capture file was not cleaned up");
     }
 }

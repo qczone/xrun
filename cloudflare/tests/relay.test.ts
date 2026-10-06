@@ -6,10 +6,15 @@ const secret = randomRoute();
 let runtime: Miniflare;
 let origin: string;
 beforeAll(async () => {
+  const bundle = await Bun.build({
+    entrypoints: [`${import.meta.dir}/workerd/relay-worker.ts`],
+    target: "browser", external: ["cloudflare:workers"],
+  });
+  if (!bundle.success) throw new AggregateError(bundle.logs, "Could not build relay test fixture");
   runtime = new Miniflare(convertV4MiniflareOptions({
-    modules: true, scriptPath: `${import.meta.dir}/../.wrangler/build/index.js`,
+    modules: true, script: await bundle.outputs[0].text(),
     compatibilityDate: "2026-10-03",
-    durableObjects: { NETWORKS: { className: "XrunRelay", useSQLite: true } },
+    durableObjects: { NETWORKS: { className: "TestRelay", useSQLite: true } },
     bindings: { RELAY_ROUTE: secret, XRUN_VERSION: VERSION },
   }));
   origin = (await runtime.ready).origin;
@@ -31,10 +36,15 @@ class Socket {
   async next(): Promise<string | ArrayBuffer> {
     if (this.queue.length) return this.queue.shift()!;
     if (this.closed) throw new Error("closed");
-    return Promise.race([
-      new Promise<string | ArrayBuffer>((resolve, reject) => { this.waiting = { resolve, reject }; }),
-      new Promise<never>((_, reject) => { const timer = setTimeout(() => reject(new Error("timeout")), 5000); timer.unref(); }),
-    ]);
+    if (this.waiting) throw new Error("overlapping socket reads");
+    return new Promise<string | ArrayBuffer>((resolve, reject) => {
+      const timer = setTimeout(() => { this.waiting = undefined; reject(new Error("timeout")); }, 5000);
+      timer.unref();
+      this.waiting = {
+        resolve: (value) => { clearTimeout(timer); resolve(value); },
+        reject: (error) => { clearTimeout(timer); reject(error); },
+      };
+    });
   }
   async json() { return JSON.parse(await this.next() as string); }
   close() { this.ws.close(); }
@@ -69,7 +79,7 @@ test("idle authentication sockets are capped and client headers cannot bypass th
   for (const socket of waiting) socket.close();
 });
 
-// Runs the deployed module in workerd rather than replacing Durable Object APIs.
+// Runs production relay handlers in workerd; only alarm controls are test-specific.
 test("secret route, component version and proof protect existing device routes", async () => {
   expect((await runtime.dispatchFetch(`${origin}/wrong/networks/probe/status`)).status).toBe(404);
   expect((await runtime.dispatchFetch(`${origin}/${secret}/networks/probe/status`, { headers: { Upgrade: "websocket", "X-Xrun-Version": "wrong" } })).status).toBe(409);
@@ -190,4 +200,114 @@ test("pending and active sessions share the network buffer budget and release th
   const replacement = await authenticated(connect, (nonce) => source.proof(connect, nonce));
   expect((await controls[1].json()).type).toBe("incoming");
   for (const socket of [...controls, ...sources.slice(1), ...receivers, overflow, replacement]) socket.close();
+});
+
+async function alarm(network: string, expire: { role?: string; sid?: string } = {}) {
+  const namespace = await runtime.getDurableObjectNamespace("NETWORKS");
+  const object = namespace.get(namespace.idFromName(network));
+  const previous = await (await object.fetch("https://test/test/alarm", {
+    method: "POST", body: JSON.stringify(expire),
+  })).json() as { runs: number };
+  const deadline = Date.now() + 5000;
+  while (Date.now() < deadline) {
+    const state = await (await object.fetch("https://test/test/state")).json() as { runs: number; alarm: number | null };
+    if (state.runs > previous.runs) return state;
+    await Bun.sleep(10);
+  }
+  throw new Error("workerd did not deliver the alarm");
+}
+
+test("authentication deadlines close idle clients, recover admission slots and preserve control", async () => {
+  const f = await fixture(), member = await f.member();
+  const controlPath = `/networks/${f.network}/control`;
+  const control = await authenticated(controlPath, (nonce) => member.proof(controlPath, nonce));
+  await control.json();
+  const path = `/networks/${f.network}/status`;
+  const waiting: Socket[] = [];
+  for (let i = 0; i < 8; i++) {
+    const socket = await open(path);
+    expect((await socket.json()).type).toBe("challenge");
+    waiting.push(socket);
+  }
+  await expect(open(path)).rejects.toThrow("Upgrade 429");
+  const state = await alarm(f.network, { role: "auth" });
+  expect(state.alarm).toBeNull();
+  for (const socket of waiting) {
+    expect((await socket.json()).code).toBe("CONNECT_TIMEOUT");
+    await expect(socket.next()).rejects.toThrow("closed");
+  }
+  const status = await authenticated(path, (nonce) => member.proof(path, nonce));
+  expect((await status.json()).devices).toEqual([member.device]);
+  // All eight admissions, not just one, must be reusable after expiry.
+  for (let i = 0; i < 8; i++) {
+    const socket = await open(path);
+    expect((await socket.json()).type).toBe("challenge");
+    waiting.push(socket);
+  }
+  for (const socket of [...waiting, control, status]) socket.close();
+});
+
+test("pending callback deadlines invalidate attach URLs and release session capacity", async () => {
+  const f = await fixture(), manager = await f.member();
+  const path = `/networks/${f.network}/control`;
+  const control = await authenticated(path, (nonce) => manager.proof(path, nonce, true));
+  const hello = await control.json();
+  const connect = `/networks/${f.network}/connect/${manager.device}`;
+  const pending: Socket[] = [], stale: string[] = [];
+  for (let i = 0; i < 4; i++) {
+    pending.push(await authenticated(connect, async () => null));
+    stale.push((await control.json()).session_id);
+  }
+  const overflow = await authenticated(connect, async () => null);
+  expect((await overflow.json()).code).toBe("SESSION_LIMIT");
+  expect((await alarm(f.network, { role: "pending" })).alarm).toBeNull();
+  for (const socket of pending) {
+    expect((await socket.json()).code).toBe("CONNECT_TIMEOUT");
+    await expect(socket.next()).rejects.toThrow("closed");
+  }
+  for (const sid of stale) await expect(open(`/networks/${f.network}/attach/${manager.device}/${hello.generation}/${sid}`)).rejects.toThrow("Upgrade 400");
+  for (let i = 0; i < 4; i++) {
+    pending.push(await authenticated(connect, async () => null));
+    expect((await control.json()).type).toBe("incoming");
+  }
+  for (const socket of [...pending, overflow, control]) socket.close();
+});
+
+test("idle expiry closes both tunnel peers, preserves live traffic and restores the shared budget", async () => {
+  const f = await fixture(), target = await f.member(), source = await f.member();
+  const path = `/networks/${f.network}/control`;
+  const control = await authenticated(path, (nonce) => target.proof(path, nonce));
+  const hello = await control.json();
+  const connect = `/networks/${f.network}/connect/${target.device}`;
+  const sources: Socket[] = [], targets: Socket[] = [], sessions: string[] = [];
+  for (let i = 0; i < 8; i++) {
+    const sender = await authenticated(connect, (nonce) => source.proof(connect, nonce));
+    const incoming = await control.json();
+    const receiver = await open(`/networks/${f.network}/attach/${target.device}/${hello.generation}/${incoming.session_id}`);
+    await sender.json(); await receiver.json();
+    sources.push(sender); targets.push(receiver); sessions.push(incoming.session_id);
+  }
+  const overflow = await authenticated(connect, (nonce) => source.proof(connect, nonce));
+  expect((await overflow.json()).code).toBe("SESSION_LIMIT");
+  // A prematurely delivered alarm must leave all unexpired sessions intact.
+  expect((await alarm(f.network)).alarm).toBeGreaterThan(Date.now());
+  sources[0].send(new Uint8Array(64 * 1024).buffer);
+  await targets[0].next(); // Leave ciphertext unacknowledged when this pair expires.
+  const state = await alarm(f.network, { role: "source", sid: sessions[0] });
+  expect(state.alarm).toBeGreaterThan(Date.now());
+  expect((await sources[0].json()).code).toBe("CONNECT_TIMEOUT");
+  await expect(sources[0].next()).rejects.toThrow("closed");
+  await expect(targets[0].next()).rejects.toThrow("closed");
+  const bytes = new Uint8Array([1, 2, 3]).buffer;
+  for (let i = 1; i < 8; i++) {
+    sources[i].send(bytes);
+    expect(new Uint8Array(await targets[i].next() as ArrayBuffer)).toEqual(new Uint8Array(bytes));
+    targets[i].send({ type: "ack", bytes: 3 });
+    expect(await sources[i].json()).toEqual({ type: "ack", bytes: 3 });
+  }
+  const replacement = await authenticated(connect, (nonce) => source.proof(connect, nonce));
+  expect((await control.json()).type).toBe("incoming");
+  const full = await authenticated(connect, (nonce) => source.proof(connect, nonce));
+  expect((await full.json()).code).toBe("SESSION_LIMIT");
+  for (const socket of [...sources, ...targets, control, overflow, replacement, full]) socket.close();
 });
