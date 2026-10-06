@@ -80,9 +80,29 @@ fn windows_capture_path() -> Result<tempfile::TempPath> {
 async fn platform() -> Result<Vec<u8>> {
     let script = r#"$ErrorActionPreference='Stop'
 Add-Type -AssemblyName System.Windows.Forms; Add-Type -AssemblyName System.Drawing
-Add-Type -TypeDefinition 'using System; using System.Runtime.InteropServices; public class DesktopCheck { [DllImport("user32.dll", SetLastError=true)] public static extern IntPtr OpenInputDesktop(uint flags, bool inherit, uint access); [DllImport("user32.dll")] public static extern bool CloseDesktop(IntPtr handle); }'
-$d=[DesktopCheck]::OpenInputDesktop(0,$false,1); if($d -eq [IntPtr]::Zero){exit 77}; [void][DesktopCheck]::CloseDesktop($d)
-$r=[Windows.Forms.Screen]::PrimaryScreen.Bounds; $b=New-Object Drawing.Bitmap $r.Width,$r.Height; $g=[Drawing.Graphics]::FromImage($b); try{$g.CopyFromScreen($r.Location,[Drawing.Point]::Empty,$r.Size);$b.Save($env:XRUN_CAPTURE_PATH,[Drawing.Imaging.ImageFormat]::Png)}finally{$g.Dispose();$b.Dispose()}"#;
+Add-Type -TypeDefinition @'
+using System;
+using System.Runtime.InteropServices;
+public class DesktopCheck {
+    [DllImport("user32.dll", SetLastError=true)]
+    public static extern IntPtr OpenInputDesktop(uint flags, bool inherit, uint access);
+    [DllImport("user32.dll")]
+    public static extern bool CloseDesktop(IntPtr handle);
+}
+'@
+$desktop = [DesktopCheck]::OpenInputDesktop(0, $false, 1)
+if ($desktop -eq [IntPtr]::Zero) { exit 77 }
+[void][DesktopCheck]::CloseDesktop($desktop)
+$bounds = [Windows.Forms.Screen]::PrimaryScreen.Bounds
+$bitmap = New-Object Drawing.Bitmap $bounds.Width, $bounds.Height
+$graphics = [Drawing.Graphics]::FromImage($bitmap)
+try {
+    $graphics.CopyFromScreen($bounds.Location, [Drawing.Point]::Empty, $bounds.Size)
+    $bitmap.Save($env:XRUN_CAPTURE_PATH, [Drawing.Imaging.ImageFormat]::Png)
+} finally {
+    $graphics.Dispose()
+    $bitmap.Dispose()
+}"#;
     windows_capture(script).await
 }
 #[cfg(windows)]

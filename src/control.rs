@@ -14,10 +14,14 @@ pub struct State {
     pub generation: String,
     pub connected: bool,
 }
+type ReloadReply = tokio::sync::oneshot::Sender<std::result::Result<(), String>>;
+type ReloadRequests = tokio::sync::mpsc::Receiver<ReloadReply>;
 pub struct Control {
     dir: PathBuf,
     value: Mutex<State>,
     stop: tokio::sync::watch::Sender<bool>,
+    reload: tokio::sync::mpsc::Sender<ReloadReply>,
+    reload_requests: Mutex<Option<ReloadRequests>>,
 }
 impl Control {
     pub fn new(dir: &Path) -> Result<Self> {
@@ -29,11 +33,28 @@ impl Control {
             &dir.join("daemon-runtime.json"),
             &serde_json::to_vec(&value)?,
         )?;
+        let (reload, reload_requests) = tokio::sync::mpsc::channel(16);
         Ok(Self {
             dir: dir.into(),
             value: Mutex::new(value),
             stop: tokio::sync::watch::channel(false).0,
+            reload,
+            reload_requests: Mutex::new(Some(reload_requests)),
         })
+    }
+    pub(crate) fn reload_requests(&self) -> ReloadRequests {
+        self.reload_requests
+            .lock()
+            .unwrap()
+            .take()
+            .expect("single authorization monitor")
+    }
+    pub(crate) async fn reload_access(&self) -> Result<()> {
+        let (reply, result) = tokio::sync::oneshot::channel();
+        self.reload.send(reply).await?;
+        result
+            .await?
+            .map_err(|message| anyhow::anyhow!(ErrorCode::StorageError.error(message)))
     }
     pub fn connected(&self, connected: bool) -> Result<()> {
         let mut value = self.value.lock().unwrap();
@@ -92,6 +113,14 @@ pub async fn request_shutdown(dir: &Path) -> Result<()> {
         // Also allows the app to stop an installed daemon from before IPC.
         config::atomic_private_write(&dir.join("daemon-stop"), state.generation.as_bytes())
     }
+}
+/// Waits until a running daemon has applied a local authorization change.
+pub async fn refresh_access() -> Result<()> {
+    let dir = config::device_dir()?;
+    if config::instance_running(&dir.join("daemon.lock"))? && dir.join("daemon-ipc.json").exists() {
+        crate::ipc::refresh_access(&dir).await?;
+    }
+    Ok(())
 }
 
 #[cfg(test)]

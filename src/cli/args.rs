@@ -11,7 +11,23 @@ use std::path::PathBuf;
     about = "Run programs and transfer files on paired devices",
     disable_help_subcommand = true,
     subcommand_help_heading = "Local commands",
-    after_help = "Remote commands (choose a device):\n  <DEVICE> [OPTIONS] -- <PROGRAM> [ARGS]...  Run a reliable task\n  <DEVICE> start [OPTIONS] -- <PROGRAM>...  Start a background task\n  <DEVICE> info                            Query device information\n  <DEVICE> jobs|wait|logs|kill              Manage your tasks on that device\n  <DEVICE> push|pull|screenshot             Transfer a file or capture the display\n  <DEVICE> forward [LOCAL:]REMOTE          Forward a TCP port\n\nExamples:\n  xrun linux1 -C /home/user/demo -- cargo test\n  xrun linux1 push ./config.json /home/user/demo/config.json\n  xrun allow-from mac1                    Run on the device mac1 will control\n\nCommand help: xrun help push; xrun linux1 push --help\nOffline manual: xrun doc; xrun doc --list"
+    after_help = concat!(
+        "Remote commands (choose a device):\n",
+        "  <DEVICE> [OPTIONS] -- <PROGRAM> [ARGS]...  Run a reliable task\n",
+        "  <DEVICE> start [OPTIONS] -- <PROGRAM>...  Start a background task\n",
+        "  <DEVICE> info                            Query device information\n",
+        "  <DEVICE> jobs|wait|logs|kill              Manage your tasks on that device\n",
+        "  <DEVICE> push|pull|screenshot             Transfer a file or capture the display\n",
+        "  <DEVICE> forward [LOCAL:]REMOTE          Forward a TCP port\n",
+        "\n",
+        "Examples:\n",
+        "  xrun linux1 -C /home/user/demo -- cargo test\n",
+        "  xrun linux1 push ./config.json /home/user/demo/config.json\n",
+        "  xrun allow-from mac1                    Run on the device mac1 will control\n",
+        "\n",
+        "Command help: xrun help push; xrun linux1 push --help\n",
+        "Offline manual: xrun doc; xrun doc --list"
+    )
 )]
 pub(super) struct LocalCli {
     /// Print structured results for supported operations
@@ -24,7 +40,11 @@ pub(super) struct LocalCli {
 pub(super) enum Local {
     /// Create a network; this device becomes its manager
     #[command(
-        after_help = "Example: xrun up --relay '<complete relay address>' --name mac1\nThe returned member invitation is used by xrun join.\nFull documentation: xrun doc quickstart"
+        after_help = concat!(
+        "Example: xrun up --relay '<complete relay address>' --name mac1\n",
+        "The returned member invitation is used by xrun join.\n",
+        "Full documentation: xrun doc quickstart"
+    )
     )]
     Up {
         /// Complete HTTPS relay address or xrun-relay:// deployment link
@@ -47,7 +67,11 @@ pub(super) enum Local {
     },
     /// Join a network using a one-use invitation
     #[command(
-        after_help = "Example: xrun join '<complete xrun:// invitation>' --name linux1\nThe manager must be online. Allow a caller on this device with xrun allow-from <SOURCE>.\nFull documentation: xrun doc quickstart"
+        after_help = concat!(
+        "Example: xrun join '<complete xrun:// invitation>' --name linux1\n",
+        "The manager must be online. Allow a caller on this device with xrun allow-from <SOURCE>.\n",
+        "Full documentation: xrun doc quickstart"
+    )
     )]
     Join {
         /// Complete xrun:// member invitation
@@ -61,7 +85,11 @@ pub(super) enum Local {
     },
     /// Create a ten-minute invitation (registration only by default)
     #[command(
-        after_help = "Examples: xrun invite; xrun invite --allow\nOnly the manager can invite. --allow grants mutual access between the manager and the joining device.\nFull documentation: xrun doc access"
+        after_help = concat!(
+        "Examples: xrun invite; xrun invite --allow\n",
+        "Only the manager can invite. --allow grants mutual access between the manager and the joining device.\n",
+        "Full documentation: xrun doc access"
+    )
     )]
     Invite {
         /// Grant mutual access between the manager and joining device
@@ -70,19 +98,31 @@ pub(super) enum Local {
     },
     /// Allow a source device to control this machine
     #[command(
-        after_help = "Example: xrun allow-from mac1\nRun this on the device mac1 will control. --all trusts current and future members; individual denials take precedence.\nFull documentation: xrun doc access"
+        after_help = concat!(
+        "Example: xrun allow-from mac1\n",
+        "Run this on the device mac1 will control. --all trusts current and future members; individual denials take precedence.\n",
+        "Full documentation: xrun doc access"
+    )
     )]
     AllowFrom(PermissionArgs),
     /// Deny a source device access to this machine
     #[command(
-        after_help = "Example: xrun deny-from mac1\n--all disables all-member trust while retaining individual permissions.\nFull documentation: xrun doc access"
+        after_help = concat!(
+        "Example: xrun deny-from mac1\n",
+        "--all disables all-member trust while retaining individual permissions.\n",
+        "Full documentation: xrun doc access"
+    )
     )]
     DenyFrom(PermissionArgs),
     /// Revoke a device identity (manager only)
     Revoke { device: String },
     /// Show local state and relay-reported device connections
     #[command(
-        after_help = "Example: xrun status --json\nFor live details and reachability, use xrun <DEVICE> info. Offline timestamps are not retained.\nFull documentation: xrun doc errors"
+        after_help = concat!(
+        "Example: xrun status --json\n",
+        "For live details and reachability, use xrun <DEVICE> info. Offline timestamps are not retained.\n",
+        "Full documentation: xrun doc errors"
+    )
     )]
     Status,
     /// Show this CLI's submissions from the last 24 hours
@@ -173,7 +213,14 @@ pub(super) struct PermissionArgs {
     bin_name = "xrun",
     version,
     about = "Operate an authorized remote device",
-    after_help = "Run a program: xrun <DEVICE> [OPTIONS] -- <PROGRAM> [ARGS]...\nExamples:\n  xrun linux1 -C /home/user/demo -- cargo test\n  xrun linux1 start -C /home/user/demo -- ./server\nExecution options: xrun help run\nOffline manual: xrun doc execute"
+    after_help = concat!(
+        "Run a program: xrun <DEVICE> [OPTIONS] -- <PROGRAM> [ARGS]...\n",
+        "Examples:\n",
+        "  xrun linux1 -C /home/user/demo -- cargo test\n",
+        "  xrun linux1 start -C /home/user/demo -- ./server\n",
+        "Execution options: xrun help run\n",
+        "Offline manual: xrun doc execute"
+    )
 )]
 pub(super) struct DeviceCli {
     #[arg(value_parser=device_selector)]
@@ -190,12 +237,23 @@ pub(super) enum Remote {
         hide = true,
         about = "Run a reliable task on the target device",
         override_usage = "xrun <DEVICE> [OPTIONS] -- <PROGRAM> [ARGS]...\n       xrun <DEVICE> [OPTIONS] --script <SHELL> < script",
-        after_help = "Examples:\n  xrun linux1 -C /home/user/demo -- cargo test\n  xrun win1 -C 'D:\\demo' -- cargo build\n  xrun linux1 --script bash < ./build.sh\nAccepted tasks survive connection loss. Exit 75 means the result is unconfirmed; query the original task before retrying.\nFull documentation: xrun doc execute; xrun doc errors"
+        after_help = concat!(
+        "Examples:\n",
+        "  xrun linux1 -C /home/user/demo -- cargo test\n",
+        "  xrun win1 -C 'D:\\demo' -- cargo build\n",
+        "  xrun linux1 --script bash < ./build.sh\n",
+        "Accepted tasks survive connection loss. Exit 75 means the result is unconfirmed; query the original task before retrying.\n",
+        "Full documentation: xrun doc execute; xrun doc errors"
+    )
     )]
     Run(Execute),
     /// Start a background job and return its reference
     #[command(
-        after_help = "Example: xrun linux1 start -C /home/user/demo -- ./server\nUse the returned job reference with jobs, wait, logs or kill.\nFull documentation: xrun doc jobs"
+        after_help = concat!(
+        "Example: xrun linux1 start -C /home/user/demo -- ./server\n",
+        "Use the returned job reference with jobs, wait, logs or kill.\n",
+        "Full documentation: xrun doc jobs"
+    )
     )]
     Start(Execute),
     /// Query live device details (unavailable details are empty when offline)
@@ -203,7 +261,14 @@ pub(super) enum Remote {
     Info,
     /// List jobs, or show one job's details
     #[command(
-        after_help = "Examples:\n  xrun linux1 jobs --running\n  xrun linux1 jobs ABC123 --json\n  xrun linux1 jobs --request-id '<request_id>'\nOnly tasks submitted by this device identity are visible.\nFull documentation: xrun doc jobs"
+        after_help = concat!(
+        "Examples:\n",
+        "  xrun linux1 jobs --running\n",
+        "  xrun linux1 jobs ABC123 --json\n",
+        "  xrun linux1 jobs --request-id '<request_id>'\n",
+        "Only tasks submitted by this device identity are visible.\n",
+        "Full documentation: xrun doc jobs"
+    )
     )]
     Jobs {
         /// Job ID or the returned DEVICE/ID reference
@@ -223,7 +288,11 @@ pub(super) enum Remote {
     },
     /// Wait for a job result and print its last output lines
     #[command(
-        after_help = "Example: xrun linux1 wait ABC123 --timeout 60\nExit 75 means the result is unconfirmed. A wait timeout does not cancel the job.\nFull documentation: xrun doc jobs"
+        after_help = concat!(
+        "Example: xrun linux1 wait ABC123 --timeout 60\n",
+        "Exit 75 means the result is unconfirmed. A wait timeout does not cancel the job.\n",
+        "Full documentation: xrun doc jobs"
+    )
     )]
     Wait {
         /// Job ID or the returned DEVICE/ID reference
@@ -254,7 +323,11 @@ pub(super) enum Remote {
     },
     /// Cancel a job and wait for confirmation
     #[command(
-        after_help = "Example: xrun linux1 kill ABC123\nExit 75 means cancellation is unconfirmed; query the original job.\nFull documentation: xrun doc jobs"
+        after_help = concat!(
+        "Example: xrun linux1 kill ABC123\n",
+        "Exit 75 means cancellation is unconfirmed; query the original job.\n",
+        "Full documentation: xrun doc jobs"
+    )
     )]
     Kill {
         /// Job ID or the returned DEVICE/ID reference
@@ -262,7 +335,13 @@ pub(super) enum Remote {
     },
     /// Upload one file (LOCAL REMOTE); use - for local stdin
     #[command(
-        after_help = "Examples:\n  xrun linux1 push ./config.json /home/user/demo/config.json\n  xrun linux1 push ./result.txt /home/user/demo/output/result.txt --mkdir\nFiles are limited to 64 MiB.\nFull documentation: xrun doc files"
+        after_help = concat!(
+        "Examples:\n",
+        "  xrun linux1 push ./config.json /home/user/demo/config.json\n",
+        "  xrun linux1 push ./result.txt /home/user/demo/output/result.txt --mkdir\n",
+        "Files are limited to 64 MiB.\n",
+        "Full documentation: xrun doc files"
+    )
     )]
     Push {
         /// Local source path, or - for stdin
@@ -284,7 +363,13 @@ pub(super) enum Remote {
     },
     /// Download one file (REMOTE LOCAL); use - for local stdout
     #[command(
-        after_help = "Examples:\n  xrun linux1 pull /home/user/demo/config.json ./config.json --json\n  xrun linux1 pull /home/user/demo/config.json -\nFiles are limited to 64 MiB. Pulling to stdout cannot use --json.\nFull documentation: xrun doc files"
+        after_help = concat!(
+        "Examples:\n",
+        "  xrun linux1 pull /home/user/demo/config.json ./config.json --json\n",
+        "  xrun linux1 pull /home/user/demo/config.json -\n",
+        "Files are limited to 64 MiB. Pulling to stdout cannot use --json.\n",
+        "Full documentation: xrun doc files"
+    )
     )]
     Pull {
         /// Source path on the target device
@@ -297,7 +382,11 @@ pub(super) enum Remote {
     },
     /// Capture the main display as PNG
     #[command(
-        after_help = "Example: xrun win1 screenshot ./screen.png --json\nRequires a usable desktop: macOS screen-recording permission, Windows interactive session, or Linux X11.\nFull documentation: xrun doc files"
+        after_help = concat!(
+        "Example: xrun win1 screenshot ./screen.png --json\n",
+        "Requires a usable desktop: macOS screen-recording permission, Windows interactive session, or Linux X11.\n",
+        "Full documentation: xrun doc files"
+    )
     )]
     Screenshot {
         /// Local PNG destination, or omit for a unique temporary file
@@ -305,7 +394,13 @@ pub(super) enum Remote {
     },
     /// Forward a local loopback port to a device's loopback port
     #[command(
-        after_help = "Examples:\n  xrun linux1 forward 8080:3000\n  xrun linux1 forward 0:3000 --json\nListens on local loopback; keep this command running. Ctrl+C closes the listener and its connections.\nFull documentation: xrun doc forward"
+        after_help = concat!(
+        "Examples:\n",
+        "  xrun linux1 forward 8080:3000\n",
+        "  xrun linux1 forward 0:3000 --json\n",
+        "Listens on local loopback; keep this command running. Ctrl+C closes the listener and its connections.\n",
+        "Full documentation: xrun doc forward"
+    )
     )]
     Forward {
         /// Remote loopback port; local defaults to the same port (0 selects one)

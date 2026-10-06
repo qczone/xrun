@@ -34,6 +34,20 @@ fn save_download(
     Ok(path)
 }
 
+fn interrupted_upload(sent: &std::sync::atomic::AtomicBool, json: bool) -> i32 {
+    if sent.load(std::sync::atomic::Ordering::SeqCst) {
+        diagnostic(
+            json,
+            &anyhow::anyhow!(
+                ErrorCode::Unconfirmed
+                    .error("upload interrupted; pull the destination before retrying")
+            ),
+        );
+        75
+    } else {
+        130
+    }
+}
 pub(super) async fn run(id: &Identity, target: &str, command: Remote, json: bool) -> Result<i32> {
     match command {
         Remote::Push {
@@ -77,7 +91,7 @@ pub(super) async fn run(id: &Identity, target: &str, command: Remote, json: bool
             };
             let result = tokio::select! {
                 r=operation=>r,
-                _=tokio::signal::ctrl_c()=>{return Ok(if sent.load(std::sync::atomic::Ordering::SeqCst){diagnostic(json,&anyhow::anyhow!(ErrorCode::Unconfirmed.error("upload interrupted; pull the destination before retrying")));75}else{130});},
+                _=tokio::signal::ctrl_c()=>return Ok(interrupted_upload(&sent, json)),
                 _=termination()=>{return Ok(if sent.load(std::sync::atomic::Ordering::SeqCst){75}else{125});},
             };
             match result {

@@ -196,6 +196,14 @@ async fn handle(
         control.request_stop(generation)?;
         return Ok(());
     }
+    if let LocalRequest::ReloadAccess { token } = &opening {
+        if token != expected_token {
+            bail!(ErrorCode::Unauthenticated.error("invalid local endpoint token"));
+        }
+        control.reload_access().await?;
+        net::send(local, &LocalResponse::AccessReloaded).await?;
+        return Ok(());
+    }
     let LocalRequest::Open {
         token,
         version,

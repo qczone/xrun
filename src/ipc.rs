@@ -37,6 +37,9 @@ pub(crate) enum LocalRequest {
         token: String,
         generation: String,
     },
+    ReloadAccess {
+        token: String,
+    },
     Release,
 }
 #[derive(Serialize, Deserialize)]
@@ -44,6 +47,7 @@ pub(crate) enum LocalRequest {
 pub(crate) enum LocalResponse {
     Released,
     Stopped,
+    AccessReloaded,
 }
 
 pub(crate) fn identity_binding(id: &Identity) -> String {
@@ -276,4 +280,28 @@ pub(crate) async fn stop(dir: &Path, generation: &str) -> Result<()> {
     })
     .await
     .context(ErrorCode::DaemonStopTimeout.error("local daemon did not acknowledge shutdown"))?
+}
+
+pub(crate) async fn refresh_access(dir: &Path) -> Result<()> {
+    tokio::time::timeout(CONNECT_TIMEOUT, async {
+        let endpoint: Endpoint =
+            serde_json::from_slice(&std::fs::read(dir.join("daemon-ipc.json"))?)?;
+        let mut ws = framed(open(&endpoint.address).await?, Role::Client).await;
+        net::send(
+            &mut ws,
+            &LocalRequest::ReloadAccess {
+                token: endpoint.token,
+            },
+        )
+        .await?;
+        let value: serde_json::Value = net::receive(&mut ws).await?;
+        if let Ok(Data::Error { code, message }) = serde_json::from_value(value.clone()) {
+            bail!(crate::error::CodedError::from_wire(code, message));
+        }
+        match serde_json::from_value(value)? {
+            LocalResponse::AccessReloaded => Ok(()),
+            _ => bail!(ErrorCode::InvalidMessage.error("expected authorization acknowledgement")),
+        }
+    })
+    .await?
 }

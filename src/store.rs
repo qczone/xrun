@@ -6,6 +6,12 @@ use rusqlite::{Connection, OptionalExtension, params};
 use serde::{Deserialize, Serialize};
 use std::{path::Path, sync::Mutex};
 
+const MAX_JOB_LOG_BYTES: i64 = 64 * 1024 * 1024;
+const MAX_TOTAL_LOG_BYTES: i64 = 1024 * 1024 * 1024;
+const FINISHED_LOG_RETENTION_MS: i64 = 7 * 86_400_000;
+const AUDIT_RETENTION_MS: i64 = 7 * 86_400_000;
+const SUBMISSION_RETENTION_MS: i64 = 7 * 86_400_000;
+
 fn open(path: &Path, create: bool) -> Result<Connection> {
     if !create && !path.exists() {
         bail!(ErrorCode::DbMissing.error(format!(
@@ -43,7 +49,17 @@ pub struct TaskStore {
 impl TaskStore {
     pub fn open(path: &Path, create: bool) -> Result<Self> {
         let db = open(path, create)?;
-        db.execute_batch("CREATE TABLE IF NOT EXISTS meta(key TEXT PRIMARY KEY,value TEXT NOT NULL); CREATE TABLE IF NOT EXISTS jobs(id TEXT PRIMARY KEY,source TEXT NOT NULL,request_id TEXT NOT NULL,data TEXT NOT NULL,UNIQUE(source,request_id)); CREATE TABLE IF NOT EXISTS logs(job TEXT NOT NULL,seq INTEGER NOT NULL,stream TEXT NOT NULL,bytes BLOB NOT NULL,PRIMARY KEY(job,seq)); CREATE TABLE IF NOT EXISTS log_sizes(job TEXT PRIMARY KEY,bytes INTEGER NOT NULL); INSERT OR IGNORE INTO log_sizes SELECT job,SUM(length(bytes)) FROM logs GROUP BY job; INSERT OR IGNORE INTO meta VALUES('log_bytes',(SELECT COALESCE(SUM(bytes),0) FROM log_sizes)); CREATE TABLE IF NOT EXISTS audit(time INTEGER NOT NULL,data TEXT NOT NULL);")?;
+        db.execute_batch("
+            CREATE TABLE IF NOT EXISTS meta(key TEXT PRIMARY KEY,value TEXT NOT NULL);
+            CREATE TABLE IF NOT EXISTS jobs(id TEXT PRIMARY KEY,source TEXT NOT NULL,request_id TEXT NOT NULL,data TEXT NOT NULL,UNIQUE(source,request_id));
+            CREATE TABLE IF NOT EXISTS logs(job TEXT NOT NULL,seq INTEGER NOT NULL,stream TEXT NOT NULL,bytes BLOB NOT NULL,PRIMARY KEY(job,seq));
+            CREATE TABLE IF NOT EXISTS log_sizes(job TEXT PRIMARY KEY,bytes INTEGER NOT NULL);
+            INSERT OR IGNORE INTO log_sizes SELECT job,SUM(length(bytes))
+            FROM logs GROUP BY job;
+            INSERT OR IGNORE INTO meta VALUES('log_bytes',(SELECT COALESCE(SUM(bytes),0)
+            FROM log_sizes));
+            CREATE TABLE IF NOT EXISTS audit(time INTEGER NOT NULL,data TEXT NOT NULL);
+        ")?;
         db.execute_batch("CREATE INDEX IF NOT EXISTS jobs_active ON jobs(source) WHERE json_extract(data,'$.state') IN ('starting','running'); CREATE INDEX IF NOT EXISTS jobs_source ON jobs(source);")?;
         let db_id: Option<String> = db
             .query_row("SELECT value FROM meta WHERE key='db_id'", [], |r| r.get(0))
@@ -187,7 +203,7 @@ impl TaskStore {
             [],
             |r| r.get(0),
         )?;
-        if own + bytes.len() as i64 > MAX_FILE as i64 {
+        if own + bytes.len() as i64 > MAX_JOB_LOG_BYTES {
             let data: String =
                 tx.query_row("SELECT data FROM jobs WHERE id=?1", [job], |r| r.get(0))?;
             let mut value: Job = decode(data)?;
@@ -203,9 +219,16 @@ impl TaskStore {
             }
             return Ok(None);
         }
-        if total + bytes.len() as i64 > 1024 * 1024 * 1024 {
+        if total + bytes.len() as i64 > MAX_TOTAL_LOG_BYTES {
             let candidates: Vec<(String, String, i64)> = {
-                let mut s=tx.prepare("SELECT jobs.id,jobs.data,log_sizes.bytes FROM jobs JOIN log_sizes ON jobs.id=log_sizes.job WHERE log_sizes.bytes>0 ORDER BY json_extract(jobs.data,'$.updated_at_ms')")?;
+                let mut s = tx.prepare(
+                    "
+            SELECT jobs.id,jobs.data,log_sizes.bytes
+            FROM jobs JOIN log_sizes ON jobs.id=log_sizes.job
+            WHERE log_sizes.bytes>0
+            ORDER BY json_extract(jobs.data,'$.updated_at_ms')
+        ",
+                )?;
                 s.query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?
                     .collect::<rusqlite::Result<_>>()?
             };
@@ -221,14 +244,14 @@ impl TaskStore {
                         params![id, serde_json::to_string(&old)?],
                     )?;
                     total -= size;
-                    if total + bytes.len() as i64 <= 1024 * 1024 * 1024 {
+                    if total + bytes.len() as i64 <= MAX_TOTAL_LOG_BYTES {
                         break;
                     }
                 }
             }
         }
         tx.execute("UPDATE meta SET value=?1 WHERE key='log_bytes'", [total])?;
-        if total + bytes.len() as i64 > 1024 * 1024 * 1024 {
+        if total + bytes.len() as i64 > MAX_TOTAL_LOG_BYTES {
             let data: String =
                 tx.query_row("SELECT data FROM jobs WHERE id=?1", [job], |r| r.get(0))?;
             let mut value: Job = decode(data)?;
@@ -268,7 +291,7 @@ impl TaskStore {
         let tx = db.transaction()?;
         tx.execute(
             "DELETE FROM audit WHERE time<?1",
-            [now_ms() - 7 * 86_400_000],
+            [now_ms() - AUDIT_RETENTION_MS],
         )?;
         let values: Vec<(String, String)> = {
             let mut s = tx.prepare("SELECT jobs.id,jobs.data FROM jobs JOIN log_sizes ON jobs.id=log_sizes.job WHERE log_sizes.bytes>0")?;
@@ -277,7 +300,7 @@ impl TaskStore {
         };
         for (id, value) in values {
             let mut job: Job = decode(value)?;
-            if job.state.terminal() && job.updated_at_ms < now_ms() - 7 * 86_400_000 {
+            if job.state.terminal() && job.updated_at_ms < now_ms() - FINISHED_LOG_RETENTION_MS {
                 tx.execute("DELETE FROM logs WHERE job=?1", [&id])?;
                 tx.execute("DELETE FROM log_sizes WHERE job=?1", [&id])?;
                 job.output_complete = false;
@@ -325,7 +348,7 @@ impl SubmissionStore {
         db.execute_batch("CREATE INDEX IF NOT EXISTS submission_time ON submissions(time)")?;
         db.execute(
             "DELETE FROM submissions WHERE time<?1",
-            [now_ms() - 7 * 86_400_000],
+            [now_ms() - SUBMISSION_RETENTION_MS],
         )?;
         Ok(Self(Mutex::new(db)))
     }

@@ -48,52 +48,97 @@ async fn control_once(rt: Arc<Runtime>) -> Result<()> {
         bail!(ErrorCode::InvalidMessage.error("expected control acknowledgement"))
     };
     rt.control.connected(true)?;
-    let mut ping = tokio::time::interval(Duration::from_secs(15));
+    let mut ping = tokio::time::interval(HEARTBEAT_INTERVAL);
+    let mut prune = tokio::time::interval(LOG_PRUNE_INTERVAL);
+    prune.tick().await; // Startup already pruned the store.
+    let mut changes = rt.access.subscribe();
     let mut last = tokio::time::Instant::now();
-    let mut membership = tokio::time::interval(Duration::from_secs(1));
     loop {
         tokio::select! {
-            _=membership.tick()=>{
-                if !network::current(&current)?.roster.relay_addresses.contains(&address) {
-                    bail!(ErrorCode::RelayChanged.error("reconnect using the signed relay addresses"))
-                }
-            },
-            _=ping.tick()=>{
-                if last.elapsed()>Duration::from_secs(45){bail!(ErrorCode::ControlTimeout.error("relay stopped responding"))}
-                ws.send(Message::Ping(vec![].into())).await?;
-                rt.store.prune()?;
-            },
-            message=ws.next()=>{
-                match message.context(ErrorCode::ConnectionClosed.error("control disconnected"))?? {
-                    Message::Pong(_)=>last=tokio::time::Instant::now(),
-                    Message::Ping(b)=>{last=tokio::time::Instant::now();ws.send(Message::Pong(b)).await?},
-                    Message::Text(text)=>{
-                        last=tokio::time::Instant::now();
-                        match serde_json::from_str::<RelayMessage>(&text)? {
-                            RelayMessage::Incoming{session_id,..}=>{
-                                let Ok(permit)=rt.sessions.clone().try_acquire_owned() else {
-                                    net::send(&mut ws,&RelayMessage::Reject{session_id,
-                                        error:Box::new(Data::error(&anyhow::anyhow!(ErrorCode::DeviceBusy.error("encrypted session limit reached"))))}).await?;
-                                    continue;
-                                };
-                                let rt=rt.clone();let address=address.clone();let generation=generation.clone();
-                                tokio::spawn(async move{
-                                    let _permit=permit;
-                                    if let Err(error)=data_session(rt,&address,&generation,&session_id).await {
-                                        tracing::debug!(%error,"encrypted data session ended");
-                                    }
-                                });
-                            },
-                            RelayMessage::Error{code,message}=>bail!(crate::error::CodedError::from_wire(code, message)),
-                            _=>bail!(ErrorCode::InvalidMessage.error("unexpected control message")),
-                        }
-                    },
-                    _=>bail!(ErrorCode::ConnectionClosed.error("control disconnected"))
-                }
-            }
+            _ = changes.changed() => check_control_access(&rt, &address)?,
+            _ = ping.tick() => heartbeat(&mut ws, last).await?,
+            _ = prune.tick() => prune_logs(rt.clone()).await?,
+            message = ws.next() => handle_control_message(&rt, &mut ws, message, &address, &generation, &mut last).await?,
         }
     }
 }
+const LOG_PRUNE_INTERVAL: Duration = Duration::from_secs(10 * 60);
+fn check_control_access(rt: &Runtime, address: &str) -> Result<()> {
+    let access = rt.authorization()?;
+    if !access
+        .roster
+        .roster
+        .relay_addresses
+        .iter()
+        .any(|value| value == address)
+    {
+        bail!(ErrorCode::RelayChanged.error("reconnect using the signed relay addresses"));
+    }
+    Ok(())
+}
+async fn heartbeat(ws: &mut net::Ws, last: tokio::time::Instant) -> Result<()> {
+    if last.elapsed() > HEARTBEAT_TIMEOUT {
+        bail!(ErrorCode::ControlTimeout.error("relay stopped responding"));
+    }
+    ws.send(Message::Ping(vec![].into())).await?;
+    Ok(())
+}
+async fn prune_logs(rt: Arc<Runtime>) -> Result<()> {
+    tokio::task::spawn_blocking(move || rt.store.prune()).await?
+}
+async fn handle_control_message(
+    rt: &Arc<Runtime>,
+    ws: &mut net::Ws,
+    message: Option<std::result::Result<Message, tokio_tungstenite::tungstenite::Error>>,
+    address: &str,
+    generation: &str,
+    last: &mut tokio::time::Instant,
+) -> Result<()> {
+    match message.context(ErrorCode::ConnectionClosed.error("control disconnected"))?? {
+        Message::Pong(_) => *last = tokio::time::Instant::now(),
+        Message::Ping(bytes) => {
+            *last = tokio::time::Instant::now();
+            ws.send(Message::Pong(bytes)).await?;
+        }
+        Message::Text(text) => {
+            *last = tokio::time::Instant::now();
+            match serde_json::from_str::<RelayMessage>(&text)? {
+                RelayMessage::Incoming { session_id } => {
+                    let Ok(permit) = rt.sessions.clone().try_acquire_owned() else {
+                        let error = ErrorCode::DeviceBusy.error("encrypted session limit reached");
+                        net::send(
+                            ws,
+                            &RelayMessage::Reject {
+                                session_id,
+                                error: Box::new(Data::error(&error.into())),
+                            },
+                        )
+                        .await?;
+                        return Ok(());
+                    };
+                    let runtime = rt.clone();
+                    let address = address.to_owned();
+                    let generation = generation.to_owned();
+                    tokio::spawn(async move {
+                        let _permit = permit;
+                        if let Err(error) =
+                            data_session(runtime, &address, &generation, &session_id).await
+                        {
+                            tracing::debug!(%error, "encrypted data session ended");
+                        }
+                    });
+                }
+                RelayMessage::Error { code, message } => {
+                    bail!(crate::error::CodedError::from_wire(code, message))
+                }
+                _ => bail!(ErrorCode::InvalidMessage.error("unexpected control message")),
+            }
+        }
+        _ => bail!(ErrorCode::ConnectionClosed.error("control disconnected")),
+    }
+    Ok(())
+}
+
 fn sync_cursor() -> usize {
     usize::from(uuid::Uuid::new_v4().as_bytes()[0])
 }

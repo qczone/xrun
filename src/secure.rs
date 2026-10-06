@@ -16,13 +16,15 @@ use std::{
         atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering},
     },
     task::{Context as TaskContext, Poll},
-    time::Duration,
 };
 use tokio::{
     io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, DuplexStream, ReadBuf},
     task::JoinHandle,
 };
-use tokio_tungstenite::tungstenite::{Message, protocol::WebSocketConfig};
+use tokio_tungstenite::tungstenite::{
+    Message,
+    protocol::{Role, WebSocketConfig},
+};
 
 // Every direction has at most the duplex capacity plus one 64 KiB frame. The
 // task belongs to the stream; closing/cancelling the inner TLS session closes
@@ -114,7 +116,7 @@ fn tunnel(outer: Ws, flow_control: bool) -> Tunnel {
                 let permit = if flow_control {
                     Some(
                         tokio::time::timeout(
-                            Duration::from_secs(300),
+                            RELAY_IDLE_TIMEOUT,
                             credit.acquire_many(FILE_CHUNK as u32),
                         )
                         .await??,
@@ -131,7 +133,7 @@ fn tunnel(outer: Ws, flow_control: bool) -> Tunnel {
                     credit.add_permits(FILE_CHUNK - n);
                     outstanding.fetch_add(n, Ordering::AcqRel);
                 }
-                tokio::time::timeout(Duration::from_secs(300), async {
+                tokio::time::timeout(RELAY_IDLE_TIMEOUT, async {
                     socket_tx
                         .lock()
                         .await
@@ -148,7 +150,7 @@ fn tunnel(outer: Ws, flow_control: bool) -> Tunnel {
             while let Some(message) = socket_rx.next().await {
                 match message? {
                     Message::Binary(bytes) if bytes.len() <= FILE_CHUNK => {
-                        tokio::time::timeout(Duration::from_secs(300), output.write_all(&bytes))
+                        tokio::time::timeout(RELAY_IDLE_TIMEOUT, output.write_all(&bytes))
                             .await??;
                         // A small unacknowledged tail is bounded by the threshold.
                         // Keep it across requests; the window is much larger, so
@@ -159,7 +161,7 @@ fn tunnel(outer: Ws, flow_control: bool) -> Tunnel {
                         if flow_control && unacked >= 256 * 1024 {
                             let ack = serde_json::to_string(&FlowControl::Ack { bytes: unacked })?;
                             unacked = 0;
-                            tokio::time::timeout(Duration::from_secs(300), async {
+                            tokio::time::timeout(RELAY_IDLE_TIMEOUT, async {
                                 socket_tx.lock().await.send(Message::Text(ack.into())).await
                             })
                             .await??;
@@ -217,32 +219,50 @@ pub async fn client_with_flow(
     target: &str,
     flow_control: bool,
 ) -> Result<(Ws, Vec<u8>)> {
-    let tls = tokio_rustls::TlsConnector::from(crypto::client_tls_config(identity)?)
+    let (tls, certificate) = connect_tls(
+        outer,
+        crypto::client_tls_config(identity)?,
+        target,
+        flow_control,
+    )
+    .await?;
+    Ok((encrypted_websocket(tls, Role::Client).await, certificate))
+}
+
+async fn connect_tls(
+    outer: Ws,
+    config: Arc<rustls::ClientConfig>,
+    target: &str,
+    flow_control: bool,
+) -> Result<(tokio_rustls::client::TlsStream<Tunnel>, Vec<u8>)> {
+    let tls = tokio_rustls::TlsConnector::from(config)
         .connect(
             rustls::pki_types::ServerName::try_from(membership::device_name(target)?)?,
             tunnel(outer, flow_control),
         )
         .await?;
-    let der = tls
-        .get_ref()
-        .1
-        .peer_certificates()
-        .and_then(|c| c.first())
-        .context(ErrorCode::Unauthenticated.error("target omitted its certificate"))?
-        .to_vec();
+    let der = peer_certificate(tls.get_ref().1)
+        .context(ErrorCode::Unauthenticated.error("target omitted its certificate"))?;
     let (actual, _) = crypto::peer_identity(&der)?;
     if actual != target {
         bail!(ErrorCode::IdentityMismatch.error("relay connected an unexpected device"))
     }
-    // TLS already authenticates this private protocol; no HTTP endpoint or
-    // Upgrade negotiation is needed inside the encrypted relay tunnel.
-    let ws = tokio_tungstenite::WebSocketStream::from_raw_socket(
-        Box::new(tls) as Io,
-        tokio_tungstenite::tungstenite::protocol::Role::Client,
-        Some(ws_config()),
-    )
-    .await;
-    Ok((ws, der))
+    Ok((tls, der))
+}
+fn peer_certificate(connection: &rustls::CommonState) -> Option<Vec<u8>> {
+    connection
+        .peer_certificates()
+        .and_then(|certificates| certificates.first())
+        .map(|certificate| certificate.to_vec())
+}
+async fn encrypted_websocket(
+    io: impl AsyncRead + AsyncWrite + Unpin + Send + 'static,
+    role: Role,
+) -> Ws {
+    // Mutual or pinned TLS has already authenticated the endpoint. The inner
+    // protocol uses raw WebSocket framing without another HTTP handshake.
+    tokio_tungstenite::WebSocketStream::from_raw_socket(Box::new(io) as Io, role, Some(ws_config()))
+        .await
 }
 // Anonymous pairing validates the pinned network root AND expected manager ID
 // before any invitation token or CSR is sent through the encrypted channel.
@@ -256,34 +276,13 @@ pub async fn pairing_client_with_flow(
     flow_control: bool,
 ) -> Result<(Ws, String)> {
     let (config, ca) = crypto::pinned_client_config(pin);
-    let tls = tokio_rustls::TlsConnector::from(config)
-        .connect(
-            rustls::pki_types::ServerName::try_from(membership::device_name(manager)?)?,
-            tunnel(outer, flow_control),
-        )
-        .await?;
-    let der = tls
-        .get_ref()
-        .1
-        .peer_certificates()
-        .and_then(|c| c.first())
-        .context(ErrorCode::Unauthenticated.error("manager omitted its certificate"))?;
-    if crypto::peer_identity(der)?.0 != manager {
-        bail!(ErrorCode::IdentityMismatch.error("pairing peer is not the invited manager"))
-    }
+    let (tls, _) = connect_tls(outer, config, manager, flow_control).await?;
     let root = ca
         .lock()
         .unwrap()
         .clone()
         .context(ErrorCode::Unauthenticated.error("manager omitted the network root"))?;
-    // TLS already authenticates this private protocol; no HTTP endpoint or
-    // Upgrade negotiation is needed inside the encrypted relay tunnel.
-    let ws = tokio_tungstenite::WebSocketStream::from_raw_socket(
-        Box::new(tls) as Io,
-        tokio_tungstenite::tungstenite::protocol::Role::Client,
-        Some(ws_config()),
-    )
-    .await;
+    let ws = encrypted_websocket(tls, Role::Client).await;
     Ok((ws, root))
 }
 pub async fn server(outer: Ws, identity: &Identity) -> Result<(Ws, Option<Vec<u8>>)> {
@@ -297,18 +296,9 @@ pub async fn server_with_flow(
     let tls = tokio_rustls::TlsAcceptor::from(crypto::peer_server_config(identity)?)
         .accept(tunnel(outer, flow_control))
         .await?;
-    let peer = tls
-        .get_ref()
-        .1
-        .peer_certificates()
-        .and_then(|c| c.first())
-        .map(|c| c.to_vec());
-    let ws = tokio_tungstenite::WebSocketStream::from_raw_socket(
-        Box::new(tls) as Io,
-        tokio_tungstenite::tungstenite::protocol::Role::Server,
-        Some(ws_config()),
-    )
-    .await;
+    // Anonymous inner TLS is retained exclusively for the pairing handler.
+    let peer = peer_certificate(tls.get_ref().1);
+    let ws = encrypted_websocket(tls, Role::Server).await;
     Ok((ws, peer))
 }
 #[derive(Serialize, Deserialize)]
@@ -396,6 +386,7 @@ pub enum Purpose {
 #[cfg(test)]
 mod flow_tests {
     use super::*;
+    use std::time::Duration;
     use tokio_tungstenite::{WebSocketStream, tungstenite::protocol::Role};
 
     async fn wire() -> (Ws, Ws) {

@@ -1,4 +1,5 @@
 //! Daemon resources, startup, recovery and shutdown.
+mod access;
 mod control;
 mod execution;
 mod files;
@@ -86,6 +87,8 @@ struct Runtime {
     control: Arc<crate::control::Control>,
     id: Identity,
     members: RosterCache,
+    access: watch::Sender<access::Snapshot>,
+    access_scan: Mutex<()>,
     network_id: String,
     store: Arc<TaskStore>,
     running: Mutex<HashMap<String, u32>>,
@@ -141,11 +144,24 @@ impl Drop for FileAudit {
     }
 }
 impl Runtime {
+    fn storage_failure(&self) -> anyhow::Error {
+        anyhow::anyhow!(
+            ErrorCode::StorageError.error(
+                self.fatal
+                    .lock()
+                    .unwrap()
+                    .as_deref()
+                    .unwrap_or("daemon stopped")
+                    .to_string()
+            )
+        )
+    }
     fn config(&self) -> Result<DaemonConfig> {
-        DaemonConfig::load()
+        Ok(self.authorization()?.config.clone())
     }
     fn membership(&self, source: &str) -> Result<()> {
-        let roster = self.members.load(&self.network_id)?;
+        let access = self.authorization()?;
+        let roster = &access.roster;
         if roster.member(&self.id.device_id)?.revoked || roster.member(source)?.revoked {
             bail!(ErrorCode::DeviceRevoked.error("session member has been revoked"))
         }
@@ -233,10 +249,19 @@ pub async fn run() -> Result<()> {
         }
     }
     let (stop, _) = watch::channel(false);
+    let initial_access = Arc::new(access::Authorization {
+        config: DaemonConfig::load()?,
+        roster: members.load(&network_id)?,
+        identity: id.clone(),
+        files: None,
+    });
+    let (access, _) = watch::channel(Ok(initial_access));
     let rt = Arc::new(Runtime {
         control: control.clone(),
         id,
         members,
+        access,
+        access_scan: Mutex::new(()),
         network_id,
         store,
         running: Mutex::new(HashMap::new()),
@@ -255,13 +280,16 @@ pub async fn run() -> Result<()> {
     let sync = membership_sync();
     tokio::pin!(sync);
     let mut stop = rt.stop.subscribe();
+    let access_monitor = access::monitor(rt.clone(), dir);
+    tokio::pin!(access_monitor);
     let outcome = tokio::select! {
         result=&mut local=>result,
         result=&mut connector=>result,
         result=&mut sync=>result,
+        result=&mut access_monitor=>result,
         _=shutdown_signal()=>Ok(()),
         result=control.shutdown()=>result,
-        _=stop.changed()=>Err(anyhow::anyhow!(ErrorCode::StorageError.error(rt.fatal.lock().unwrap().as_deref().unwrap_or("daemon stopped").to_string()))),
+        _=stop.changed()=>Err(rt.storage_failure()),
     };
     rt.stopping.store(true, Ordering::SeqCst);
     let _ = control.connected(false);

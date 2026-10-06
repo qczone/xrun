@@ -6,11 +6,7 @@ export interface Env {
   RELAY_ROUTE: string;
   XRUN_VERSION: string;
 }
-const FRAME = 64 * 1024;
-const WINDOW = 64 * FRAME;
-// Cap unacknowledged data at 64 MiB across eight full-duplex sessions.
-const SESSIONS = 8;
-const IDLE = 300_000;
+import { FRAME, WINDOW, SESSIONS, IDLE } from "./limits";
 interface Attachment {
   id: string;
   role: "auth" | "verifying" | "control" | "pending" | "source" | "target" | "closed";

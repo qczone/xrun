@@ -148,6 +148,7 @@ pub async fn set_permission(value: &str, allow: bool) -> Result<Permission> {
         device.device_id
     };
     config::update_permission(&device_id, allow)?;
+    crate::control::refresh_access().await?;
     Ok(Permission {
         source_device_id: device_id,
         allowed: allow,

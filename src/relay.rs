@@ -19,12 +19,15 @@ use axum::{
 };
 use futures_util::{SinkExt, StreamExt};
 use serde::{Deserialize, Serialize};
-use std::{
-    collections::HashMap,
-    sync::Arc,
-    time::{Duration, Instant},
-};
+use std::{collections::HashMap, sync::Arc, time::Instant};
 use tokio::sync::{Mutex, mpsc, oneshot, watch};
+
+const MAX_CONTROL_CONNECTIONS: usize = 4096;
+const MAX_NETWORK_CONTROLS: usize = 256;
+const MAX_RELAY_SESSIONS: usize = 4096;
+const MAX_TARGET_SESSIONS: usize = 32;
+const MAX_SOURCE_SESSIONS: usize = 16;
+const MAX_ANONYMOUS_TARGET_SESSIONS: usize = 4;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -33,7 +36,7 @@ pub struct Proof {
     pub cert_pem: String,
     pub root_pem: String,
     pub signature: String,
-    /// Only the manager's control connection carries this root-key signature,
+    /// Only the manager'session control connection carries this root-key signature,
     /// so pairing without a member certificate reaches no other device.
     pub manager_signature: Option<String>,
 }
@@ -144,7 +147,7 @@ async fn send(ws: &mut WebSocket, message: &RelayMessage) -> Result<()> {
     if text.len() > MAX_MESSAGE {
         bail!(ErrorCode::MessageTooLarge.error("relay message limit exceeded"))
     }
-    tokio::time::timeout(Duration::from_secs(10), ws.send(Message::Text(text.into()))).await??;
+    tokio::time::timeout(CONNECT_TIMEOUT, ws.send(Message::Text(text.into()))).await??;
     Ok(())
 }
 async fn receive(ws: &mut WebSocket) -> Result<RelayMessage> {
@@ -212,7 +215,7 @@ async fn authenticate(
     )
     .await?;
     let RelayMessage::Authenticate { proof } =
-        tokio::time::timeout(Duration::from_secs(5), receive(ws)).await??
+        tokio::time::timeout(AUTH_TIMEOUT, receive(ws)).await??
     else {
         bail!(ErrorCode::Unauthenticated.error("expected a member proof"))
     };
@@ -292,7 +295,7 @@ async fn finish(ws: &mut WebSocket, result: Result<()>) {
     if let Err(error) = result {
         let _ = send(ws, &RelayMessage::error(&error)).await;
     }
-    let _ = tokio::time::timeout(Duration::from_secs(1), ws.close()).await;
+    let _ = tokio::time::timeout(CLOSE_TIMEOUT, ws.close()).await;
 }
 async fn control(
     app: &App,
@@ -300,7 +303,7 @@ async fn control(
     ws: &mut WebSocket,
     permit: &TransportPermit,
 ) -> Result<()> {
-    // Only the holder of a device key can take over that device's routing slot.
+    // Only the holder of a device key can take over that device'session routing slot.
     // Authorization still happens inside the end-to-end tunnel.
     let path = format!("/networks/{network}/control");
     let (id, manager) = member(ws, network, &path, permit).await?;
@@ -309,14 +312,19 @@ async fn control(
     let (tx, mut rx) = mpsc::channel(16);
     let (cancel, mut closed) = watch::channel(false);
     {
-        let mut c = app.connections.lock().await;
-        if !c.controls.contains_key(&key)
-            && (c.controls.len() >= 4096
-                || c.controls.keys().filter(|(n, _)| n == network).count() >= 256)
+        let mut connections = app.connections.lock().await;
+        if !connections.controls.contains_key(&key)
+            && (connections.controls.len() >= MAX_CONTROL_CONNECTIONS
+                || connections
+                    .controls
+                    .keys()
+                    .filter(|(n, _)| n == network)
+                    .count()
+                    >= MAX_NETWORK_CONTROLS)
         {
             bail!(ErrorCode::ConnectionLimit.error("too many control connections"))
         }
-        if let Some(old) = c.controls.insert(
+        if let Some(old) = connections.controls.insert(
             key.clone(),
             ControlConnection {
                 generation: generation.clone(),
@@ -327,51 +335,91 @@ async fn control(
         ) {
             let _ = old.cancel.send(true);
         }
-        for s in c.sessions.values() {
-            if s.network == network && s.target == id {
-                let _ = s.cancel.send(true);
+        for session in connections.sessions.values() {
+            if session.network == network && session.target == id {
+                let _ = session.cancel.send(true);
             }
         }
     }
     let result = async {
         send(ws, &RelayMessage::HelloAck { generation: generation.clone() }).await?;
-        let mut tick = tokio::time::interval(Duration::from_secs(15));
+        let mut tick = tokio::time::interval(HEARTBEAT_INTERVAL);
         let mut last = Instant::now();
         loop {
             tokio::select! {
                 _ = closed.changed() => return Ok(()),
-                _ = tick.tick() => {
-                    if last.elapsed() > Duration::from_secs(45) { bail!(ErrorCode::ControlTimeout.error("endpoint stopped responding")) }
-                    tokio::time::timeout(Duration::from_secs(10), ws.send(Message::Ping(vec![].into()))).await??;
-                },
+                _ = tick.tick() => control_heartbeat(ws, last).await?,
                 message = rx.recv() => send(ws, &message.context(ErrorCode::ConnectionClosed.error("control sender stopped"))?).await?,
-                message = ws.next() => match message.context(ErrorCode::ConnectionClosed.error("control socket closed"))?? {
-                    Message::Ping(bytes) => { last = Instant::now(); ws.send(Message::Pong(bytes)).await?; },
-                    Message::Pong(_) => last = Instant::now(),
-                    Message::Text(text) => {
-                        last = Instant::now();
-                        let RelayMessage::Reject { session_id, error } = serde_json::from_str(&text)? else { bail!(ErrorCode::InvalidMessage.error("unexpected control message")) };
-                        let mut c = app.connections.lock().await;
-                        if let Some(s) = c.sessions.get_mut(&session_id) && s.network == network && s.target == id && s.generation == generation && let Some(sender) = s.claim.take() { let _ = sender.send(Err(*error)); }
-                    },
-                    _ => bail!(ErrorCode::ConnectionClosed.error("control socket closed")),
-                }
+                message = ws.next() => control_message(app, ws, message, network, &id, &generation, &mut last).await?,
             }
         }
     }.await;
-    let mut c = app.connections.lock().await;
-    if c.controls
+    let mut connections = app.connections.lock().await;
+    if connections
+        .controls
         .get(&key)
         .is_some_and(|v| v.generation == generation)
     {
-        c.controls.remove(&key);
-        for s in c.sessions.values() {
-            if s.network == network && s.target == id {
-                let _ = s.cancel.send(true);
+        connections.controls.remove(&key);
+        for session in connections.sessions.values() {
+            if session.network == network && session.target == id {
+                let _ = session.cancel.send(true);
             }
         }
     }
     result
+}
+async fn control_heartbeat(ws: &mut WebSocket, last: Instant) -> Result<()> {
+    if last.elapsed() > HEARTBEAT_TIMEOUT {
+        bail!(ErrorCode::ControlTimeout.error("endpoint stopped responding"));
+    }
+    tokio::time::timeout(CONNECT_TIMEOUT, ws.send(Message::Ping(vec![].into()))).await??;
+    Ok(())
+}
+async fn control_message(
+    app: &App,
+    ws: &mut WebSocket,
+    message: Option<std::result::Result<Message, axum::Error>>,
+    network: &str,
+    device: &str,
+    generation: &str,
+    last: &mut Instant,
+) -> Result<()> {
+    match message.context(ErrorCode::ConnectionClosed.error("control socket closed"))?? {
+        Message::Ping(bytes) => {
+            *last = Instant::now();
+            ws.send(Message::Pong(bytes)).await?;
+        }
+        Message::Pong(_) => *last = Instant::now(),
+        Message::Text(text) => {
+            *last = Instant::now();
+            let RelayMessage::Reject { session_id, error } = serde_json::from_str(&text)? else {
+                bail!(ErrorCode::InvalidMessage.error("unexpected control message"));
+            };
+            let mut connections = app.connections.lock().await;
+            if let Some(session) = connections.sessions.get_mut(&session_id)
+                && session.network == network
+                && session.target == device
+                && session.generation == generation
+                && let Some(sender) = session.claim.take()
+            {
+                let _ = sender.send(Err(*error));
+            }
+        }
+        _ => bail!(ErrorCode::ConnectionClosed.error("control socket closed")),
+    }
+    Ok(())
+}
+async fn claimed_session(
+    receiver: oneshot::Receiver<std::result::Result<WebSocket, Data>>,
+) -> Result<WebSocket> {
+    match tokio::time::timeout(CONNECT_TIMEOUT, receiver).await?? {
+        Ok(socket) => Ok(socket),
+        Err(Data::Error { code, message }) => {
+            bail!(crate::error::CodedError::from_wire(code, message))
+        }
+        _ => bail!(ErrorCode::InvalidMessage.error("invalid session rejection")),
+    }
 }
 async fn source_route(
     State(app): State<Arc<App>>,
@@ -404,22 +452,28 @@ async fn source(
     let (tx, rx) = oneshot::channel();
     let (cancel, mut closed) = watch::channel(false);
     {
-        let mut c = app.connections.lock().await;
-        let to_target = |s: &&Session| s.network == network && s.target == target;
-        if c.sessions.len() >= 4096
-            || c.sessions.values().filter(to_target).count() >= 32
-            || c.sessions.values().filter(|s| s.source == source).count() >= 16
+        let mut connections = app.connections.lock().await;
+        let to_target = |session: &&Session| session.network == network && session.target == target;
+        if connections.sessions.len() >= MAX_RELAY_SESSIONS
+            || connections.sessions.values().filter(to_target).count() >= MAX_TARGET_SESSIONS
+            || connections
+                .sessions
+                .values()
+                .filter(|session| session.source == source)
+                .count()
+                >= MAX_SOURCE_SESSIONS
             || (anonymous
-                && c.sessions
+                && connections
+                    .sessions
                     .values()
                     .filter(to_target)
-                    .filter(|s| s.anonymous)
+                    .filter(|session| session.anonymous)
                     .count()
-                    >= 4)
+                    >= MAX_ANONYMOUS_TARGET_SESSIONS)
         {
             bail!(ErrorCode::SessionLimit.error("too many concurrent relay sessions"))
         }
-        let control = c
+        let control = connections
             .controls
             .get(&(network.into(), target.into()))
             .context(ErrorCode::DeviceOffline.error("target is offline"))?;
@@ -435,7 +489,7 @@ async fn source(
                 session_id: sid.clone(),
             })
             .context(ErrorCode::DeviceBusy.error("control queue is full"))?;
-        c.sessions.insert(
+        connections.sessions.insert(
             sid.clone(),
             Session {
                 network: network.into(),
@@ -450,13 +504,13 @@ async fn source(
     }
     let result = async {
         let mut target = tokio::select! {
-            value = tokio::time::timeout(Duration::from_secs(10), rx) => match value?? { Ok(ws) => ws, Err(Data::Error { code, message }) => bail!(crate::error::CodedError::from_wire(code, message)), _ => bail!(ErrorCode::InvalidMessage.error("invalid session rejection")) },
+            value = claimed_session(rx) => value?,
             _ = closed.changed() => bail!(ErrorCode::ConnectionClosed.error("session was cancelled")),
             _ = ws.next() => bail!(ErrorCode::ConnectionClosed.error("source disconnected before session establishment")),
         };
         send(ws, &RelayMessage::Connected { flow_control: false }).await?;
         let result = bridge(ws, &mut target, &mut closed).await;
-        let _ = tokio::time::timeout(Duration::from_secs(1), target.close()).await;
+        let _ = tokio::time::timeout(CLOSE_TIMEOUT, target.close()).await;
         result
     }.await;
     app.connections.lock().await.sessions.remove(&sid);
@@ -478,25 +532,26 @@ async fn attach_route(
                 // The generation and session ID reach only the authenticated
                 // control connection, so a matching attach needs no new proof.
                 let sender = {
-                    let mut c = app.connections.lock().await;
-                    let control = c
+                    let mut connections = app.connections.lock().await;
+                    let control = connections
                         .controls
                         .get(&(network.clone(), target.clone()))
                         .context(ErrorCode::InvalidSession.error("target control is missing"))?;
                     if control.generation != generation {
                         bail!(ErrorCode::InvalidSession.error("control binding mismatch"))
                     }
-                    let s = c.sessions.get_mut(&sid).context(
+                    let session = connections.sessions.get_mut(&sid).context(
                         ErrorCode::InvalidSession.error("session is missing or expired"),
                     )?;
-                    if s.network != network
-                        || s.target != target
-                        || s.generation != generation
-                        || *s.cancel.borrow()
+                    if session.network != network
+                        || session.target != target
+                        || session.generation != generation
+                        || *session.cancel.borrow()
                     {
                         bail!(ErrorCode::InvalidSession.error("session binding mismatch"))
                     }
-                    s.claim
+                    session
+                        .claim
                         .take()
                         .context(ErrorCode::InvalidSession.error("session was already claimed"))?
                 };
@@ -538,7 +593,7 @@ where
     W: futures_util::Sink<Message, Error = axum::Error> + Unpin,
 {
     loop {
-        let message = tokio::time::timeout(Duration::from_secs(300), reader.next())
+        let message = tokio::time::timeout(RELAY_IDLE_TIMEOUT, reader.next())
             .await?
             .context(ErrorCode::ConnectionClosed.error("ciphertext stream ended"))??;
         match &message {
@@ -549,7 +604,7 @@ where
                 bail!(ErrorCode::InvalidMessage.error("relay only accepts encrypted binary frames"))
             }
         }
-        tokio::time::timeout(Duration::from_secs(300), writer.send(message)).await??;
+        tokio::time::timeout(RELAY_IDLE_TIMEOUT, writer.send(message)).await??;
     }
 }
 pub async fn run(config: ServerConfig) -> Result<()> {
@@ -577,9 +632,9 @@ pub async fn run(config: ServerConfig) -> Result<()> {
 }
 pub fn valid_route(value: &str) -> bool {
     value.len() == 26
-        && value
-            .bytes()
-            .all(|c| c.is_ascii_lowercase() || matches!(c, b'2'..=b'7'))
+        && value.bytes().all(|connections| {
+            connections.is_ascii_lowercase() || matches!(connections, b'2'..=b'7')
+        })
 }
 fn route(config: &ServerConfig) -> Result<String> {
     std::fs::create_dir_all(&config.data_dir)?;

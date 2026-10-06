@@ -8,6 +8,13 @@ pub const FILE_CHUNK: usize = 64 * 1024;
 /// Maximum unacknowledged ciphertext per direction on relays without drain().
 pub const RELAY_WINDOW: usize = 64 * FILE_CHUNK;
 pub const LOG_CHUNK: usize = 32 * 1024;
+/// Relay heartbeats keep control bindings alive between requests.
+pub(crate) const HEARTBEAT_INTERVAL: std::time::Duration = std::time::Duration::from_secs(15);
+pub(crate) const HEARTBEAT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(45);
+pub(crate) const RELAY_IDLE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(300);
+pub(crate) const AUTH_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
+pub(crate) const CONNECT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
+pub(crate) const CLOSE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(1);
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Device {
     pub device_id: String,
@@ -276,4 +283,22 @@ pub fn valid_name(name: &str) -> bool {
         && name
             .bytes()
             .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == b'-')
+}
+
+#[cfg(test)]
+mod limit_tests {
+    use super::*;
+    #[test]
+    fn relay_limits_match_the_cross_implementation_contract() {
+        let contract: serde_json::Value =
+            serde_json::from_str(include_str!("../tests/fixtures/relay-limits.json")).unwrap();
+        assert_eq!(
+            FILE_CHUNK,
+            contract["frameBytes"].as_u64().unwrap() as usize
+        );
+        assert_eq!(
+            RELAY_WINDOW,
+            contract["windowBytes"].as_u64().unwrap() as usize
+        );
+    }
 }

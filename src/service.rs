@@ -57,7 +57,11 @@ pub async fn install_with_executable(kind: &str, exe: &Path) -> Result<()> {
     }
     let path = unit_path(kind)?;
     let text = format!(
-        "[Unit]\nDescription=xrun {kind}\nAfter=network-online.target\n\n[Service]\nExecStart={} {kind}\nRestart=on-failure\nRestartSec=2\nTimeoutStopSec=12\n\n[Install]\nWantedBy=default.target\n",
+        concat!(
+            "[Unit]\nDescription=xrun {kind}\nAfter=network-online.target\n\n",
+            "[Service]\nExecStart={} {kind}\nRestart=on-failure\nRestartSec=2\nTimeoutStopSec=12\n\n",
+            "[Install]\nWantedBy=default.target\n"
+        ),
         systemd_quote(&exe.to_string_lossy())
     );
     config::atomic_private_write(&path, text.as_bytes())?;
@@ -123,7 +127,13 @@ pub async fn install_with_executable(kind: &str, exe: &Path) -> Result<()> {
     let text = format!(
         r#"<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0"><dict><key>Label</key><string>com.xrun.daemon</string><key>ProgramArguments</key><array><string>{}</string><string>daemon</string></array><key>RunAtLoad</key><true/><key>KeepAlive</key><dict><key>SuccessfulExit</key><false/></dict><key>StandardOutPath</key><string>{log}</string><key>StandardErrorPath</key><string>{log}</string></dict></plist>"#,
+<plist version="1.0"><dict>
+<key>Label</key><string>com.xrun.daemon</string>
+<key>ProgramArguments</key><array><string>{}</string><string>daemon</string></array>
+<key>RunAtLoad</key><true/>
+<key>KeepAlive</key><dict><key>SuccessfulExit</key><false/></dict>
+<key>StandardOutPath</key><string>{log}</string>
+<key>StandardErrorPath</key><string>{log}</string></dict></plist>"#,
         xml(&exe.to_string_lossy())
     );
     config::atomic_private_write(&path, text.as_bytes())?;
@@ -172,7 +182,16 @@ pub async fn install_with_executable(kind: &str, exe: &Path) -> Result<()> {
     if kind != "daemon" {
         bail!(ErrorCode::UnsupportedPlatform.error("Server requires Linux"))
     }
-    let script = r#"$u=[Security.Principal.WindowsIdentity]::GetCurrent().Name; $a=New-ScheduledTaskAction -Execute $env:XRUN_SERVICE_EXE -Argument daemon; $t=New-ScheduledTaskTrigger -AtLogOn -User $u; $p=New-ScheduledTaskPrincipal -UserId $u -LogonType Interactive -RunLevel Limited; $s=New-ScheduledTaskSettingsSet -RestartCount 999 -RestartInterval (New-TimeSpan -Minutes 1) -ExecutionTimeLimit ([TimeSpan]::Zero) -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries; Register-ScheduledTask -TaskName xrun-daemon -Action $a -Trigger $t -Principal $p -Settings $s -Force | Out-Null; Start-ScheduledTask -TaskName xrun-daemon"#;
+    let script = r#"
+$user = [Security.Principal.WindowsIdentity]::GetCurrent().Name
+$action = New-ScheduledTaskAction -Execute $env:XRUN_SERVICE_EXE -Argument daemon
+$trigger = New-ScheduledTaskTrigger -AtLogOn -User $user
+$principal = New-ScheduledTaskPrincipal -UserId $user -LogonType Interactive -RunLevel Limited
+$settings = New-ScheduledTaskSettingsSet -RestartCount 999 -RestartInterval (New-TimeSpan -Minutes 1) `
+    -ExecutionTimeLimit ([TimeSpan]::Zero) -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries
+Register-ScheduledTask -TaskName xrun-daemon -Action $action -Trigger $trigger -Principal $principal -Settings $settings -Force | Out-Null
+Start-ScheduledTask -TaskName xrun-daemon
+"#;
     let output = tokio::process::Command::new("powershell.exe")
         .args(["-NoProfile", "-NonInteractive", "-Command", script])
         .env("XRUN_SERVICE_EXE", exe)

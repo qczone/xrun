@@ -445,6 +445,14 @@ mod tests {
                 .save()?;
                 let rt = Arc::new(Runtime {
                     control: Arc::new(crate::control::Control::new(&dir)?),
+                    access: watch::channel(Ok(Arc::new(super::super::access::Authorization {
+                        files: None,
+                        config: DaemonConfig::load()?,
+                        identity: id.clone(),
+                        roster: members.load(&roster.roster.network_id)?,
+                    })))
+                    .0,
+                    access_scan: Mutex::new(()),
                     id,
                     members,
                     network_id: roster.roster.network_id,

@@ -20,8 +20,9 @@ pub(super) async fn data_session(
     generation: &str,
     sid: &str,
 ) -> Result<()> {
-    let id = Identity::load()?;
-    let (mut ws, certificate) = tokio::time::timeout(Duration::from_secs(10), async {
+    super::access::refresh(rt.clone(), crate::config::device_dir()?).await?;
+    let id = rt.authorization()?.identity.clone();
+    let (mut ws, certificate) = tokio::time::timeout(CONNECT_TIMEOUT, async {
         let (outer, flow_control) = network::attach(&id, address, generation, sid).await?;
         secure::server_with_flow(outer, &id, flow_control).await
     })
@@ -29,12 +30,12 @@ pub(super) async fn data_session(
     let result = if let Some(certificate) = certificate {
         async {
             let (_, source) = tokio::time::timeout(
-                Duration::from_secs(10),
+                CONNECT_TIMEOUT,
                 secure::exchange_server(&mut ws, &rt.members, &rt.network_id, &certificate),
             )
             .await??;
             let purpose: secure::Purpose =
-                tokio::time::timeout(Duration::from_secs(10), net::receive(&mut ws)).await??;
+                tokio::time::timeout(CONNECT_TIMEOUT, net::receive(&mut ws)).await??;
             if matches!(purpose, secure::Purpose::State) {
                 let state = network::PeerState {
                     device: network::local_device(&id, rt.cwd()?.to_string_lossy().into())?,
@@ -45,21 +46,24 @@ pub(super) async fn data_session(
             }
             rt.allow(&source)?;
             let generation = rt.config()?.pause_generation;
-            let (_, cert) = x509_parser::parse_x509_certificate(&certificate).map_err(|_| anyhow::anyhow!(ErrorCode::InvalidCertificate.error("malformed member certificate")))?;
+            let (_, cert) = x509_parser::parse_x509_certificate(&certificate).map_err(|_| {
+                anyhow::anyhow!(ErrorCode::InvalidCertificate.error("malformed member certificate"))
+            })?;
             let expiry = cert.validity().not_after.timestamp()
                 .min(crate::crypto::certificate_expiry(&id.cert_pem)?)
                 .min(crate::crypto::certificate_expiry(&id.ca_pem)?);
+            let lease = AccessLease { source: &source, generation, identity: &id, expiry };
             send_ready(&rt, &mut ws).await?;
             let mut stop = rt.stop.subscribe();
             loop {
                 let req = tokio::select! {
                     req = tokio::time::timeout(Duration::from_secs(60), net::receive::<Data>(&mut ws)) => req??,
                     _ = stop.changed() => bail!(ErrorCode::DaemonStopping.error("daemon shutting down")),
+                    result = access_ended(&rt, &lease) => return result,
                 };
+                super::access::refresh(rt.clone(), crate::config::device_dir()?).await?;
                 rt.check_session(&source, generation)?;
-                if expiry <= now_ms() / 1000 || Identity::load()?.cert_pem != id.cert_pem {
-                    bail!(ErrorCode::SessionExpired.error("renew the authenticated connection"));
-                }
+                lease.check(&rt)?;
                 if let Data::SessionProbe { roster_version } = req {
                     if rt.members.load(&rt.network_id)?.roster.version != roster_version {
                         bail!(ErrorCode::MembershipChanged.error("renew the authenticated connection"));
@@ -67,17 +71,13 @@ pub(super) async fn data_session(
                     send_ready(&rt, &mut ws).await?;
                     continue;
                 }
-                let Data::Request { request } = req else { bail!(ErrorCode::InvalidMessage.error("expected operation")); };
-                let denied = async {
-                    loop {
-                        tokio::time::sleep(Duration::from_millis(100)).await;
-                        if rt.check_session(&source, generation).is_err() || expiry <= now_ms() / 1000 { break; }
-                    }
+                let Data::Request { request } = req else {
+                    bail!(ErrorCode::InvalidMessage.error("expected operation"));
                 };
                 tokio::select! {
                     result = serve(rt.clone(), &source, generation, &mut ws, request) => result?,
                     _ = stop.changed() => bail!(ErrorCode::DaemonStopping.error("daemon shutting down")),
-                    _ = denied => bail!(ErrorCode::SessionClosed.error("access changed")),
+                    result = access_ended(&rt, &lease) => return result,
                 }
                 net::send(&mut ws, &Data::Complete).await?;
             }
@@ -89,11 +89,7 @@ pub(super) async fn data_session(
         network::serve_pair(&id, &mut ws).await
     };
     if let Err(error) = result {
-        let _ = tokio::time::timeout(
-            Duration::from_secs(1),
-            net::send(&mut ws, &Data::error(&error)),
-        )
-        .await;
+        let _ = tokio::time::timeout(CLOSE_TIMEOUT, net::send(&mut ws, &Data::error(&error))).await;
     }
     let mut stop = rt.stop.subscribe();
     if !*stop.borrow() {
@@ -103,6 +99,34 @@ pub(super) async fn data_session(
         }
     }
     Ok(())
+}
+struct AccessLease<'a> {
+    source: &'a str,
+    generation: u64,
+    identity: &'a Identity,
+    expiry: i64,
+}
+impl AccessLease<'_> {
+    fn check(&self, rt: &Runtime) -> Result<()> {
+        rt.check_session(self.source, self.generation)?;
+        if self.expiry <= now_ms() / 1000
+            || rt.authorization()?.identity.cert_pem != self.identity.cert_pem
+        {
+            bail!(ErrorCode::SessionExpired.error("renew the authenticated connection"));
+        }
+        Ok(())
+    }
+}
+async fn access_ended(rt: &Runtime, lease: &AccessLease<'_>) -> Result<()> {
+    let mut changes = rt.access.subscribe();
+    loop {
+        lease.check(rt)?;
+        let remaining = Duration::from_secs((lease.expiry - now_ms() / 1000).max(0) as u64);
+        tokio::select! {
+            result = changes.changed() => result?,
+            _ = tokio::time::sleep(remaining) => {},
+        }
+    }
 }
 async fn send_ready(rt: &Runtime, ws: &mut Ws) -> Result<()> {
     net::send(

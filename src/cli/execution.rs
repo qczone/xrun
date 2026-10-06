@@ -13,6 +13,30 @@ use super::args::Execute;
 use super::logs::{LogCursor, receive_logs, stream_logs};
 use super::support::*;
 
+enum SubmissionOutcome {
+    Response(Result<Box<Job>>),
+    Interrupted,
+    Terminated,
+}
+fn unconfirmed_submission(request: &str, recovery_hint: bool) -> anyhow::Error {
+    let hint = if recovery_hint {
+        "; use recent or jobs --request-id"
+    } else {
+        ""
+    };
+    anyhow::anyhow!(
+        ErrorCode::Unconfirmed.error(format!("request {request} may have executed{hint}"))
+    )
+}
+fn detached_job(job: &Job, json: bool) -> i32 {
+    diagnostic(
+        json,
+        &anyhow::anyhow!(
+            ErrorCode::Unconfirmed.error(format!("{} continues remotely", job_ref(job)))
+        ),
+    );
+    75
+}
 pub(super) async fn run(
     id: &Identity,
     selected: (&str, &str),
@@ -139,13 +163,55 @@ pub(super) async fn run(
             _ => bail!(ErrorCode::InvalidMessage.error("expected job acknowledgement")),
         }
     };
-    let (job, acknowledged) = tokio::select! {
-        r=submitted=>match r{Ok(job)=>(job, true),Err(error)=>{
-            if definitive(&error){submission.status="not_accepted".into();store.save(&submission)?;diagnostic(json,&error);return Ok(125)}
-            match recover(id,target,&execution.request_id,Some(&execution.db_id)).await{Ok(job)=>(job, false),Err(e)=>{if crate::error::is(&e, ErrorCode::DbReset){diagnostic(json,&e);return Ok(125)}diagnostic(json,&anyhow::anyhow!(ErrorCode::Unconfirmed.error(format!("request {} may have executed; use recent or jobs --request-id",execution.request_id))));return Ok(75)}}
-        }},
-        _=tokio::signal::ctrl_c()=>{if !sent.load(std::sync::atomic::Ordering::SeqCst){submission.status="not_accepted".into();store.save(&submission)?;return Ok(130)}return Box::pin(cancel_unknown(id,target,&execution.request_id,&execution.db_id,json)).await;},
-        _=termination()=>{if !sent.load(std::sync::atomic::Ordering::SeqCst){submission.status="not_accepted".into();store.save(&submission)?;return Ok(125)}diagnostic(json,&anyhow::anyhow!(ErrorCode::Unconfirmed.error(format!("request {} may have executed",execution.request_id))));return Ok(75)}
+    let outcome = tokio::select! {
+        result = submitted => SubmissionOutcome::Response(result.map(Box::new)),
+        _ = tokio::signal::ctrl_c() => SubmissionOutcome::Interrupted,
+        _ = termination() => SubmissionOutcome::Terminated,
+    };
+    let (job, acknowledged) = match outcome {
+        SubmissionOutcome::Response(Ok(job)) => (*job, true),
+        SubmissionOutcome::Response(Err(error)) => {
+            if definitive(&error) {
+                submission.status = "not_accepted".into();
+                store.save(&submission)?;
+                diagnostic(json, &error);
+                return Ok(125);
+            }
+            match recover(id, target, &execution.request_id, Some(&execution.db_id)).await {
+                Ok(job) => (job, false),
+                Err(error) => {
+                    if crate::error::is(&error, ErrorCode::DbReset) {
+                        diagnostic(json, &error);
+                        return Ok(125);
+                    }
+                    diagnostic(json, &unconfirmed_submission(&execution.request_id, true));
+                    return Ok(75);
+                }
+            }
+        }
+        SubmissionOutcome::Interrupted | SubmissionOutcome::Terminated => {
+            if !sent.load(std::sync::atomic::Ordering::SeqCst) {
+                submission.status = "not_accepted".into();
+                store.save(&submission)?;
+                return Ok(if matches!(outcome, SubmissionOutcome::Interrupted) {
+                    130
+                } else {
+                    125
+                });
+            }
+            if matches!(outcome, SubmissionOutcome::Interrupted) {
+                return Box::pin(cancel_unknown(
+                    id,
+                    target,
+                    &execution.request_id,
+                    &execution.db_id,
+                    json,
+                ))
+                .await;
+            }
+            diagnostic(json, &unconfirmed_submission(&execution.request_id, false));
+            return Ok(75);
+        }
     };
     submission.job_id = Some(job_ref(&job));
     submission.status = "confirmed".into();
@@ -179,7 +245,7 @@ pub(super) async fn run(
             tokio::select! {
                 r=&mut logs=>r,
                 _=tokio::signal::ctrl_c()=>{return Box::pin(cancel_known(id,target,&job.job_id,json)).await},
-                _=termination()=>{diagnostic(json,&anyhow::anyhow!(ErrorCode::Unconfirmed.error(format!("{} continues remotely",job_ref(&job)))));return Ok(75)}
+                _=termination()=>return Ok(detached_job(&job, json))
             }
         };
         match result {

@@ -169,8 +169,14 @@ pub(super) async fn run(cli: LocalCli) -> Result<i32> {
             Some(DaemonCommand::Start) => service::start("daemon").await?,
             Some(DaemonCommand::Stop) => service::stop_daemon().await?,
             Some(DaemonCommand::Reset) => daemon::reset()?,
-            Some(DaemonCommand::Pause) => config::pause_remote_access(true)?,
-            Some(DaemonCommand::Resume) => config::pause_remote_access(false)?,
+            Some(DaemonCommand::Pause) => {
+                config::pause_remote_access(true)?;
+                crate::control::refresh_access().await?;
+            }
+            Some(DaemonCommand::Resume) => {
+                config::pause_remote_access(false)?;
+                crate::control::refresh_access().await?;
+            }
         },
         Local::Doc { topic, list } => super::docs::print(topic, list),
         Local::Help { command } => return super::help::run(&command),
@@ -248,6 +254,7 @@ async fn status(json: bool) -> Result<i32> {
 async fn permission(args: PermissionArgs, allow: bool, json: bool) -> Result<()> {
     if args.all {
         config::update_all_permissions(allow)?;
+        crate::control::refresh_access().await?;
         print(
             json,
             &serde_json::json!({"all":true,"allowed":allow}),
