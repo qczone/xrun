@@ -95,7 +95,8 @@ if (!baseline) {
       stdout: "pipe",
       stderr: "inherit",
     });
-    const extract = Bun.spawn(["tar", "-x", "-C", checkout], {
+    const extract = Bun.spawn(["tar", "-x"], {
+      cwd: checkout,
       stdin: archive.stdout,
       stdout: "inherit",
       stderr: "inherit",
@@ -132,7 +133,7 @@ if (!baseline) {
       checkout,
     );
     const suffix = process.platform === "win32" ? ".exe" : "";
-    const oldBinary = join(temporary, `previous${suffix}`);
+    const oldBinary = join(temporary, `previous-cli${suffix}`);
     await copyFile(
       join(targetDirectory, `debug/xrun-compatibility-previous${suffix}`),
       oldBinary,

@@ -158,7 +158,8 @@ try {
     stdout: "pipe",
     stderr: "inherit",
   });
-  const extract = Bun.spawn(["tar", "-x", "-C", checkout], {
+  const extract = Bun.spawn(["tar", "-x"], {
+    cwd: checkout,
     stdin: archive.stdout,
     stdout: "inherit",
     stderr: "inherit",

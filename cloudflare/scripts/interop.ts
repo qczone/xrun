@@ -136,9 +136,12 @@ try {
       httpsKey: pemKey,
       httpsCert: `${server.toString("pem")}\n${ca.toString("pem")}`,
       modules: true,
-      scriptPath:
+      // Load the bundle as one module; historical files can live outside
+      // Miniflare's module root and must not become ../ module names.
+      script: await Bun.file(
         process.env.XRUN_TEST_CF_WORKER ||
-        resolve(import.meta.dir, "../.wrangler/build/index.js"),
+          resolve(import.meta.dir, "../.wrangler/build/index.js"),
+      ).text(),
       compatibilityDate: "2026-10-03",
       durableObjects: { NETWORKS: { className: "XrunRelay", useSQLite: true } },
       bindings: {
