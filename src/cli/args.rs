@@ -9,6 +9,7 @@ mod tests;
 #[derive(Parser)]
 #[command(
     name = "xrun",
+    bin_name = "xrun",
     version,
     about = "Run programs and transfer files on paired devices",
     disable_help_subcommand = true,
@@ -172,6 +173,7 @@ pub(super) struct PermissionArgs {
 #[derive(Parser)]
 #[command(
     name = "xrun",
+    bin_name = "xrun",
     version,
     about = "Operate an authorized remote device",
     after_help = "Run a program: xrun <DEVICE> [OPTIONS] -- <PROGRAM> [ARGS]...\nExamples:\n  xrun linux1 -C /home/user/demo -- cargo test\n  xrun linux1 start -C /home/user/demo -- ./server\nExecution options: xrun help run\nOffline manual: xrun doc execute"

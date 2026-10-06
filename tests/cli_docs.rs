@@ -53,6 +53,33 @@ async fn offline_help_routes_local_remote_and_device_queries_without_creating_st
         ok(cli(home.path(), &["help", "relay", "install"]).await),
         ok(cli(home.path(), &["relay", "install", "--help"]).await)
     );
+    // Windows adds .exe to argv[0]; help must keep the documented command name.
+    let executables = tempfile::tempdir().unwrap();
+    let renamed = executables.path().join("xrun.exe");
+    std::fs::copy(common::binary(), &renamed).unwrap();
+    for (arguments, expected) in [
+        (vec!["--help"], overview),
+        (
+            vec!["linux1", "push", "--help"],
+            ok(cli(home.path(), &["help", "push"]).await),
+        ),
+        (
+            vec!["relay", "install", "--help"],
+            ok(cli(home.path(), &["help", "relay", "install"]).await),
+        ),
+    ] {
+        let mut command = tokio::process::Command::new(&renamed);
+        command
+            .env("HOME", home.path())
+            .env("USERPROFILE", home.path())
+            .args(arguments)
+            .kill_on_drop(true);
+        let output = tokio::time::timeout(std::time::Duration::from_secs(45), command.output())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(ok(output), expected);
+    }
     for arguments in [
         &["help", "missing"][..],
         &["help", "linux1", "missing"],
