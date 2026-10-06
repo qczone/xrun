@@ -1,28 +1,18 @@
 import type { ReactNode } from "react";
-import type { Action, PendingOperation, Status } from "../api";
+import type { Status } from "../api";
+import { useOperations } from "../app/useOperations";
 import { Icon } from "../components/Icon";
 import { NetworkSetup } from "../components/NetworkSetup";
 import { relayHost, relayState, serviceState } from "../format";
 
 interface Props {
   status: Status | null;
-  busy: boolean;
-  pending: PendingOperation | null;
   feedback: ReactNode;
-  action: Action;
-  stop: () => Promise<void>;
   navigate: (page: "devices" | "settings" | "history") => void;
 }
 
-export function Overview({
-  status,
-  busy,
-  pending,
-  feedback,
-  action,
-  stop,
-  navigate,
-}: Props) {
+export function Overview({ status, feedback, navigate }: Props) {
+  const { busy, pending, action, stop } = useOperations();
   const local = status?.local;
   const service = status?.service;
   const network = status?.network;

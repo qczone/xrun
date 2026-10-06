@@ -1,3 +1,4 @@
+import { useOperations } from "../app/useOperations";
 import {
   useCallback,
   useEffect,
@@ -7,10 +8,7 @@ import {
 } from "react";
 import {
   api,
-  type Action,
-  type Confirm,
   type ExecutionSettings,
-  type PendingOperation,
   type Settings,
   type Status,
 } from "../api";
@@ -20,27 +18,19 @@ import { errorText, osName, serviceState } from "../format";
 
 interface Props {
   status: Status | null;
-  busy: boolean;
-  pending: PendingOperation | null;
   feedback: ReactNode;
-  action: Action;
-  stop: () => Promise<void>;
-  confirm: Confirm;
-  notify: (message: string) => void;
-  onError: (error: unknown, title?: string) => void;
 }
 
-export function SettingsPage({
-  status,
-  busy,
-  pending,
-  feedback,
-  action,
-  stop,
-  confirm,
-  notify,
-  onError,
-}: Props) {
+export function SettingsPage({ status, feedback }: Props) {
+  const {
+    busy,
+    pending,
+    action,
+    stop,
+    confirm,
+    notify,
+    reportError: onError,
+  } = useOperations();
   const [settings, setSettings] = useState<Settings | null>(null);
   const [cwd, setCwd] = useState("");
   const [concurrency, setConcurrency] = useState("4");

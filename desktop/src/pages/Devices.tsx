@@ -1,229 +1,70 @@
-import { useEffect, useRef, useState, type ReactNode } from "react";
-import type {
-  Action,
-  Confirm,
-  Device,
-  Operation,
-  PendingOperation,
-  Revocation,
-  Status,
-} from "../api";
+import { useEffect, useState, type ReactNode } from "react";
+import type { Device, Status } from "../api";
+import { useOperations } from "../app/useOperations";
+import type { useDevices } from "../app/useDevices";
 import { Icon } from "../components/Icon";
-import { InvitePanel } from "../components/InvitePanel";
 import { ErrorNotice } from "../components/ErrorNotice";
-import { osName } from "../format";
-
+import { DeviceCard } from "./devices/DeviceCard";
+import { InvitationDialog } from "./devices/InvitationDialog";
+import { RevocationResult } from "./devices/RevocationResult";
+import { useMembership } from "./devices/useMembership";
 interface Props {
   active: boolean;
   status: Status | null;
-  devices: Device[];
-  busy: boolean;
-  pending: PendingOperation | null;
+  members: ReturnType<typeof useDevices>;
   feedback: ReactNode;
-  loading: boolean;
-  listError: string | null;
-  message: string;
-  refresh: () => Promise<void>;
-  action: Action;
-  confirm: Confirm;
-  notify: (message: string) => void;
-  operate: Operation;
-  revoke: (device: string) => Promise<Revocation | undefined>;
 }
-
-export function Devices({
-  active,
-  status,
-  devices,
-  busy,
-  pending,
-  feedback,
-  loading,
-  listError,
-  message,
-  refresh,
-  action,
-  confirm,
-  notify,
-  operate,
-  revoke,
-}: Props) {
-  const [revocation, setRevocation] = useState<Revocation | null>(null);
-  const [inviteOpen, setInviteOpen] = useState(false);
-  const inviteDialog = useRef<HTMLDialogElement>(null);
+export function Devices({ active, status, members, feedback }: Props) {
+  const { busy, confirm, action, notify } = useOperations();
+  const { loading, error: listError, message, refresh } = members;
+  const devices = members.devices.filter(
+    (device) => device.device_id !== status?.local.device_id,
+  );
   const network = status?.network;
   const manager = !!network?.is_manager;
+  const [inviteOpen, setInviteOpen] = useState(false);
+  const [openDeviceId, setOpenDeviceId] = useState<string | null>(null);
+  const {
+    revocation,
+    revoke,
+    dismiss: dismissRevocation,
+  } = useMembership(members);
   useEffect(() => {
-    setRevocation(null);
     setInviteOpen(false);
+    setOpenDeviceId(null);
   }, [network?.network_id]);
   useEffect(() => {
+    if (!active) setOpenDeviceId(null);
     if (!active || !manager) setInviteOpen(false);
   }, [active, manager]);
-  useEffect(() => {
-    const closeMenus = (event?: PointerEvent) => {
-      document
-        .querySelectorAll<HTMLDetailsElement>(
-          "#page-devices .device-more[open]",
-        )
-        .forEach((menu) => {
-          if (!event || !menu.contains(event.target as Node)) menu.open = false;
-        });
-    };
-    if (!active) {
-      closeMenus();
-      return;
-    }
-    document.addEventListener("pointerdown", closeMenus);
-    return () => document.removeEventListener("pointerdown", closeMenus);
-  }, [active]);
-  useEffect(() => {
-    if (inviteOpen && inviteDialog.current && !inviteDialog.current.open)
-      inviteDialog.current.showModal();
-    else if (!inviteOpen && inviteDialog.current?.open)
-      inviteDialog.current.close();
-  }, [inviteOpen]);
   const deviceName = (id: string) =>
-    devices.find((d) => d.device_id === id)?.name || id;
+    devices.find((device) => device.device_id === id)?.name || id;
   const revokeMember = async (device: Device) => {
     if (
-      !(await confirm(
+      await confirm(
         `撤销 ${device.name} 的成员身份？`,
         "收到撤销记录的设备将拒绝该成员。离线设备需要等收到更新后才生效；已经受理的后台任务不会自动取消。重新加入需要新的身份和邀请。",
         { label: "撤销成员身份", tone: "danger" },
-      ))
+      )
     )
-      return;
-    const result = await revoke(device.device_id);
-    if (result) setRevocation(result);
+      await revoke(device.device_id);
   };
-  const renderDevice = (device: Device) => {
-    const denied = !!status?.deny_from.includes(device.device_id);
-    const individual = !!status?.allow_from.includes(device.device_id);
-    const allowed =
-      !device.revoked && !denied && (!!status?.local.allow_all || individual);
-    const source = device.revoked
-      ? "成员已撤销"
-      : denied
-        ? "单独拒绝"
-        : individual
-          ? "单独授权"
-          : status?.local.allow_all
-            ? "来自全体授权"
-            : "未授权";
-    return (
-      <div className="device" key={device.device_id}>
-        <div className="device-identity">
-          <div className="device-icon">
-            <Icon name="monitor" />
-          </div>
-          <div className="device-details">
-            <div className="device-name">
-              {device.name}
-              {device.admin && <span className="role-label">管理设备</span>}
-            </div>
-            <div className="device-info">
-              <span
-                className={`dot ${device.online && !device.revoked ? "online" : ""}`}
-              />
-              <span>
-                {device.revoked
-                  ? "已撤销"
-                  : device.online
-                    ? "中转报告已连接"
-                    : "未连接中转"}
-                {device.os && <> · {osName(device.os)}</>}
-              </span>
-            </div>
-          </div>
-        </div>
-        <div className="device-permission">
-          <label className="switch">
-            <input
-              type="checkbox"
-              disabled={busy || device.revoked || !status?.local.joined}
-              aria-label={`允许 ${device.name} 访问本机`}
-              checked={allowed}
-              onChange={async (event) => {
-                const allow = event.target.checked;
-                if (
-                  allow &&
-                  !(await confirm(
-                    `允许 ${device.name} 访问本机？`,
-                    "该设备将能以你的用户权限执行命令、传输文件和截图。请只授权你信任的设备。",
-                    { label: "允许访问本机" },
-                  ))
-                )
-                  return;
-                if (
-                  await action({
-                    command: "permission",
-                    args: { device: device.device_id, allow },
-                  })
-                )
-                  notify(allow ? "已允许访问本机" : "已拒绝访问本机");
-              }}
-            />
-            <span className="switch-track" />
-          </label>
-          <small>{source}</small>
-        </div>
-        <details
-          className="device-more"
-          name="device-actions"
-          onToggle={(event) => {
-            const menu = event.currentTarget;
-            if (!menu.open) return;
-            const body = menu.querySelector<HTMLElement>(".device-more-body");
-            const summary = menu.querySelector("summary");
-            if (!body || !summary) return;
-            menu.dataset.placement = "below";
-            const bounds = body.getBoundingClientRect();
-            const trigger = summary.getBoundingClientRect();
-            const container = menu.closest("main")?.getBoundingClientRect();
-            const bottom = Math.min(
-              window.innerHeight,
-              container?.bottom ?? window.innerHeight,
-            );
-            const top = Math.max(0, container?.top ?? 0);
-            if (
-              bounds.bottom > bottom - 8 &&
-              trigger.top - bounds.height - 6 >= top + 8
-            )
-              menu.dataset.placement = "above";
-          }}
-          onKeyDown={(event) => {
-            if (event.key === "Escape") {
-              event.currentTarget.open = false;
-              event.currentTarget.querySelector("summary")?.focus();
-            }
-          }}
-        >
-          <summary aria-label={`${device.name} 的更多操作`}>更多</summary>
-          <div className="device-more-body">
-            <span className="field-help">设备 ID</span>
-            <code>{device.device_id}</code>
-            {manager &&
-              !device.revoked &&
-              device.device_id !== network?.manager_id && (
-                <button
-                  className="danger-button"
-                  disabled={busy}
-                  aria-label={`撤销 ${device.name} 的成员身份`}
-                  onClick={(event) => {
-                    event.currentTarget.closest("details")!.open = false;
-                    void revokeMember(device);
-                  }}
-                >
-                  撤销成员身份…
-                </button>
-              )}
-          </div>
-        </details>
-      </div>
-    );
-  };
-  const members = devices.filter((device) => !device.revoked);
+  const renderDevice = (device: Device) => (
+    <DeviceCard
+      key={device.device_id}
+      device={device}
+      status={status}
+      open={openDeviceId === device.device_id}
+      toggle={() =>
+        setOpenDeviceId((open) =>
+          open === device.device_id ? null : device.device_id,
+        )
+      }
+      close={() => setOpenDeviceId(null)}
+      revoke={revokeMember}
+    />
+  );
+  const currentMembers = devices.filter((device) => !device.revoked);
   const revoked = devices.filter((device) => device.revoked);
   return (
     <>
@@ -284,65 +125,25 @@ export function Devices({
       </div>
       <section className="panel device-list" aria-label="网络设备">
         <div className="list-heading">
-          <span>网络成员 · {members.length}</span>
+          <span>网络成员 · {currentMembers.length}</span>
           <span>访问本机</span>
           <span />
         </div>
-        <div id="devices">{members.map(renderDevice)}</div>
-        {!members.length && (
+        <div id="devices">{currentMembers.map(renderDevice)}</div>
+        {!currentMembers.length && (
           <div className="empty-state">
             {loading ? "正在读取设备列表…" : message}
           </div>
         )}
       </section>
       {revocation && (
-        <section className="panel padded revocation-result" role="status">
-          <div className="result-heading">
-            <h2>已撤销 {deviceName(revocation.device_id)}</h2>
-            <button
-              className="text-button"
-              onClick={() => setRevocation(null)}
-              aria-label="关闭撤销结果"
-            >
-              关闭
-            </button>
-          </div>
-          <p>撤销记录已在本机保存。</p>
-          {revocation.sync_error && (
-            <p className="warning-text">
-              成员名单同步失败：{revocation.sync_error}
-            </p>
-          )}
-          {revocation.undelivered.length > 0 ? (
-            <>
-              <p>以下设备尚未确认收到这次更新：</p>
-              <ul>
-                {revocation.undelivered.map((id) => (
-                  <li key={id}>
-                    {deviceName(id)} <code>{id}</code>
-                  </li>
-                ))}
-              </ul>
-              <p>
-                这些设备收到更新前，可能仍接受被撤销成员。紧急阻断可以在对应设备上暂停远程访问。
-              </p>
-            </>
-          ) : !revocation.sync_error ? (
-            <p>当前其他成员均已确认收到更新。</p>
-          ) : null}
-          {(revocation.sync_error || revocation.undelivered.length > 0) &&
-            manager && (
-              <button
-                disabled={busy}
-                onClick={async () => {
-                  const result = await revoke(revocation.device_id);
-                  if (result) setRevocation(result);
-                }}
-              >
-                {pending === "revoke" ? "正在同步…" : "重新同步撤销记录"}
-              </button>
-            )}
-        </section>
+        <RevocationResult
+          result={revocation}
+          manager={manager}
+          deviceName={deviceName}
+          dismiss={dismissRevocation}
+          retry={() => revoke(revocation.device_id)}
+        />
       )}
       <details className="panel access-strategy">
         <summary>
@@ -399,38 +200,13 @@ export function Devices({
         这里的授权只影响本机。设备连接中转，也需要获得授权才能访问本机。
       </p>
       {manager && (
-        <dialog
-          ref={inviteDialog}
-          id="invite-dialog"
-          className="invite-dialog"
-          aria-labelledby="invite-title"
-          onClose={() => setInviteOpen(false)}
-        >
-          <div className="dialog-heading">
-            <h2 id="invite-title">邀请新设备</h2>
-            <button
-              className="text-button"
-              aria-label="关闭邀请"
-              onClick={() => setInviteOpen(false)}
-            >
-              关闭
-            </button>
-          </div>
-          {inviteOpen && (
-            <>
-              <div>{feedback}</div>
-              <InvitePanel
-                active={active && inviteOpen}
-                status={status}
-                busy={busy}
-                pending={pending}
-                operate={operate}
-                confirm={confirm}
-                notify={notify}
-              />
-            </>
-          )}
-        </dialog>
+        <InvitationDialog
+          open={inviteOpen}
+          close={() => setInviteOpen(false)}
+          active={active}
+          status={status}
+          feedback={feedback}
+        />
       )}
     </>
   );

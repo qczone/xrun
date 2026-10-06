@@ -1,32 +1,14 @@
+import { useOperations } from "../app/useOperations";
 import { useEffect, useRef, useState } from "react";
-import {
-  api,
-  type Confirm,
-  type Invitation,
-  type Operation,
-  type PendingOperation,
-  type Status,
-} from "../api";
+import { api, type Invitation, type Status } from "../api";
 
 interface Props {
   active: boolean;
   status: Status | null;
-  busy: boolean;
-  pending: PendingOperation | null;
-  operate: Operation;
-  confirm: Confirm;
-  notify: (message: string) => void;
 }
 
-export function InvitePanel({
-  active,
-  status,
-  busy,
-  pending,
-  operate,
-  confirm,
-  notify,
-}: Props) {
+export function InvitePanel({ active, status }: Props) {
+  const { busy, pending, operate, confirm, notify } = useOperations();
   const [allow, setAllow] = useState(false);
   const [invitation, setInvitation] = useState<
     (Invitation & { expiresAt: number }) | null

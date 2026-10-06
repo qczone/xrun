@@ -31,10 +31,9 @@ Object.defineProperty(globalThis, "IS_REACT_ACT_ENVIRONMENT", {
 // jsdom does not implement native modal dialogs.
 HTMLDialogElement.prototype.showModal = function () {
   this.open = true;
-  this.returnValue = "";
 };
-HTMLDialogElement.prototype.close = function (value = "") {
-  this.returnValue = value;
+HTMLDialogElement.prototype.close = function (value) {
+  if (value !== undefined) this.returnValue = value;
   this.open = false;
   this.dispatchEvent(new Event("close"));
 };

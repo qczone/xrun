@@ -1,0 +1,102 @@
+.settings-section {
+  margin-bottom: 24px;
+}
+
+.settings-section > h2 {
+  margin: 0 0 10px 2px;
+}
+
+.settings-section .panel {
+  margin-bottom: 0;
+}
+
+.concurrency-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 20px;
+  margin-top: 20px;
+  padding-top: 18px;
+  border-top: 1px solid var(--border);
+}
+
+.concurrency-row label {
+  margin: 0;
+}
+
+.concurrency-row .field-help {
+  margin-top: 3px;
+}
+
+.concurrency-row input {
+  width: 86px;
+  flex-shrink: 0;
+}
+
+.advanced {
+  border-top: 1px solid var(--border);
+  margin-top: 20px;
+  padding-top: 16px;
+}
+
+.advanced > summary {
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.advanced textarea {
+  margin-top: 12px;
+}
+
+.form-footer {
+  flex-wrap: wrap;
+  border-top: 1px solid var(--border);
+  margin-top: 18px;
+  padding-top: 14px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+}
+
+.form-footer span {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.form-footer .dirty {
+  color: var(--accent);
+}
+
+.about-brand {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.about-brand img {
+  width: 30px;
+  height: 30px;
+}
+
+.data-row {
+  align-items: flex-start;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.data-row input {
+  background: var(--bg);
+  font:
+    12px/1.6 ui-monospace,
+    SFMono-Regular,
+    Consolas,
+    monospace;
+  color: var(--muted);
+  border: 0;
+  cursor: text;
+}
+
+.about-brand + span {
+  font-size: 12px;
+}
