@@ -101,7 +101,10 @@ pub fn verify<T: Serialize>(
     )
     .verify(&payload(domain, value)?, &STANDARD.decode(signature)?)
     .map_err(|_| {
-        anyhow::anyhow!(ErrorCode::InvalidSignature.error("record signature does not match"))
+        anyhow::anyhow!(
+            ErrorCode::InvalidSignature
+                .error(format!("record signature does not match for {domain}"))
+        )
     })
 }
 pub fn device_name(id: &str) -> Result<String> {

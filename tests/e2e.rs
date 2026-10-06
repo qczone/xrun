@@ -480,6 +480,23 @@ fn main() {
     let unavailable = cli(&source, &["runner1", "logs", id]).await;
     assert_eq!(unavailable.status.code(), Some(1));
     assert!(String::from_utf8_lossy(&unavailable.stderr).contains("LOG_UNAVAILABLE"));
+    // JSON diagnostics retain their documented code as well as exit status.
+    let expired_logs = tasks.get(id)?.unwrap();
+    for (reason, code) in [
+        ("LOG_EXPIRED", "LOG_UNAVAILABLE"),
+        ("TRUNCATED", "LOG_TRUNCATED"),
+        ("CAPTURE_ERROR: disk unavailable", "LOG_INCOMPLETE"),
+    ] {
+        let mut partial = expired_logs.clone();
+        partial.incomplete_reason = Some(reason.into());
+        tasks.save(&partial)?;
+        let result = cli(&source, &["runner1", "logs", id, "--json"]).await;
+        assert_eq!(result.status.code(), Some(1));
+        let diagnostic: Value = serde_json::from_slice(&result.stderr)?;
+        assert_eq!(diagnostic["code"], code);
+        assert_eq!(diagnostic["message"], reason);
+    }
+    tasks.save(&expired_logs)?;
     let waited = json(cli(&source, &["runner1", "wait", id, "--json"]).await);
     assert_eq!(waited["job"]["state"], "exited");
     assert!(

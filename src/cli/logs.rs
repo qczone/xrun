@@ -1,5 +1,5 @@
 //! Sequence-based output consumption and incomplete-output reporting.
-use crate::error::ErrorCode;
+use crate::error::{CodedError, ErrorCode};
 use crate::{
     config::Identity,
     net::{self, Ws},
@@ -32,17 +32,20 @@ pub(super) struct LogCursor {
     pub(super) received: bool,
 }
 pub(super) fn log_error(job: &Job) -> Option<String> {
+    log_failure(job).map(|error| error.to_string())
+}
+fn log_failure(job: &Job) -> Option<CodedError> {
     job.incomplete_reason.as_ref().map(|reason| {
         let code = match reason.as_str() {
-            "TRUNCATED" => "LOG_TRUNCATED",
-            "LOG_EXPIRED" => "LOG_UNAVAILABLE",
-            _ => "LOG_INCOMPLETE",
+            "TRUNCATED" => ErrorCode::LogTruncated,
+            "LOG_EXPIRED" => ErrorCode::LogUnavailable,
+            _ => ErrorCode::LogIncomplete,
         };
-        format!("{code}: {reason}")
+        code.error(reason.clone())
     })
 }
 pub(super) fn log_code(job: &Job, json: bool) -> i32 {
-    if let Some(error) = log_error(job) {
+    if let Some(error) = log_failure(job) {
         diagnostic(json, &anyhow::anyhow!(error));
         1
     } else {
