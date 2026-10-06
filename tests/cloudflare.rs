@@ -110,7 +110,7 @@ async fn lab() -> Result<CloudLab> {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-#[ignore = "requires a deployed Cloudflare relay; set XRUN_TEST_CF_LINK_FILE"]
+#[ignore = "run via cloudflare test:interop, or set XRUN_TEST_CF_LINK_FILE for a deployed relay"]
 async fn public_relay_executes_transfers_streams_and_rejects_route_takeover() -> Result<()> {
     tokio::time::timeout(Duration::from_secs(600), async {
         let lab = lab().await?;
@@ -129,14 +129,14 @@ async fn public_relay_executes_transfers_streams_and_rejects_route_takeover() ->
         let network = &source.network.as_ref().context("network")?.network_id;
         let roster = RosterCache::open(&lab.source.join(".xrun/roster.db"))?.load(network)?;
         let path = format!("/networks/{network}/control");
-        let mut attacker = xrun::net::websocket_at(&roster.roster.relay_addresses[0], &path, xrun::crypto::relay_tls_config("")?).await?;
+        let mut attacker = xrun::net::websocket_at(&roster.roster.relay_addresses[0], &path, xrun::crypto::relay_tls_config(&roster.roster.relay_ca_pem)?).await?;
         let RelayMessage::Challenge { nonce } = xrun::net::receive(&mut attacker).await? else { anyhow::bail!("challenge") };
         let mut proof = Proof::create(&source, network, &path, &nonce, None)?;
         proof.device_id = target.device_id.clone();
         xrun::net::send(&mut attacker, &RelayMessage::Authenticate { proof: Some(proof) }).await?;
         assert!(matches!(xrun::net::receive(&mut attacker).await?, RelayMessage::Error { code, .. } if code == "UNAUTHENTICATED"));
         let connect = format!("/networks/{network}/connect/{}", target.device_id);
-        let mut anonymous = xrun::net::websocket_at(&roster.roster.relay_addresses[0], &connect, xrun::crypto::relay_tls_config("")?).await?;
+        let mut anonymous = xrun::net::websocket_at(&roster.roster.relay_addresses[0], &connect, xrun::crypto::relay_tls_config(&roster.roster.relay_ca_pem)?).await?;
         xrun::network::authenticate(&mut anonymous, None, network, &connect, None).await?;
         assert!(matches!(xrun::net::receive(&mut anonymous).await?, RelayMessage::Error { code, .. } if code == "UNAUTHENTICATED"));
         cloud_online(&lab.source, "target1").await?;
@@ -197,7 +197,7 @@ async fn public_relay_executes_transfers_streams_and_rejects_route_takeover() ->
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-#[ignore = "requires a deployed Cloudflare relay; set XRUN_TEST_CF_LINK_FILE"]
+#[ignore = "run via cloudflare test:interop, or set XRUN_TEST_CF_LINK_FILE for a deployed relay"]
 async fn public_relay_resumes_idle_connections_and_propagates_revocation() -> Result<()> {
     tokio::time::timeout(Duration::from_secs(240), async {
         let mut lab = lab().await?;
