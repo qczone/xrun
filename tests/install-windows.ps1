@@ -40,7 +40,7 @@ function Invoke-Process([string]$File, [string]$Arguments, [int]$Timeout = 12000
     } finally { $process.Dispose() }
 }
 function Run-Installer([string]$Component, [string]$Directory, [string]$Source = $ArtifactDir) {
-    $arguments = "-NoProfile -NonInteractive -ExecutionPolicy Bypass -File `"$root\install.ps1`" -Version $version -Component $Component -InstallDir `"$Directory`" -SourceDir `"$Source`""
+    $arguments = "-NoProfile -NonInteractive -ExecutionPolicy Bypass -File `"$root\scripts\install.ps1`" -Version $version -Component $Component -InstallDir `"$Directory`" -SourceDir `"$Source`""
     $result = Invoke-Process 'powershell.exe' $arguments
     $data = $result.Stdout | ConvertFrom-Json
     return [pscustomobject]@{ ExitCode = $result.ExitCode; Data = $data }

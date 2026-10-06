@@ -53,5 +53,8 @@ await writeFile(
   `${JSON.stringify({ schema: 1, version, platform, artifacts }, null, 2)}\n`,
 );
 if (installer) {
-  await copyFile(resolve(root, installer), resolve(directory, installer));
+  await copyFile(
+    resolve(root, "scripts", installer),
+    resolve(directory, installer),
+  );
 }

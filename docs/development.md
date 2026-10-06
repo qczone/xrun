@@ -82,7 +82,7 @@ Ubuntu 26.04 x86_64 云主机与 macOS ARM64 本机已通过公网 TCP 8080 实�
 
 Package 工作流只生成 Actions 附件，不创建 Release。对外发布时将附件上传到 v<完整版本> Release。产物清单由 [package-manifest.ts](../desktop/scripts/package-manifest.ts) 使用现有 Bun 生成；用户运行安装程序不需要 Bun，见 [安装说明](usage.md#安装)。
 
-CLI 压缩包包含 LICENSE、README、docs/ 和安装脚本，使用手册中的相对链接在压缩包中可用；开发文档引用的源码和 CI 文件在仓库中查看。`docs/usage.md` 编译进 CLI，随程序发布，仓库、附件和离线 `xrun doc` 使用同一份手册；更新后需要重新构建。文档测试验证无身份、无网络的帮助和章节查询，打包 smoke 检查内置手册。
+CLI 压缩包包含 LICENSE、README、docs/ 和 scripts/ 下的安装脚本，使用手册中的相对链接在压缩包中可用；开发文档引用的源码和 CI 文件在仓库中查看。`docs/usage.md` 编译进 CLI，随程序发布，仓库、附件和离线 `xrun doc` 使用同一份手册；更新后需要重新构建。文档测试验证无身份、无网络的帮助和章节查询，打包 smoke 检查内置手册。
 
 发布前同步根包、桌面 Rust 包、Cargo.lock 本地包版本、desktop/package.json 与 Tauri 版本。协议变化需要新完整版本，同一版本不能分发不同协议；重新构建 CLI / App / helper，并部署同版本 Cloudflare Worker。当前持久化签名无跨版本迁移，发布说明应明确数据兼容和重新组网要求。
 

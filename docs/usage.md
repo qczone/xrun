@@ -34,18 +34,18 @@ CLI 可放在 `~/.local/bin/xrun`，Windows 可用 `%LOCALAPPDATA%\xrun\bin\xrun
 
 ### AI 和命令行自动安装
 
-[install.sh](../install.sh) 支持 macOS Apple Silicon，[install.ps1](../install.ps1) 支持 Windows x86_64。指定完整发布版本，默认安装桌面 App；`--component cli`／`-Component cli` 只安装 CLI。脚本校验平台、版本、SHA-256 和安装后的程序；macOS App 另检查签名。整个过程通过 stdout 返回一条 JSON，失败时 `ok` 为 `false`、包含 `error.code` 和 `error.message`，进程退出码为 1；成功返回版本、安装路径、可执行文件路径、`changed` 和自检结果。重复安装相同产物时返回 `changed: false`。
+[install.sh](../scripts/install.sh) 支持 macOS Apple Silicon，[install.ps1](../scripts/install.ps1) 支持 Windows x86_64。指定完整发布版本，默认安装桌面 App；`--component cli`／`-Component cli` 只安装 CLI。脚本校验平台、版本、SHA-256 和安装后的程序；macOS App 另检查签名。整个过程通过 stdout 返回一条 JSON，失败时 `ok` 为 `false`、包含 `error.code` 和 `error.message`，进程退出码为 1；成功返回版本、安装路径、可执行文件路径、`changed` 和自检结果。重复安装相同产物时返回 `changed: false`。
 
-先下载发布附件中的安装脚本，再执行：
+CLI 压缩包和源码中的安装脚本位于 `scripts/`。以下命令从解压目录或项目根目录执行；单独下载发布附件中的脚本时，将脚本路径替换为下载位置：
 
 ```bash
-bash install.sh --version 0.0.1-beta.3
-bash install.sh --version 0.0.1-beta.3 --component cli
+bash scripts/install.sh --version 0.0.1-beta.3
+bash scripts/install.sh --version 0.0.1-beta.3 --component cli
 ```
 
 ```powershell
-powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File .\install.ps1 -Version 0.0.1-beta.3
-powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File .\install.ps1 -Version 0.0.1-beta.3 -Component cli
+powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File .\scripts\install.ps1 -Version 0.0.1-beta.3
+powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File .\scripts\install.ps1 -Version 0.0.1-beta.3 -Component cli
 ```
 
 默认下载地址是 `https://github.com/qczone/xrun/releases/download/v<完整版本>/`。`--base-url`／`-BaseUrl` 可指定其他 HTTPS 产物目录。每个目录需包含对应的 `xrun-darwin-arm64.json` 或 `xrun-windows-x86_64.json` 清单及其引用的文件。安装时不需要 Bun；产物准备见 [开发与发布](development.md#发布与内置文档)。
@@ -53,7 +53,7 @@ powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File .\instal
 离线安装或验收本地打包产物时，用 `--source-dir`／`-SourceDir` 指定产物目录。例如 macOS：
 
 ```bash
-bash install.sh --version 0.0.1-beta.3 --source-dir ./dist
+bash scripts/install.sh --version 0.0.1-beta.3 --source-dir ./dist
 ```
 
 默认 macOS App 安装到 `~/Applications/xrun.app`，CLI 安装到 `~/.local/bin/xrun`；Windows App 安装到 `%LOCALAPPDATA%\Programs\xrun`，CLI 安装到 `%LOCALAPPDATA%\xrun\bin`。`--install-dir`／`-InstallDir` 可指定父目录，AI 可直接使用 JSON 返回的 `executable` 路径调用程序。脚本只安装程序；网络加入、设备授权和后台服务的启用继续使用现有 App 或 CLI 命令。

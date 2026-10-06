@@ -30,7 +30,7 @@ cli_dir="$test_dir/CLI with spaces"
 mkdir -p "$test_dir/home"
 result="$test_dir/result.json"
 run_install() {
-  env HOME="$test_dir/home" bash "$root/install.sh" --version "$version" "$@" > "$result"
+  env HOME="$test_dir/home" bash "$root/scripts/install.sh" --version "$version" "$@" > "$result"
 }
 field() { /usr/bin/plutil -extract "$1" raw -o - "$result"; }
 expect_failure() {

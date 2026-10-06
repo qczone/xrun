@@ -123,8 +123,9 @@ jobs:
         if: runner.os != 'Windows'
         shell: bash
         run: |
-          mkdir -p dist/package/docs dist/package/cloudflare
-          cp "target/release/${{ matrix.binary }}" LICENSE README.md install.sh install.ps1 rust-toolchain.toml dist/package/
+          mkdir -p dist/package/docs dist/package/cloudflare dist/package/scripts
+          cp "target/release/${{ matrix.binary }}" LICENSE README.md rust-toolchain.toml dist/package/
+          cp scripts/install.sh scripts/install.ps1 dist/package/scripts/
           cp docs/*.md dist/package/docs/
           cp cloudflare/README.md dist/package/cloudflare/
           tar -C dist/package -czf "dist/xrun-${{ matrix.platform }}.tar.gz" .
@@ -134,7 +135,8 @@ jobs:
         run: |
           New-Item -ItemType Directory -Force dist/package | Out-Null
           New-Item -ItemType Directory -Force dist/package/cloudflare | Out-Null
-          Copy-Item "target/release/${{ matrix.binary }}", LICENSE, README.md, install.sh, install.ps1, rust-toolchain.toml -Destination dist/package
+          Copy-Item "target/release/${{ matrix.binary }}", LICENSE, README.md, rust-toolchain.toml -Destination dist/package
+          Copy-Item scripts -Destination dist/package -Recurse
           Copy-Item docs -Destination dist/package -Recurse
           Copy-Item cloudflare/README.md -Destination dist/package/cloudflare
           Compress-Archive -Path dist/package/* -DestinationPath "dist/xrun-${{ matrix.platform }}.zip"
