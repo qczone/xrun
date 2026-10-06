@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { copyFileSync, existsSync, mkdirSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, rmSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -38,6 +38,13 @@ copyFileSync(
 const separator = args.indexOf("--");
 const cliArgs = separator < 0 ? args : args.slice(0, separator);
 const cargoArgs = separator < 0 ? [] : args.slice(separator + 1);
+if (mode === "build" && !cliArgs.includes("--no-bundle")) {
+  // Cargo caches can restore installers from earlier versions alongside a new build.
+  rmSync(resolve(targetDir, debug ? "debug" : "release", "bundle"), {
+    recursive: true,
+    force: true,
+  });
+}
 run(
   process.execPath,
   [
