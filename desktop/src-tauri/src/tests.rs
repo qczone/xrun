@@ -448,3 +448,285 @@ fn join_failure_keeps_membership_and_retry_does_not_reuse_the_invitation() -> Re
         },
     )
 }
+
+#[test]
+fn history_ipc_preserves_cursors_binary_logs_and_database_errors() -> Result<()> {
+    isolated(
+        "history_ipc_preserves_cursors_binary_logs_and_database_errors",
+        || {
+            use xrun::{protocol::*, store::TaskStore};
+            let (_app, window) = build_app();
+            let path = config::device_dir()?.join("daemon.db");
+            let empty = invoke(&window, "task_history", json!({"filter":"all"})).unwrap();
+            assert_eq!(empty["jobs"], json!([]));
+            assert!(empty["db_id"].is_null());
+            assert_eq!(
+                invoke(&window, "file_history", json!({})).unwrap()["entries"],
+                json!([])
+            );
+            assert!(!path.exists(), "opening history created a task database");
+            let tasks = TaskStore::open(&path, true)?;
+            for n in 1..=55 {
+                tasks.insert(&Job {
+                    job_id: format!("{n:06}"),
+                    request_id: format!("request-{n}"),
+                    request_hash: "hash".into(),
+                    source_device_id: "source".into(),
+                    target_device_id: "target".into(),
+                    db_id: tasks.db_id.clone(),
+                    program: "program".into(),
+                    args: vec!["argument".into()],
+                    cwd: config::home_dir()?.to_string_lossy().into(),
+                    state: if n == 55 {
+                        JobState::Failed
+                    } else {
+                        JobState::Running
+                    },
+                    exit_code: None,
+                    signal: None,
+                    duration_ms: None,
+                    last_seq: 0,
+                    output_complete: true,
+                    incomplete_reason: None,
+                    error: None,
+                    created_at_ms: now_ms(),
+                    updated_at_ms: now_ms(),
+                    leftover_possible: false,
+                    process: None,
+                })?;
+                tasks.audit(json!({"source_device_id":"source","op":"pull","path":format!("file-{n}"),"size":2,"result":"ok"}))?;
+            }
+            let page = invoke(&window, "task_history", json!({"filter":"all"})).unwrap();
+            assert_eq!(page["db_id"], tasks.db_id);
+            assert_eq!(page["jobs"].as_array().unwrap().len(), 50);
+            let older = invoke(
+                &window,
+                "task_history",
+                json!({"filter":"all","before":page["next_cursor"]}),
+            )
+            .unwrap();
+            assert_eq!(older["jobs"].as_array().unwrap().len(), 5);
+            assert_eq!(older["jobs"][0]["job_id"], "000005");
+            assert!(older["next_cursor"].is_null());
+            let failed = invoke(&window, "task_history", json!({"filter":"failed"})).unwrap();
+            assert_eq!(failed["jobs"].as_array().unwrap().len(), 1);
+            assert_eq!(failed["jobs"][0]["job_id"], "000055");
+            assert!(
+                invoke(&window, "task_history", json!({"filter":"invalid"}))
+                    .unwrap_err()
+                    .as_str()
+                    .unwrap()
+                    .starts_with("INVALID_FILTER:")
+            );
+            for _ in 0..40 {
+                tasks.append("000001", "stdout", b"output\n")?;
+            }
+            tasks.append("000001", "stderr", &[0xff, 0])?;
+            let output = invoke(
+                &window,
+                "task_output",
+                json!({"dbId":tasks.db_id,"job":"000001"}),
+            )
+            .unwrap();
+            assert_eq!(output["events"].as_array().unwrap().len(), 32);
+            assert_eq!(output["events"][0]["seq"], 10);
+            let next = invoke(
+                &window,
+                "task_output",
+                json!({"dbId":tasks.db_id,"job":"000001","after":40}),
+            )
+            .unwrap();
+            assert_eq!(
+                next["events"],
+                json!([{"seq":41,"stream":"stderr","data_base64":"/wA="}])
+            );
+            assert_eq!(next["has_more"], false);
+            for (db, job, after, code) in [
+                ("previous-database", "000001", 0, "DB_RESET:"),
+                (tasks.db_id.as_str(), "missing", 0, "JOB_NOT_FOUND:"),
+                (tasks.db_id.as_str(), "000001", u64::MAX, "INVALID_CURSOR:"),
+            ] {
+                let error = invoke(
+                    &window,
+                    "task_output",
+                    json!({"dbId":db,"job":job,"after":after}),
+                )
+                .unwrap_err();
+                assert!(error.as_str().unwrap().starts_with(code), "{error}");
+            }
+            let files = invoke(&window, "file_history", json!({})).unwrap();
+            assert_eq!(files["entries"].as_array().unwrap().len(), 50);
+            let older = invoke(
+                &window,
+                "file_history",
+                json!({"before":files["next_cursor"]}),
+            )
+            .unwrap();
+            assert_eq!(older["entries"].as_array().unwrap().len(), 5);
+            assert_eq!(older["entries"][0]["path"], "file-5");
+            assert!(older["next_cursor"].is_null());
+            Ok(())
+        },
+    )
+}
+
+#[test]
+fn native_membership_commands_preserve_invitation_policy_and_revoke_by_name() -> Result<()> {
+    isolated(
+        "native_membership_commands_preserve_invitation_policy_and_revoke_by_name",
+        || {
+            let root = config::home_dir()?;
+            let cfg = relay_config(&root)?;
+            let id = seed(&cfg)?;
+            let _relay = start_relay(&cfg)?;
+            let (_app, window) = build_app();
+            let manager = xrun::network::manager(&id)?;
+            let mut members = vec![];
+            for (name, allow) in [("reader", false), ("operator", true)] {
+                let invite = invoke(&window, "invite", json!({"allow":allow})).unwrap();
+                assert_eq!(invite["allow"], allow);
+                assert_eq!(invite["expires_in"], 600);
+                let token = invite["link"].as_str().unwrap().rsplit_once('#').unwrap().1;
+                let (_, csr) = xrun::crypto::new_device_request()?;
+                let joined = manager.pair(token, name, &csr)?;
+                assert_eq!(joined.receipt.receipt.allow, allow);
+                xrun::network::observe(&id, &joined.roster)?;
+                members.push(joined.member.device_id);
+            }
+            let devices = invoke(&window, "devices", json!({})).unwrap();
+            assert!(devices["server_error"].is_null(), "{devices}");
+            assert_eq!(devices["devices"].as_array().unwrap().len(), 3);
+            let error = invoke(&window, "revoke", json!({"device":"manager1"})).unwrap_err();
+            assert!(
+                error.as_str().unwrap().starts_with("MANAGER_PROTECTED:"),
+                "{error}"
+            );
+            let result = invoke(&window, "revoke", json!({"device":"reader"})).unwrap();
+            assert_eq!(result["device_id"], members[0]);
+            assert_eq!(result["revoked"], true);
+            assert_eq!(result["undelivered"], json!([members[1]]));
+            let roster = manager.roster()?;
+            assert!(roster.member(&members[0])?.revoked);
+            assert!(!roster.member(&members[1])?.revoked);
+            assert!(invoke(&window, "status", json!({})).unwrap()["error"].is_null());
+            Ok(())
+        },
+    )
+}
+
+#[test]
+fn native_stop_finishes_the_daemon_without_erasing_membership() -> Result<()> {
+    isolated(
+        "native_stop_finishes_the_daemon_without_erasing_membership",
+        || {
+            let cfg = relay_config(&config::home_dir()?)?;
+            seed(&cfg)?;
+            let _relay = start_relay(&cfg)?;
+            let (_app, window) = build_app();
+            let dir = config::device_dir()?;
+            let identity = std::fs::read(dir.join("identity.toml"))?;
+            let task = tauri::async_runtime::spawn(xrun::daemon::run());
+            let deadline = Instant::now() + Duration::from_secs(10);
+            while !xrun::control::state(&dir)?.is_some_and(|s| s.connected) {
+                anyhow::ensure!(Instant::now() < deadline, "daemon did not connect");
+                std::thread::sleep(Duration::from_millis(20));
+            }
+            assert_eq!(invoke(&window, "stop", json!({})), Ok(Value::Null));
+            tauri::async_runtime::block_on(async {
+                tokio::time::timeout(Duration::from_secs(5), task).await??
+            })?;
+            assert!(!config::instance_running(&dir.join("daemon.lock"))?);
+            assert_eq!(invoke(&window, "stop", json!({})), Ok(Value::Null));
+            assert_eq!(std::fs::read(dir.join("identity.toml"))?, identity);
+            Ok(())
+        },
+    )
+}
+
+#[test]
+fn native_status_reports_invalid_links_and_recovers_membership_read_errors() -> Result<()> {
+    isolated(
+        "native_status_reports_invalid_links_and_recovers_membership_read_errors",
+        || {
+            seed(&relay_config(&config::home_dir()?)?)?;
+            let (app, window) = build_app();
+            assert_eq!(invoke(&window, "hide_icon", json!({})), Ok(Value::Null));
+            let error = invoke(
+                &window,
+                "copy_invitation",
+                json!({"link":"https://not-an-invitation"}),
+            )
+            .unwrap_err();
+            assert!(error.as_str().unwrap().starts_with("INVALID_LINK:"));
+            assert!(app.state::<Desktop>().error.lock().unwrap().is_some());
+            assert_eq!(
+                invoke(&window, "pause_access", json!({"paused":false})),
+                Ok(Value::Null)
+            );
+            let cache = config::device_dir()?.join("roster.db");
+            let backup = cache.with_extension("backup");
+            std::fs::rename(&cache, &backup)?;
+            let broken = invoke(&window, "status", json!({})).unwrap();
+            assert!(broken["network"].is_null());
+            assert!(
+                broken["error"]
+                    .as_str()
+                    .unwrap()
+                    .starts_with("MEMBER_STATE_MISSING:")
+            );
+            std::fs::rename(backup, cache)?;
+            let recovered = invoke(&window, "status", json!({})).unwrap();
+            assert!(recovered["error"].is_null());
+            assert_eq!(recovered["network"]["is_manager"], true);
+            #[cfg(target_os = "macos")]
+            {
+                // An unbundled dev process must not register a real login item.
+                assert!(
+                    invoke(&window, "autostart", json!({"enabled":true}))
+                        .unwrap_err()
+                        .as_str()
+                        .unwrap()
+                        .starts_with("APP_BUNDLE_REQUIRED:")
+                );
+                assert_eq!(
+                    invoke(&window, "remove_service", json!({})),
+                    Ok(Value::Null)
+                );
+                assert!(Identity::load().is_ok());
+            }
+            Ok(())
+        },
+    )
+}
+
+#[test]
+fn tray_text_prioritizes_setup_approval_stop_and_pause_over_connectivity() -> Result<()> {
+    isolated(
+        "tray_text_prioritizes_setup_approval_stop_and_pause_over_connectivity",
+        || {
+            let (app, _window) = build_app();
+            for (joined, approval, running, paused, connected, expected) in [
+                (false, true, true, true, Some(true), "xrun · 尚未加入"),
+                (true, true, false, false, Some(true), "xrun · 需要系统授权"),
+                (true, false, false, true, Some(true), "xrun · 服务已停止"),
+                (true, false, true, true, Some(true), "xrun · 远程访问已暂停"),
+                (true, false, true, false, Some(true), "xrun · 已连接"),
+                (true, false, true, false, None, "xrun · 旧版服务运行中"),
+                (true, false, true, false, Some(false), "xrun · 连接中…"),
+            ] {
+                let mut status = local_status(app.handle())?;
+                status.local.joined = joined;
+                status.service.approval_required = approval;
+                status.local.daemon_running = running;
+                status.local.remote_access_paused = paused;
+                status.local.daemon_connected = connected;
+                assert_eq!(tray_text(Ok(status)), expected);
+            }
+            assert_eq!(
+                tray_text(Err(anyhow::anyhow!("unreadable config"))),
+                "xrun · 状态读取失败"
+            );
+            Ok(())
+        },
+    )
+}

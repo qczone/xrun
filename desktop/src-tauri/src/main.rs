@@ -469,6 +469,19 @@ fn commands<R: tauri::Runtime>(builder: tauri::Builder<R>) -> tauri::Builder<R> 
         ])
 }
 
+fn tray_text(status: anyhow::Result<Status>) -> &'static str {
+    match status {
+        Ok(s) if !s.local.joined => "xrun · 尚未加入",
+        Ok(s) if s.service.approval_required => "xrun · 需要系统授权",
+        Ok(s) if !s.local.daemon_running => "xrun · 服务已停止",
+        Ok(s) if s.local.remote_access_paused => "xrun · 远程访问已暂停",
+        Ok(s) if s.local.daemon_connected == Some(true) => "xrun · 已连接",
+        Ok(s) if s.local.daemon_connected.is_none() => "xrun · 旧版服务运行中",
+        Ok(_) => "xrun · 连接中…",
+        Err(_) => "xrun · 状态读取失败",
+    }
+}
+
 fn main() {
     if std::env::args().any(|arg| arg == "--self-check") {
         let result = tauri::async_runtime::block_on(platform::check_helper()).and_then(|()| {
@@ -511,16 +524,7 @@ fn main() {
             let handle = app.handle().clone();
             tauri::async_runtime::spawn(async move {
                 loop {
-                    let text = match local_status(&handle) {
-                        Ok(s) if !s.local.joined => "xrun · 尚未加入",
-                        Ok(s) if s.service.approval_required => "xrun · 需要系统授权",
-                        Ok(s) if !s.local.daemon_running => "xrun · 服务已停止",
-                        Ok(s) if s.local.remote_access_paused => "xrun · 远程访问已暂停",
-                        Ok(s) if s.local.daemon_connected == Some(true) => "xrun · 已连接",
-                        Ok(s) if s.local.daemon_connected.is_none() => "xrun · 旧版服务运行中",
-                        Ok(_) => "xrun · 连接中…",
-                        Err(_) => "xrun · 状态读取失败",
-                    };
+                    let text = tray_text(local_status(&handle));
                     let _ = item.set_text(text);
                     if let Some(icon) = handle.tray_by_id("xrun") {
                         let _ = icon.set_tooltip(Some(text));

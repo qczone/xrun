@@ -7,6 +7,9 @@ use anyhow::{Context, Result, bail};
 use std::path::PathBuf;
 use std::{path::Path, time::Duration};
 
+#[cfg(all(test, unix))]
+mod tests;
+
 #[cfg(target_os = "macos")]
 pub const APP_DAEMON_LABEL: &str = "dev.qczone.xrun.daemon";
 
