@@ -20,6 +20,10 @@ use tokio::{
 };
 use tokio_tungstenite::tungstenite::Message;
 
+const TIMEOUT_SCAN_INTERVAL: Duration = Duration::from_millis(100);
+const TERMINATION_GRACE: Duration = Duration::from_secs(5);
+const OUTPUT_DRAIN_TIMEOUT: Duration = Duration::from_secs(2);
+
 #[derive(Serialize)]
 pub(crate) struct Outcome {
     pub result: StreamResult,
@@ -49,13 +53,13 @@ async fn writer<S>(mut sink: S, mut rx: mpsc::Receiver<Message>) -> Result<()>
 where
     S: futures_util::Sink<Message, Error = tokio_tungstenite::tungstenite::Error> + Unpin,
 {
-    let mut ping = tokio::time::interval(Duration::from_secs(15));
+    let mut ping = tokio::time::interval(HEARTBEAT_INTERVAL);
     loop {
         let message = tokio::select! {
             message = rx.recv() => match message { Some(m) => m, None => return Ok(()) },
             _ = ping.tick() => Message::Ping(vec![].into()),
         };
-        tokio::time::timeout(Duration::from_secs(300), sink.send(message))
+        tokio::time::timeout(RELAY_IDLE_TIMEOUT, sink.send(message))
             .await
             .context(ErrorCode::StreamTimeout.error("receiver is not reading"))??;
     }
@@ -122,8 +126,8 @@ pub(crate) async fn serve(
                         .fetch_add(bytes.len() as u64, Ordering::Relaxed);
                     if let Some(pipe) = &mut stdin {
                         let result = tokio::select! {
-                            r=pipe.write_all(&bytes)=>Some(r),
-                            _=input_exited.changed()=>None,
+                            result = pipe.write_all(&bytes) => Some(result),
+                            _ = input_exited.changed() => None,
                         };
                         match result {
                             Some(Ok(())) => {}
@@ -171,28 +175,20 @@ pub(crate) async fn serve(
     };
     let completion = async {
         let wait = async {
-            let mut timed_out = false;
-            let status = loop {
-                tokio::select! {
-                    r=child.wait()=>break r?,
-                    _=tokio::time::sleep(Duration::from_millis(100))=>{
-                        if timeout>0 && crate::clock::elapsed_clock_ms()?.saturating_sub(start)>=timeout.saturating_mul(1000) {
-                            timed_out = true;
-                            process::terminate(pid);
-                            break match tokio::time::timeout(Duration::from_secs(5),child.wait()).await {
-                                Ok(r)=>r?, Err(_)=>{process::force_kill(pid); child.wait().await?},
-                            };
-                        }
-                    }
-                }
+            let completed = tokio::select! {
+                status = child.wait() => status.map(Some),
+                result = timeout_reached(timeout, start) => result.map(|()| None),
+            }?;
+            let (status, timed_out) = match completed {
+                Some(status) => (status, false),
+                None => (terminate_and_wait(&mut child).await?, true),
             };
             let _ = exited.send(true);
             process::terminate(pid);
             // Kill descendants that keep output pipes open, while the unreaped
             // leader still protects its process-group ID from reuse.
             if !*output_drained.borrow() {
-                let _ =
-                    tokio::time::timeout(Duration::from_secs(2), output_drained.changed()).await;
+                let _ = tokio::time::timeout(OUTPUT_DRAIN_TIMEOUT, output_drained.changed()).await;
             }
             process::force_kill(pid);
             #[cfg(unix)]
@@ -234,6 +230,31 @@ pub(crate) async fn serve(
         stdout_bytes,
         stderr_bytes,
     })
+}
+
+async fn timeout_reached(seconds: u64, started_ms: u64) -> Result<()> {
+    if seconds == 0 {
+        return std::future::pending().await;
+    }
+    loop {
+        tokio::time::sleep(TIMEOUT_SCAN_INTERVAL).await;
+        if crate::clock::elapsed_clock_ms()?.saturating_sub(started_ms)
+            >= seconds.saturating_mul(1000)
+        {
+            return Ok(());
+        }
+    }
+}
+
+async fn terminate_and_wait(child: &mut ManagedChild) -> Result<std::process::ExitStatus> {
+    process::terminate(child.pid);
+    match tokio::time::timeout(TERMINATION_GRACE, child.wait()).await {
+        Ok(status) => status,
+        Err(_) => {
+            process::force_kill(child.pid);
+            child.wait().await
+        }
+    }
 }
 
 pub(crate) async fn client(ws: &mut Ws) -> Result<StreamResult> {

@@ -8,6 +8,7 @@ use rusqlite::{Connection, OpenFlags, OptionalExtension, params};
 use serde::{Deserialize, Serialize};
 use std::{path::Path, time::Duration};
 
+const HISTORY_BUSY_TIMEOUT: Duration = Duration::from_millis(500);
 const PAGE_SIZE: usize = 50;
 const LOG_PAGE_SIZE: usize = 32;
 
@@ -68,7 +69,7 @@ fn open(path: &Path) -> Result<Option<Connection>> {
         path,
         OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
     )?;
-    db.busy_timeout(Duration::from_millis(500))?;
+    db.busy_timeout(HISTORY_BUSY_TIMEOUT)?;
     let version: i64 = db.pragma_query_value(None, "user_version", |row| row.get(0))?;
     if version != crate::store::TASK_SCHEMA_VERSION {
         bail!(ErrorCode::DbSchemaMismatch.error("unsupported task database schema"));
@@ -202,7 +203,10 @@ fn files_at(path: &Path, before: Option<i64>) -> Result<FilePage> {
         });
     };
     let mut stmt = db.prepare(
-        "SELECT rowid,time,data FROM audit WHERE (?1 IS NULL OR rowid<?1) AND json_extract(data,'$.op') IN ('push','pull','screenshot') ORDER BY rowid DESC LIMIT ?2",
+        "SELECT rowid,time,data FROM audit
+         WHERE (?1 IS NULL OR rowid<?1)
+           AND json_extract(data,'$.op') IN ('push','pull','screenshot')
+         ORDER BY rowid DESC LIMIT ?2",
     )?;
     let mut rows = stmt.query(params![before, (PAGE_SIZE + 1) as i64])?;
     let mut entries = Vec::new();

@@ -3,7 +3,7 @@ use crate::error::ErrorCode;
 use crate::{
     config::{self, Identity, NetworkIdentity, PendingIdentity},
     crypto, daemon,
-    membership::{Manager, Pairing},
+    membership::{INVITATION_LIFETIME, Manager, Pairing},
     net::{self, Ws},
     protocol::RelayMessage,
     protocol::*,
@@ -36,7 +36,11 @@ pub async fn invite(id: &Identity, allow: bool) -> Result<serde_json::Value> {
     observe(id, &roster)?;
     synchronize(&roster).await?;
     let token = manager.invite(allow)?;
-    Ok(serde_json::json!({"link":invitation_link(&roster,&token)?,"allow":allow,"expires_in":600}))
+    Ok(serde_json::json!({
+        "link": invitation_link(&roster, &token)?,
+        "allow": allow,
+        "expires_in": INVITATION_LIFETIME.as_secs(),
+    }))
 }
 pub(crate) async fn revoke(id: &Identity, selector: &str) -> Result<serde_json::Value> {
     let manager = manager(id)?;
@@ -66,9 +70,13 @@ pub(crate) async fn revoke(id: &Identity, selector: &str) -> Result<serde_json::
         })
         .map(|m| m.device_id.clone())
         .collect();
-    Ok(
-        serde_json::json!({"device_id":target,"revoked":true,"roster_version":roster.roster.version,"undelivered":undelivered,"sync_error":sync_error}),
-    )
+    Ok(serde_json::json!({
+        "device_id": target,
+        "revoked": true,
+        "roster_version": roster.roster.version,
+        "undelivered": undelivered,
+        "sync_error": sync_error,
+    }))
 }
 async fn pairing_at(
     address: &str,

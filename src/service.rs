@@ -62,7 +62,8 @@ pub(crate) async fn install_with_executable(kind: &str, exe: &Path) -> Result<()
             "[Service]\nExecStart={} {kind}\nRestart=on-failure\nRestartSec=2\nTimeoutStopSec=12\n\n",
             "[Install]\nWantedBy=default.target\n"
         ),
-        systemd_quote(&exe.to_string_lossy())
+        systemd_quote(&exe.to_string_lossy()),
+        kind = kind,
     );
     config::atomic_private_write(&path, text.as_bytes())?;
     let user = tokio::process::Command::new("id")

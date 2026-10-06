@@ -26,6 +26,9 @@ use tokio_tungstenite::tungstenite::{
     protocol::{Role, WebSocketConfig},
 };
 
+const TLS_BUFFER_BYTES: usize = 256 * 1024;
+const FLOW_ACK_THRESHOLD_BYTES: usize = 256 * 1024;
+
 // Every direction has at most the duplex capacity plus one 64 KiB frame. The
 // task belongs to the stream; closing/cancelling the inner TLS session closes
 // the outer relay socket instead of leaving a background pump alive.
@@ -100,7 +103,7 @@ enum FlowControl {
     Ack { bytes: usize },
 }
 fn tunnel(outer: Ws, flow_control: bool) -> Tunnel {
-    let (inner, peer) = tokio::io::duplex(256 * 1024);
+    let (inner, peer) = tokio::io::duplex(TLS_BUFFER_BYTES);
     let progress = Arc::new(Progress::default());
     let sent = progress.clone();
     let pump = tokio::spawn(async move {
@@ -158,7 +161,7 @@ fn tunnel(outer: Ws, flow_control: bool) -> Tunnel {
                         if flow_control {
                             unacked += bytes.len();
                         }
-                        if flow_control && unacked >= 256 * 1024 {
+                        if flow_control && unacked >= FLOW_ACK_THRESHOLD_BYTES {
                             let ack = serde_json::to_string(&FlowControl::Ack { bytes: unacked })?;
                             unacked = 0;
                             tokio::time::timeout(RELAY_IDLE_TIMEOUT, async {

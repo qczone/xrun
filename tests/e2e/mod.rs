@@ -94,6 +94,7 @@ fn daemon(home: &Path) -> Daemon {
 }
 
 struct Suite {
+    #[cfg(unix)]
     root: PathBuf,
     source: PathBuf,
     target: PathBuf,
@@ -278,6 +279,7 @@ impl Suite {
         assert!(status.success());
 
         Ok(Self {
+            #[cfg(unix)]
             root,
             source,
             target,

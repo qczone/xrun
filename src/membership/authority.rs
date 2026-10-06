@@ -1,5 +1,5 @@
 //! Manager-owned root key, single-use invitations and roster mutation.
-use super::{records::*, storage::*};
+use super::{INVITATION_LIFETIME, records::*, storage::*};
 use crate::{config, crypto, error::ErrorCode, protocol::*};
 use anyhow::{Context, Result, bail};
 use rcgen::{
@@ -10,6 +10,9 @@ use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
 use serde::Serialize;
 use std::{path::Path, sync::Mutex};
 use time::{Duration, OffsetDateTime};
+const MAX_ACTIVE_INVITATIONS: i64 = 256;
+const NETWORK_CA_VALIDITY_DAYS: i64 = 20 * 365;
+
 /// One SQLite transaction commits member changes, invitation consumption and
 /// the newly signed version together. Concurrent CLI/daemon processes serialize
 /// on BEGIN IMMEDIATE rather than each maintaining a version counter.
@@ -52,7 +55,7 @@ impl Manager {
         params.is_ca = IsCa::Ca(BasicConstraints::Unconstrained);
         params.key_usages = vec![KeyUsagePurpose::KeyCertSign, KeyUsagePurpose::CrlSign];
         params.not_before = OffsetDateTime::now_utc() - Duration::days(1);
-        params.not_after = OffsetDateTime::now_utc() + Duration::days(7300);
+        params.not_after = OffsetDateTime::now_utc() + Duration::days(NETWORK_CA_VALIDITY_DAYS);
         let ca_pem = params.self_signed(&root_key)?.pem();
         let key_pem = root_key.serialize_pem();
         let (device_key, csr) = crypto::new_device_request()?;
@@ -131,12 +134,16 @@ impl Manager {
         let db = self.db.lock().unwrap();
         db.execute("DELETE FROM invitations WHERE expires<=?1", [now_ms()])?;
         let count: i64 = db.query_row("SELECT COUNT(*) FROM invitations", [], |r| r.get(0))?;
-        if count >= 256 {
+        if count >= MAX_ACTIVE_INVITATIONS {
             bail!(ErrorCode::InvitationLimit.error("too many active invitations"))
         }
         db.execute(
             "INSERT INTO invitations VALUES(?1,?2,?3)",
-            params![sha256(token.as_bytes()), now_ms() + 600_000, allow],
+            params![
+                sha256(token.as_bytes()),
+                now_ms() + INVITATION_LIFETIME.as_millis() as i64,
+                allow
+            ],
         )?;
         Ok(token)
     }
@@ -160,7 +167,7 @@ impl Manager {
             if !valid_name(name) {
                 bail!(ErrorCode::InvalidName.error("choose a nonreserved lowercase device name"))
             }
-            if roster.roster.members.len() >= 256 {
+            if roster.roster.members.len() >= MAX_NETWORK_MEMBERS {
                 bail!(ErrorCode::MemberLimit.error("network member limit reached"))
             }
             if roster

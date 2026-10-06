@@ -15,7 +15,7 @@ pub(super) async fn control_reconnect(rt: Arc<Runtime>) -> Result<()> {
         let started = tokio::time::Instant::now();
         let result = control_once(rt.clone()).await;
         rt.control.connected(false)?;
-        if started.elapsed() > Duration::from_secs(45) {
+        if started.elapsed() > HEARTBEAT_TIMEOUT {
             delay = 1;
         }
         if let Err(e) = result {

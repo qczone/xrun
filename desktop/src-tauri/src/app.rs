@@ -145,7 +145,12 @@ pub(crate) mod tests {
                     std::fs::create_dir_all(contents.join("MacOS"))?;
                     std::fs::write(
                         contents.join("Info.plist"),
-                        r#"<?xml version="1.0"?><plist version="1.0"><dict><key>CFBundleIdentifier</key><string>dev.qczone.xrun.native-tests</string><key>CFBundleExecutable</key><string>ui-test</string></dict></plist>"#,
+                        r#"<?xml version="1.0"?>
+                        <plist version="1.0"><dict>
+                            <key>CFBundleIdentifier</key>
+                            <string>dev.qczone.xrun.native-tests</string>
+                            <key>CFBundleExecutable</key><string>ui-test</string>
+                        </dict></plist>"#,
                     )?;
                     let bundled = contents.join("MacOS/ui-test");
                     std::fs::copy(&exe, &bundled)?;

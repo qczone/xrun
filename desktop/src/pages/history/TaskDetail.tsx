@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useLayoutEffect, useRef, useState } from "react";
 import type { Status } from "../../api";
 import { ErrorNotice } from "../../components/ErrorNotice";
 import { commandText, duration, isRunning, recordTime } from "../../format";
@@ -33,7 +33,7 @@ export function TaskDetail({
   const [follow, setFollow] = useState(true);
   const log = useRef<HTMLPreElement>(null);
   const lastScrollTop = useRef(0);
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (follow && log.current) {
       log.current.scrollTop = log.current.scrollHeight;
       lastScrollTop.current = log.current.scrollTop;

@@ -6,7 +6,7 @@ use crate::{
 };
 use anyhow::{Result, bail};
 use futures_util::{SinkExt, StreamExt};
-use std::{sync::Arc, time::Duration};
+use std::sync::Arc;
 use tokio_tungstenite::tungstenite::Message;
 
 use super::Runtime;
@@ -141,7 +141,7 @@ async fn follow(
             }
             return Ok(());
         }
-        if ping.elapsed() > Duration::from_secs(15) {
+        if ping.elapsed() > HEARTBEAT_INTERVAL {
             ws.send(Message::Ping(vec![].into())).await?;
             ping = tokio::time::Instant::now();
         }
@@ -150,7 +150,7 @@ async fn follow(
         }
         tokio::select! {
             _ = changes.changed() => {},
-            _ = tokio::time::sleep_until(ping + Duration::from_secs(15)) => {},
+            _ = tokio::time::sleep_until(ping + HEARTBEAT_INTERVAL) => {},
             m = ws.next() => match m {
                 Some(Ok(Message::Ping(b))) => ws.send(Message::Pong(b)).await?,
                 Some(Ok(Message::Pong(_))) => {},

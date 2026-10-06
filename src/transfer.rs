@@ -50,6 +50,7 @@ fn open_file(path: &Path) -> Result<std::fs::File> {
     }
     Ok(file)
 }
+#[cfg(any(target_os = "macos", windows, test))]
 pub(crate) fn read_file(path: &Path) -> Result<Vec<u8>> {
     let file = open_file(path)?;
     let mut bytes = vec![];

@@ -78,7 +78,7 @@ pub(super) async fn online_ids(id: &Identity, via: &SignedRoster) -> Result<Vec<
     let RelayMessage::Status { mut devices } = receive(&mut ws).await? else {
         bail!(ErrorCode::InvalidMessage.error("expected relay routes"))
     };
-    if devices.len() > 256 {
+    if devices.len() > MAX_NETWORK_MEMBERS {
         bail!(ErrorCode::InvalidMessage.error("invalid relay routes"))
     }
     devices.retain(|d| crate::membership::device_name(d).is_ok());

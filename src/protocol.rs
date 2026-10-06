@@ -18,6 +18,8 @@ pub const FILE_CHUNK: usize = 64 * 1024;
 pub const RELAY_WINDOW: usize = 64 * FILE_CHUNK;
 /// Maximum persisted output chunk in bytes.
 pub const LOG_CHUNK: usize = 32 * 1024;
+pub(crate) const MAX_NETWORK_MEMBERS: usize = 256;
+pub(crate) const MAX_RELAY_ADDRESSES: usize = 8;
 /// Relay heartbeats keep control bindings alive between requests.
 pub(crate) const HEARTBEAT_INTERVAL: std::time::Duration = std::time::Duration::from_secs(15);
 pub(crate) const HEARTBEAT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(45);

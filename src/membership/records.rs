@@ -135,61 +135,61 @@ impl SignedRoster {
         )?))
     }
     pub fn verify(&self, expected_network: &str) -> Result<()> {
-        let r = &self.roster;
-        if r.network_id != expected_network
-            || r.network_id != format!("net_{}", crypto::ca_spki_pin(&self.ca_pem)?)
+        let roster = &self.roster;
+        if roster.network_id != expected_network
+            || roster.network_id != format!("net_{}", crypto::ca_spki_pin(&self.ca_pem)?)
         {
             bail!(ErrorCode::NetworkMismatch.error("roster belongs to another network"))
         }
         verify(
             &self.ca_pem,
             "roster",
-            &(r, sha256(&crypto::cert_der(&self.ca_pem)?)),
+            &(roster, sha256(&crypto::cert_der(&self.ca_pem)?)),
             &self.signature,
         )?;
-        if r.version == 0
-            || r.members.is_empty()
-            || r.members.len() > 256
-            || r.relay_addresses.is_empty()
-            || r.relay_addresses.len() > 8
+        if roster.version == 0
+            || roster.members.is_empty()
+            || roster.members.len() > MAX_NETWORK_MEMBERS
+            || roster.relay_addresses.is_empty()
+            || roster.relay_addresses.len() > MAX_RELAY_ADDRESSES
         {
             bail!(ErrorCode::InvalidRoster.error("invalid version or member/address count"))
         }
         let mut ids = HashSet::new();
         let mut keys = HashSet::new();
         let mut names = HashSet::new();
-        for m in &r.members {
-            if !valid_id(&m.device_id)
-                || !valid_name(&m.name)
-                || m.key_fp.len() != 64
-                || !m.key_fp.bytes().all(|b| b.is_ascii_hexdigit())
-                || !ids.insert(&m.device_id)
-                || !keys.insert(&m.key_fp)
-                || (!m.revoked && !names.insert(&m.name))
+        for member in &roster.members {
+            if !valid_id(&member.device_id)
+                || !valid_name(&member.name)
+                || member.key_fp.len() != 64
+                || !member.key_fp.bytes().all(|b| b.is_ascii_hexdigit())
+                || !ids.insert(&member.device_id)
+                || !keys.insert(&member.key_fp)
+                || (!member.revoked && !names.insert(&member.name))
             {
                 bail!(ErrorCode::InvalidRoster.error("invalid or duplicated member"))
             }
         }
-        if !r
+        if !roster
             .members
             .iter()
-            .any(|m| m.device_id == r.manager_id && !m.revoked)
+            .any(|member| member.device_id == roster.manager_id && !member.revoked)
         {
             bail!(ErrorCode::InvalidRoster.error("manager must be an active member"))
         }
-        if !r.relay_ca_pem.is_empty() {
-            crypto::cert_der(&r.relay_ca_pem)?;
+        if !roster.relay_ca_pem.is_empty() {
+            crypto::cert_der(&roster.relay_ca_pem)?;
         }
-        for address in &r.relay_addresses {
-            let u = url::Url::parse(address)?;
-            if u.scheme() != "https"
-                || u.host_str().is_none()
-                || !u.username().is_empty()
-                || u.password().is_some()
-                || !(u.path() == "/"
-                    || crate::protocol::valid_relay_route(u.path().trim_start_matches('/')))
-                || u.query().is_some()
-                || u.fragment().is_some()
+        for address in &roster.relay_addresses {
+            let url = url::Url::parse(address)?;
+            if url.scheme() != "https"
+                || url.host_str().is_none()
+                || !url.username().is_empty()
+                || url.password().is_some()
+                || !(url.path() == "/"
+                    || crate::protocol::valid_relay_route(url.path().trim_start_matches('/')))
+                || url.query().is_some()
+                || url.fragment().is_some()
             {
                 bail!(
                     ErrorCode::InvalidRoster
@@ -255,16 +255,16 @@ impl SignedRoster {
 }
 impl SignedReceipt {
     pub fn verify(&self, roster: &SignedRoster, expected_device: &str) -> Result<()> {
-        let p = &self.receipt;
-        if p.network_id != roster.roster.network_id
-            || p.manager_id != roster.roster.manager_id
-            || p.device_id != expected_device
-            || p.device_id == p.manager_id
+        let receipt = &self.receipt;
+        if receipt.network_id != roster.roster.network_id
+            || receipt.manager_id != roster.roster.manager_id
+            || receipt.device_id != expected_device
+            || receipt.device_id == receipt.manager_id
         {
             bail!(ErrorCode::InvalidReceipt.error("pairing result is not bound to these devices"))
         }
-        verify(&roster.ca_pem, "pairing", p, &self.signature)?;
-        if roster.member(&p.device_id)?.revoked {
+        verify(&roster.ca_pem, "pairing", receipt, &self.signature)?;
+        if roster.member(&receipt.device_id)?.revoked {
             bail!(ErrorCode::DeviceRevoked.error("pairing identity has been revoked"))
         }
         Ok(())

@@ -1,7 +1,7 @@
 use crate::error::ErrorCode;
 use crate::{
     net::Ws,
-    protocol::{Data, FILE_CHUNK},
+    protocol::{Data, FILE_CHUNK, HEARTBEAT_INTERVAL, RELAY_IDLE_TIMEOUT},
 };
 use anyhow::{Context, Result, bail};
 use futures_util::{SinkExt, StreamExt};
@@ -116,13 +116,13 @@ pub(crate) async fn bridge(ws: &mut Ws, tcp: TcpStream) -> Result<()> {
         bail!(ErrorCode::ConnectionClosed.error("forwarded TCP connection interrupted"))
     };
     let writer = async move {
-        let mut ping = tokio::time::interval(Duration::from_secs(15));
+        let mut ping = tokio::time::interval(HEARTBEAT_INTERVAL);
         loop {
             let message = tokio::select! {
                 m = rx.recv() => match m { Some(m) => m, None => return Ok::<_, anyhow::Error>(()) },
                 _ = ping.tick() => Message::Ping(vec![].into()),
             };
-            tokio::time::timeout(Duration::from_secs(300), socket_tx.send(message))
+            tokio::time::timeout(RELAY_IDLE_TIMEOUT, socket_tx.send(message))
                 .await
                 .context(ErrorCode::ForwardTimeout.error("receiver is not reading"))??;
         }

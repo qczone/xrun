@@ -5,11 +5,10 @@ use crate::{
     crypto,
     membership::{Manager, SignedRoster},
     net::{self, Ws},
-    protocol::{Proof, RelayMessage},
+    protocol::{CONNECT_TIMEOUT, Proof, RelayMessage},
     secure,
 };
 use anyhow::{Result, bail};
-use std::time::Duration;
 
 use super::{authority, cache, current, manager};
 
@@ -39,7 +38,7 @@ pub(super) async fn open_via(
         &roster.roster.relay_addresses,
         &crypto::ca_spki_pin(&id.ca_pem)?,
     ) {
-        match tokio::time::timeout(Duration::from_secs(10), open_at(roster, &address, path)).await {
+        match tokio::time::timeout(CONNECT_TIMEOUT, open_at(roster, &address, path)).await {
             Ok(Ok(ws)) => {
                 net::remember(id, &address);
                 return Ok((ws, address));
@@ -118,12 +117,12 @@ pub(super) async fn peer_session(
         bail!(ErrorCode::InvalidMessage.error("expected an encrypted tunnel"))
     };
     let (mut ws, cert) = tokio::time::timeout(
-        Duration::from_secs(10),
+        CONNECT_TIMEOUT,
         secure::client_with_flow(outer, id, target, flow_control),
     )
     .await??;
     tokio::time::timeout(
-        Duration::from_secs(10),
+        CONNECT_TIMEOUT,
         secure::exchange_client(
             &mut ws,
             &cache()?,

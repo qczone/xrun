@@ -1,7 +1,7 @@
 //! Foreground Linux relay service startup and shutdown contract.
 use super::*;
 
-pub(super) async fn foreground_shutdown() -> Result<()> {
+pub(crate) async fn foreground_shutdown() -> Result<()> {
     let temp = tempfile::tempdir()?;
     let home = temp.path();
     let port = std::net::TcpListener::bind("127.0.0.1:0")?

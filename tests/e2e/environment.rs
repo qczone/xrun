@@ -2,7 +2,6 @@
 use super::*;
 pub(super) async fn check(suite: &Suite) -> Result<()> {
     let Suite {
-        root,
         source,
         target,
         runner,
@@ -81,6 +80,7 @@ pub(super) async fn check(suite: &Suite) -> Result<()> {
 
     #[cfg(unix)]
     {
+        let root = &suite.root;
         let link = root.join("cargo");
         std::os::unix::fs::symlink(runner.as_ref(), &link)?;
         let link = link.to_string_lossy();

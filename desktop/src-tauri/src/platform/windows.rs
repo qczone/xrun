@@ -4,9 +4,24 @@ pub(crate) async fn prepare_uninstall() -> Result<()> {
     let helper = helper()?;
     // Do not remove a separate CLI installation that happens to share the data directory.
     let output = tokio::process::Command::new("powershell.exe")
-    // An absent task is normal. Query by name reports an error when none exists.
-    .args(["-NoProfile", "-NonInteractive", "-Command", "$ErrorActionPreference='Stop'; $t=Get-ScheduledTask | Where-Object { $_.TaskPath -eq '\\' -and $_.TaskName -eq 'xrun-daemon' }; if ($t -and $t.Actions.Execute -eq $env:XRUN_SERVICE_EXE) { Write-Output owned }; exit 0"])
-    .env("XRUN_SERVICE_EXE", &helper).creation_flags(0x08000000).output().await?;
+        // An absent task is normal. Query by name reports an error when none exists.
+        .args([
+            "-NoProfile",
+            "-NonInteractive",
+            "-Command",
+            "$ErrorActionPreference='Stop';
+             $t=Get-ScheduledTask | Where-Object {
+                 $_.TaskPath -eq '\\' -and $_.TaskName -eq 'xrun-daemon'
+             };
+             if ($t -and $t.Actions.Execute -eq $env:XRUN_SERVICE_EXE) {
+                 Write-Output owned
+             };
+             exit 0",
+        ])
+        .env("XRUN_SERVICE_EXE", &helper)
+        .creation_flags(0x08000000)
+        .output()
+        .await?;
     if !output.status.success() {
         bail!(error::failure(
             "SERVICE_FAILED",

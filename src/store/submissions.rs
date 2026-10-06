@@ -1,4 +1,5 @@
 use super::*;
+const RECENT_SUBMISSION_WINDOW_MS: i64 = 24 * 60 * 60 * 1000;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct Submission {
     pub request_id: String,
@@ -55,8 +56,10 @@ impl SubmissionStore {
     pub(crate) fn recent(&self) -> Result<Vec<Submission>> {
         let db = self.0.lock().unwrap();
         let mut s = db.prepare("SELECT data FROM submissions WHERE time>=?1 ORDER BY time DESC")?;
-        s.query_map([now_ms() - 86_400_000], |r| r.get::<_, String>(0))?
-            .map(|r| decode(r?))
-            .collect()
+        s.query_map([now_ms() - RECENT_SUBMISSION_WINDOW_MS], |r| {
+            r.get::<_, String>(0)
+        })?
+        .map(|r| decode(r?))
+        .collect()
     }
 }

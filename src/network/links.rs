@@ -1,6 +1,6 @@
 //! Invitation and relay-link validation, including transport trust policy.
 use crate::error::ErrorCode;
-use crate::{crypto, membership::SignedRoster};
+use crate::{crypto, membership::SignedRoster, protocol::MAX_RELAY_ADDRESSES};
 use anyhow::{Context, Result, bail};
 
 pub(crate) fn invitation_link(roster: &SignedRoster, token: &str) -> Result<String> {
@@ -71,7 +71,7 @@ pub(super) fn parse_link(link: &str) -> Result<Invitation> {
             Ok(format!("https://{a}"))
         })
         .collect::<Result<Vec<_>>>()?;
-    if addresses.is_empty() || addresses.len() > 8 {
+    if addresses.is_empty() || addresses.len() > MAX_RELAY_ADDRESSES {
         bail!(ErrorCode::InvalidLink.error("invalid relay address count"))
     }
     Ok(Invitation {
@@ -148,7 +148,7 @@ pub(super) fn endpoint(link: &str) -> Result<RelayEndpoint> {
             Ok(format!("https://{a}/{route}"))
         })
         .collect::<Result<Vec<_>>>()?;
-    if addresses.is_empty() || addresses.len() > 8 {
+    if addresses.is_empty() || addresses.len() > MAX_RELAY_ADDRESSES {
         bail!(ErrorCode::InvalidRelay.error("invalid address count"))
     }
     Ok(RelayEndpoint {

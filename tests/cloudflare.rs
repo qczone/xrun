@@ -1,5 +1,5 @@
 mod common;
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, ensure};
 use common::*;
 use std::{
     path::{Path, PathBuf},
@@ -23,6 +23,7 @@ struct CloudLab {
     target: PathBuf,
     manager: Child,
     member: Child,
+    _relay: Option<TestRelay>,
 }
 impl Drop for CloudLab {
     fn drop(&mut self) {
@@ -56,10 +57,20 @@ async fn cloud_online(home: &Path, name: &str) -> Result<()> {
     .context("Cloudflare device did not connect")
 }
 async fn lab() -> Result<CloudLab> {
-    let file = std::env::var("XRUN_TEST_CF_LINK_FILE")
-        .context("Set XRUN_TEST_CF_LINK_FILE to a private file containing the relay URL")?;
-    let link = std::fs::read_to_string(file)?;
     let root = tempfile::tempdir()?;
+    let kind = std::env::var("XRUN_TEST_RELAY_KIND").unwrap_or_else(|_| "cloudflare".into());
+    let (relay, link) = match kind.as_str() {
+        "rust" => {
+            let (relay, link) = TestRelay::new(&root.path().join("relay")).await?;
+            (Some(relay), link)
+        }
+        "cloudflare" => {
+            let file = std::env::var("XRUN_TEST_CF_LINK_FILE")
+                .context("Set XRUN_TEST_CF_LINK_FILE to a private file containing the relay URL")?;
+            (None, std::fs::read_to_string(file)?)
+        }
+        _ => anyhow::bail!("unknown relay test kind"),
+    };
     let source = root.path().join("source");
     let target = root.path().join("target");
     std::fs::create_dir_all(&source)?;
@@ -97,6 +108,7 @@ async fn lab() -> Result<CloudLab> {
         target,
         manager,
         member,
+        _relay: relay,
     };
     if let Err(error) = cloud_online(&lab.source, "target1").await {
         let response = run(&lab.source, &["target1", "info", "--json"]).await;
@@ -109,15 +121,51 @@ async fn lab() -> Result<CloudLab> {
     Ok(lab)
 }
 
+async fn command_samples(lab: &CloudLab, count: usize) -> Result<Vec<f64>> {
+    let binary = binary().to_string_lossy().into_owned();
+    let mut samples = Vec::with_capacity(count);
+    for _ in 0..count {
+        let started = Instant::now();
+        assert_eq!(
+            ok(run(&lab.source, &["target1", "--", &binary, "--version"]).await).trim(),
+            format!("xrun {VERSION}")
+        );
+        samples.push(started.elapsed().as_secs_f64() * 1000.0);
+    }
+    Ok(samples)
+}
+
+async fn command_measurements(lab: &mut CloudLab) -> Result<serde_json::Value> {
+    if std::env::var_os("XRUN_BENCH_RELAY_OUTPUT").is_none() {
+        let samples = command_samples(lab, 1).await?;
+        println!("short command: {:.3}s", samples[0] / 1000.0);
+        return Ok(serde_json::Value::Null);
+    }
+    let count = std::env::var("XRUN_BENCH_RELAY_SAMPLES")
+        .unwrap_or_else(|_| "20".into())
+        .parse()?;
+    ensure!((1..=100).contains(&count), "sample count must be 1..100");
+    // Without the source daemon every CLI invocation establishes its own
+    // relay and peer TLS connection. The target daemon remains online.
+    stop_daemon(&lab.source, &mut lab.manager).await?;
+    let cold = command_samples(lab, count).await?;
+    println!("cold command samples: {count}");
+    lab.manager = logged(&lab.source, &["daemon"], "cf-benchmark-manager")?.spawn()?;
+    cloud_online(&lab.source, "source1").await?;
+    // Warm the source pool before measuring commands over reused sessions.
+    command_samples(lab, 1).await?;
+    let warm = command_samples(lab, count).await?;
+    println!("warm command samples: {count}");
+    Ok(serde_json::json!({"cold_ms":cold,"warm_ms":warm}))
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 #[ignore = "run via cloudflare test:interop, or set XRUN_TEST_CF_LINK_FILE for a deployed relay"]
 async fn public_relay_executes_transfers_streams_and_rejects_route_takeover() -> Result<()> {
     tokio::time::timeout(Duration::from_secs(600), async {
-        let lab = lab().await?;
+        let mut lab = lab().await?;
         let binary = binary().to_string_lossy().into_owned();
-        let started = Instant::now();
-        assert_eq!(ok(run(&lab.source, &["target1", "--", &binary, "--version"]).await).trim(), format!("xrun {VERSION}"));
-        println!("short command: {:.3}s", started.elapsed().as_secs_f64());
+        let commands = command_measurements(&mut lab).await?;
         let job = json(run(&lab.source, &["target1", "start", "--json", "--", &binary, "--version"]).await);
         let job_id = job["job_id"].as_str().context("job ID")?;
         let completed = json(run(&lab.source, &["target1", "wait", job_id, "--json"]).await);
@@ -148,10 +196,12 @@ async fn public_relay_executes_transfers_streams_and_rejects_route_takeover() ->
         println!("starting 64 MiB upload");
         let started = Instant::now();
         ok(run(&lab.source, &["target1", "push", &local.to_string_lossy(), &remote.to_string_lossy(), "--no-overwrite"]).await);
-        println!("64 MiB upload: {:.3}s; starting download", started.elapsed().as_secs_f64());
+        let upload_seconds = started.elapsed().as_secs_f64();
+        println!("64 MiB upload: {upload_seconds:.3}s; starting download");
         let started = Instant::now();
         let result = json(run(&lab.source, &["target1", "pull", &remote.to_string_lossy(), &download.to_string_lossy(), "--json"]).await);
-        println!("64 MiB download: {:.3}s", started.elapsed().as_secs_f64());
+        let download_seconds = started.elapsed().as_secs_f64();
+        println!("64 MiB download: {download_seconds:.3}s");
         assert_eq!(result["sha256"], sha256(&content));
         assert_eq!(sha256(&std::fs::read(download)?), sha256(&content));
         println!("64 MiB file transfer in both directions: passed");
@@ -192,6 +242,21 @@ async fn public_relay_executes_transfers_streams_and_rejects_route_takeover() ->
             assert_eq!(sha256(&output.stdout), sha256(bytes));
             println!("binary streaming: passed");
         }
+        if let Some(path) = std::env::var_os("XRUN_BENCH_RELAY_OUTPUT") {
+            let measurements = serde_json::json!({
+                "platform":std::env::consts::OS,
+                "architecture":std::env::consts::ARCH,
+                "relay_label":std::env::var("XRUN_BENCH_RELAY_LABEL").unwrap_or_else(|_| "public relay".into()),
+                "command_latency":commands,
+                "file_bytes":MAX_FILE,
+                "upload_seconds":upload_seconds,
+                "download_seconds":download_seconds,
+                "sha256_verified":true,
+            });
+            std::fs::write(path, serde_json::to_vec_pretty(&measurements)?)?;
+        }
+        stop_daemon(&lab.source, &mut lab.manager).await?;
+        stop_daemon(&lab.target, &mut lab.member).await?;
         Ok::<_, anyhow::Error>(())
     }).await?
 }
