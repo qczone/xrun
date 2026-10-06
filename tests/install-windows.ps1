@@ -128,7 +128,9 @@ try {
     & cargo @cargoArgs
     Assert-That ($LASTEXITCODE -eq 0) 'Installed CLI smoke test failed.'
     $result = Invoke-Process $uninstaller "/S _?=$appDir" 30000
-    Assert-That ($result.ExitCode -eq 0) 'Restored App did not uninstall successfully.'
+    $logPath = Join-Path $appDir 'xrun-install-error.log'
+    $details = if (Test-Path -LiteralPath $logPath) { Get-Content -LiteralPath $logPath -Raw } else { $result.Stderr }
+    Assert-That ($result.ExitCode -eq 0) "Restored App did not uninstall successfully (exit $($result.ExitCode)): $details"
     Write-Host 'Automatic Windows App and CLI installation and silent failure tests passed.'
 } finally {
     Remove-Item -LiteralPath $testDir -Recurse -Force
