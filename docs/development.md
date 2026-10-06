@@ -86,7 +86,7 @@ Package 工作流只生成 Actions 附件，不创建 Release。对外发布时�
 
 CLI 压缩包包含 LICENSE、README、docs/ 和 scripts/ 下的安装脚本，使用手册中的相对链接在压缩包中可用；开发文档引用的源码和 CI 文件在仓库中查看。`docs/usage.md` 编译进 CLI，随程序发布，仓库、附件和离线 `xrun doc` 使用同一份手册；更新后需要重新构建。文档测试验证无身份、无网络的帮助和章节查询，打包 smoke 检查内置手册。
 
-发布前同步根包、桌面 Rust 包、Cargo.lock 本地包版本、desktop/package.json 与 Tauri 版本。协议变化需要新完整版本，同一版本不能分发不同协议；重新构建 CLI / App / helper，并部署同版本 Cloudflare Worker。当前持久化签名无跨版本迁移，发布说明应明确数据兼容和重新组网要求。
+发布前同步根包、桌面 Rust 包、Cargo.lock 本地包版本、desktop/package.json 与 Tauri 版本，并重新构建 CLI / App / helper。同一发布版本不能分发不同协议；Cloudflare Worker 按声明的协议范围对接设备。协议、签名格式或数据库结构改变时，发布说明须明确兼容范围及迁移要求，具体规则见下文。
 
 ## 真实 Cloudflare 集成测试
 
@@ -104,3 +104,18 @@ XRUN_TEST_CF_LINK_FILE=/绝对路径/私有地址文件 \
 只修复实现或增加可安全忽略的诊断字段，提升发布版本即可。改变操作或执行选项的语义时，提升 `PROTOCOL`，实际实现相邻旧协议后调整支持范围；发送端通过 `Request::minimum_protocol` 与 `Session::send_request` 检查协商结果，接收端也检查。改变签名结构或编码时，提升 `SIGNATURE_FORMAT` 并明确重签 / 过渡方案，禁止因修改字段顺序而无意改变签名字节。固定测试向量位于 `tests/fixtures/signatures.json`，Rust 与 Cloudflare 的测试共同约束它。
 
 Linux CI 的 `bun scripts/test-compatibility.ts` 选择最近的兼容发布 tag，构建真实历史 CLI 与 Worker，在两种来源 / 目标组合和两套中转上验证加入、执行、文件传输、清单同步和撤销。协议 1 的首版没有兼容历史 tag，只报告初始化基线；beta.3 及更早版本不属于兼容测试范围。也可以显式传入兼容的 Git ref 做开发验收；这不等于已发布版本兼容证据。首次签名 / 协议切换不迁移历史网络。
+
+## 性能测量
+
+手动运行 [Measure performance](../.github/workflows/performance.yml)，选择基线 Git ref，获取 Linux、macOS、Windows 的空闲 CPU、日志写入和同期查询数据。两版分别构建测试入口和 CLI，使用隔离目录；发布号不同也能对照。原始优化前基线 `21a60c5` 尚无测量文件，脚本将最早的测量夹具编译到该基线的库上，并在报告中记录夹具来源；生产代码保持该 ref 的实现。时延是测量结果，不设 CI 吞吐阈值。
+
+```bash
+bun desktop/scripts/benchmark-core.ts a97ef65
+XRUN_BENCH_LOG_MODE=bursts bun desktop/scripts/benchmark-core.ts a97ef65
+# Linux：单独跟踪，跟踪期间的耗时不参与性能比较
+XRUN_BENCH_TRACE=1 bun desktop/scripts/benchmark-core.ts a97ef65
+```
+
+结果默认写入 `output/benchmarks/`。Linux 文件读取和数据库同步调用按采样时间窗统计，原始跟踪不保留且不采集读取内容。同步调用包含任务状态提交，日志块数不等于 fsync 次数；macOS / Windows 没有读取与同步调用统计，Linux / Windows 没有唤醒次数统计。
+
+`scripts/benchmark-cache.ts` 用三台独立目标和真实的 10、30、60 秒间隔测量缓存决策，需要设置 `XRUN_TEST_BINARY`、`XRUN_TEST_CF_LINK_FILE`、`XRUN_BENCH_CACHE_OUTPUT`。私有测试地址不写入报告；测试结束后停止 daemon 并删除隔离目录。

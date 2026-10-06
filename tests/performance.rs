@@ -80,12 +80,14 @@ async fn idle(pid: u32, seconds: u64) -> Result<serde_json::Value> {
     // Exclude handshake and setup work from the steady-state sample.
     tokio::time::sleep(Duration::from_secs(2)).await;
     let before = usage(pid)?;
+    let sample_started_ms = xrun::protocol::now_ms();
     let started = Instant::now();
     tokio::time::sleep(Duration::from_secs(seconds)).await;
     let after = usage(pid)?;
     let elapsed = started.elapsed().as_secs_f64();
     Ok(serde_json::json!({
         "sample_seconds": elapsed,
+        "sample_started_ms":sample_started_ms,"sample_ended_ms":xrun::protocol::now_ms(),
         "cpu_seconds_per_minute": (after.cpu_seconds - before.cpu_seconds) * 60.0 / elapsed,
         "wakeups_per_minute": before.wakeups.zip(after.wakeups)
             .map(|(before, after)| (after - before) as f64 * 60.0 / elapsed),
@@ -131,6 +133,72 @@ async fn idle_sessions(lab: &Lab, seconds: u64) -> Result<serde_json::Value> {
     Ok(serde_json::json!({"zero_sessions":empty,"ten_sessions":ten_sessions}))
 }
 
+async fn restart_target(lab: &mut Lab) -> Result<f64> {
+    stop_daemon(&lab.target, &mut lab.daemon).await?;
+    let started = Instant::now();
+    lab.daemon = logged(&lab.target, &["daemon"], "history-target")?.spawn()?;
+    online(&lab.source, "target1").await?;
+    Ok(started.elapsed().as_secs_f64() * 1000.0)
+}
+
+async fn history_recovery(lab: &mut Lab) -> Result<serde_json::Value> {
+    let small_database_restart_ms = restart_target(lab).await?;
+    stop_daemon(&lab.target, &mut lab.daemon).await?;
+    let path = lab.target.join(".xrun/daemon.db");
+    {
+        let database = rusqlite::Connection::open(&path)?;
+        let template: String =
+            database.query_row("SELECT data FROM jobs LIMIT 1", [], |row| row.get(0))?;
+        // Valid, old terminal payloads plus two unfinished records with no live process.
+        database.execute(
+            "WITH RECURSIVE history(n) AS (
+                SELECT 1 UNION ALL SELECT n+1 FROM history WHERE n<100002
+            ) INSERT INTO jobs
+            SELECT printf('history-%d',n),json_extract(?1,'$.source_device_id'),
+                printf('history-%d',n),json_set(?1,'$.job_id',printf('history-%d',n),
+                    '$.request_id',printf('history-%d',n),'$.created_at_ms',1,'$.process',NULL),
+                CASE WHEN n>100000 THEN 'starting' ELSE 'exited' END,
+                0,1,NULL,1,CASE WHEN n>100000 THEN NULL ELSE 0 END,NULL
+            FROM history",
+            [template],
+        )?;
+    }
+    let started = Instant::now();
+    lab.daemon = logged(&lab.target, &["daemon"], "history-target")?.spawn()?;
+    online(&lab.source, "target1").await?;
+    let large_database_restart_ms = started.elapsed().as_secs_f64() * 1000.0;
+    let query = Instant::now();
+    let active = json(cli(&lab.source, &["target1", "jobs", "--running", "--json"]).await);
+    ensure!(
+        active.as_array().is_some_and(Vec::is_empty),
+        "unfinished tasks were not recovered"
+    );
+    let running_query_ms = query.elapsed().as_secs_f64() * 1000.0;
+    let database =
+        rusqlite::Connection::open_with_flags(&path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)?;
+    let retained: i64 = database.query_row(
+        "SELECT COUNT(*) FROM jobs WHERE id LIKE 'history-%'",
+        [],
+        |row| row.get(0),
+    )?;
+    let lost: i64 = database.query_row(
+        "SELECT COUNT(*) FROM jobs WHERE id LIKE 'history-%' AND state='lost'",
+        [],
+        |row| row.get(0),
+    )?;
+    ensure!(
+        retained == 100002 && lost == 2,
+        "historical records changed or unfinished records were missed"
+    );
+    Ok(serde_json::json!({
+        "terminal_rows_inserted":100000,"old_unfinished_rows_inserted":2,
+        "small_database_restart_ms":small_database_restart_ms,
+        "large_database_restart_ms":large_database_restart_ms,
+        "running_query_ms":running_query_ms,"retained_rows":retained,"recovered_lost_rows":lost,
+        "scope":"Actual daemon restart until info is online, including SQLite quick_check; warm OS caches, one sample per size",
+    }))
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 #[ignore = "run with desktop/scripts/benchmark-core.ts; timings are measurements, not CI thresholds"]
 async fn measure_idle_sessions_and_dense_logs() -> Result<()> {
@@ -169,6 +237,7 @@ async fn measure_idle_sessions_and_dense_logs() -> Result<()> {
     ensure!(compiled.status.success(), "log fixture compilation failed");
     let mut runs = Vec::new();
     for _ in 0..3 {
+        let sample_started_ms = xrun::protocol::now_ms();
         let started = Instant::now();
         let job = json(
             cli(
@@ -211,13 +280,22 @@ async fn measure_idle_sessions_and_dense_logs() -> Result<()> {
             bytes == 5_000_000,
             "benchmark output was not fully persisted"
         );
-        runs.push(serde_json::json!({"elapsed_seconds":elapsed,"persisted_chunks":chunks,"jobs_latency_ms":queries}));
+        runs.push(serde_json::json!({
+            "sample_started_ms":sample_started_ms,"sample_ended_ms":xrun::protocol::now_ms(),
+            "elapsed_seconds":elapsed,"persisted_chunks":chunks,"jobs_latency_ms":queries,
+        }));
     }
+    let history = if mode == "dense" {
+        Some(history_recovery(&mut lab).await?)
+    } else {
+        None
+    };
     let result = serde_json::json!({
         "platform": std::env::consts::OS,
         "architecture": std::env::consts::ARCH,
         "idle": measured_idle,
         "logs": {"mode":mode,"lines":100_000,"line_bytes":50,"runs":runs},
+        "history":history,
         "not_measured": ["file-read syscall count", "fsync syscall count"],
     });
     if let Ok(path) = std::env::var("XRUN_BENCH_OUTPUT") {

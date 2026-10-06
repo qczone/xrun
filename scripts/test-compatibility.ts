@@ -13,9 +13,10 @@ import { join, resolve } from "node:path";
 
 // Real historical source builds. Old release-bound beta protocols are intentionally excluded.
 const root = resolve(import.meta.dir, "..");
+const targetDirectory = resolve(root, process.env.CARGO_TARGET_DIR || "target");
 const environment = {
   ...process.env,
-  CARGO_TARGET_DIR: join(root, "target"),
+  CARGO_TARGET_DIR: targetDirectory,
   CARGO_PROFILE_DEV_DEBUG: "0",
 };
 async function run(
@@ -133,7 +134,7 @@ if (!baseline) {
     const suffix = process.platform === "win32" ? ".exe" : "";
     const oldBinary = join(temporary, `previous${suffix}`);
     await copyFile(
-      join(root, `target/debug/xrun-compatibility-previous${suffix}`),
+      join(targetDirectory, `debug/xrun-compatibility-previous${suffix}`),
       oldBinary,
     );
     await chmod(oldBinary, 0o700);
@@ -167,7 +168,7 @@ if (!baseline) {
     const testSnapshot = join(temporary, `tests${suffix}`),
       currentBinary = join(temporary, `current${suffix}`);
     await copyFile(test, testSnapshot);
-    await copyFile(join(root, `target/debug/xrun${suffix}`), currentBinary);
+    await copyFile(join(targetDirectory, `debug/xrun${suffix}`), currentBinary);
     await chmod(testSnapshot, 0o700);
     await chmod(currentBinary, 0o700);
     const env = {

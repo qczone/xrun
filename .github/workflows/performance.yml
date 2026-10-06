@@ -1,0 +1,88 @@
+name: Measure performance
+
+on:
+  workflow_dispatch:
+    inputs:
+      baseline:
+        description: Git ref used for the before measurement
+        type: string
+        default: 21a60c5
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  measure:
+    name: ${{ matrix.runner }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-24.04, macos-15, windows-2022]
+    env:
+      XRUN_BASELINE_REF: ${{ inputs.baseline }}
+      XRUN_BENCH_OUTPUT_DIR: output/benchmarks
+      XRUN_TEST_LOG_DIR: ${{ github.workspace }}/target/test-logs
+      CARGO_PROFILE_DEV_DEBUG: '0'
+      CARGO_PROFILE_TEST_DEBUG: '0'
+      CARGO_INCREMENTAL: '0'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - uses: ilammy/msvc-dev-cmd@0b201ec74fa43914dc39ae48a89fd1d8cb592756
+        if: runner.os == 'Windows'
+        with:
+          arch: x64
+      - name: Rust toolchain
+        id: toolchain
+        shell: bash
+        run: |
+          rustup toolchain install --no-self-update
+          echo "version=$(rustc --version)" >> "$GITHUB_OUTPUT"
+      - name: Cache Cargo dependencies and measurement builds
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target/debug
+          key: xrun-${{ runner.os }}-${{ runner.arch }}-measure-${{ steps.toolchain.outputs.version }}-${{ hashFiles('Cargo.lock') }}
+          restore-keys: xrun-${{ runner.os }}-${{ runner.arch }}-test-${{ steps.toolchain.outputs.version }}-
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
+        with:
+          bun-version-file: desktop/package.json
+      - name: Measure idle sessions and dense logs
+        shell: bash
+        run: bun desktop/scripts/benchmark-core.ts "$XRUN_BASELINE_REF"
+      - name: Measure burst logs and concurrent queries
+        shell: bash
+        env:
+          XRUN_BENCH_LOG_MODE: bursts
+        run: bun desktop/scripts/benchmark-core.ts "$XRUN_BASELINE_REF"
+      - name: Count file reads and database sync calls separately
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y strace
+          XRUN_BENCH_TRACE=1 bun desktop/scripts/benchmark-core.ts "$XRUN_BASELINE_REF"
+          XRUN_BENCH_TRACE=1 XRUN_BENCH_LOG_MODE=bursts bun desktop/scripts/benchmark-core.ts "$XRUN_BASELINE_REF"
+      - name: Upload measurements
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: performance-${{ runner.os }}-${{ runner.arch }}
+          path: output/benchmarks/*.json
+          if-no-files-found: error
+      - name: Upload failed test process logs
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: performance-logs-${{ runner.os }}-${{ runner.arch }}
+          path: ${{ env.XRUN_TEST_LOG_DIR }}/*.log
+          if-no-files-found: ignore
+          retention-days: 7

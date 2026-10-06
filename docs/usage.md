@@ -22,7 +22,7 @@
 
 ## 安装
 
-CLI 和 daemon 是同一个 Rust 二进制，运行已构建程序不需要 Rust、Node.js 或 Bun。桌面 App 管理网络、授权与服务，远程执行和文件传输使用 CLI。当前版本为 `0.0.1-beta.3`；本机 CLI 与 daemon 要求发布版本一致，设备与中转按协议范围协商互通。
+CLI 和 daemon 是同一个 Rust 二进制，运行已构建程序不需要 Rust、Node.js 或 Bun。桌面 App 管理网络、授权与服务，远程执行和文件传输使用 CLI。当前版本为 `0.0.1-beta.4`；本机 CLI 与 daemon 要求发布版本一致，设备与中转按协议范围协商互通。
 
 | 平台 | 安装方式 |
 | --- | --- |
@@ -39,13 +39,13 @@ CLI 可放在 `~/.local/bin/xrun`，Windows 可用 `%LOCALAPPDATA%\xrun\bin\xrun
 CLI 压缩包和源码中的安装脚本位于 `scripts/`。以下命令从解压目录或项目根目录执行；单独下载发布附件中的脚本时，将脚本路径替换为下载位置：
 
 ```bash
-bash scripts/install.sh --version 0.0.1-beta.3
-bash scripts/install.sh --version 0.0.1-beta.3 --component cli
+bash scripts/install.sh --version 0.0.1-beta.4
+bash scripts/install.sh --version 0.0.1-beta.4 --component cli
 ```
 
 ```powershell
-powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File .\scripts\install.ps1 -Version 0.0.1-beta.3
-powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File .\scripts\install.ps1 -Version 0.0.1-beta.3 -Component cli
+powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File .\scripts\install.ps1 -Version 0.0.1-beta.4
+powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File .\scripts\install.ps1 -Version 0.0.1-beta.4 -Component cli
 ```
 
 默认下载地址是 `https://github.com/qczone/xrun/releases/download/v<完整版本>/`。`--base-url`／`-BaseUrl` 可指定其他 HTTPS 产物目录。每个目录需包含对应的 `xrun-darwin-arm64.json` 或 `xrun-windows-x86_64.json` 清单及其引用的文件。安装时不需要 Bun；产物准备见 [开发与发布](development.md#发布与内置文档)。
@@ -53,7 +53,7 @@ powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File .\script
 离线安装或验收本地打包产物时，用 `--source-dir`／`-SourceDir` 指定产物目录。例如 macOS：
 
 ```bash
-bash scripts/install.sh --version 0.0.1-beta.3 --source-dir ./dist
+bash scripts/install.sh --version 0.0.1-beta.4 --source-dir ./dist
 ```
 
 默认 macOS App 安装到 `~/Applications/xrun.app`，CLI 安装到 `~/.local/bin/xrun`；Windows App 安装到 `%LOCALAPPDATA%\Programs\xrun`，CLI 安装到 `%LOCALAPPDATA%\xrun\bin`。`--install-dir`／`-InstallDir` 可指定父目录，AI 可直接使用 JSON 返回的 `executable` 路径调用程序。脚本只安装程序；网络加入、设备授权和后台服务的启用继续使用现有 App 或 CLI 命令。

@@ -57,7 +57,7 @@ pub(super) async fn data_session(
             let mut stop = rt.stop.subscribe();
             loop {
                 let req = tokio::select! {
-                    req = tokio::time::timeout(Duration::from_secs(60), net::receive::<Data>(&mut ws)) => req??,
+                    req = tokio::time::timeout(REQUEST_IDLE_TIMEOUT, net::receive::<Data>(&mut ws)) => req??,
                     _ = stop.changed() => bail!(ErrorCode::DaemonStopping.error("daemon shutting down")),
                     result = access_ended(&rt, &lease) => return result,
                 };

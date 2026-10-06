@@ -29,6 +29,7 @@ pub(crate) const RELAY_IDLE_TIMEOUT: std::time::Duration = std::time::Duration::
 pub(crate) const AUTH_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
 pub(crate) const CONNECT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
 pub(crate) const CLOSE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(1);
+pub(crate) const REQUEST_IDLE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(90);
 #[derive(Debug, Clone, Serialize, Deserialize)]
 /// Member identity plus optional peer metadata; online reports a relay control binding.
 pub struct Device {

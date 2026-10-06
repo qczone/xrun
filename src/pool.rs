@@ -21,8 +21,11 @@ use std::{
 use tokio::{sync::Semaphore, task::JoinSet, time::Instant};
 use tokio_tungstenite::tungstenite::Message;
 
-const IDLE: Duration = Duration::from_secs(30);
-const MAX_IDLE: usize = 2;
+// Measured 10/30/60-second bursts to three targets. Keep below the endpoint
+// request idle timeout; this client's idle cache uses at most three of
+// Cloudflare's eight session slots.
+const IDLE: Duration = Duration::from_secs(75);
+const MAX_IDLE: usize = 3;
 struct Cached {
     ws: Ws,
     binding: String,
@@ -82,8 +85,20 @@ impl Pool {
         }
         let cached = {
             let mut idle = self.idle.lock().unwrap();
-            idle.retain(|_, c| {
-                c.since.elapsed() < IDLE && c.expires > now_ms() / 1000 && c.binding == stamp
+            idle.retain(|device, cached| {
+                let valid = cached.since.elapsed() < IDLE
+                    && cached.expires > now_ms() / 1000
+                    && cached.binding == stamp;
+                if !valid {
+                    tracing::debug!(
+                        target = device,
+                        idle_expired = cached.since.elapsed() >= IDLE,
+                        certificate_expired = cached.expires <= now_ms() / 1000,
+                        membership_changed = cached.binding != stamp,
+                        "discarding cached operation session"
+                    );
+                }
+                valid
             });
             idle.remove(target)
         };
@@ -101,11 +116,14 @@ impl Pool {
                 Ok::<_, anyhow::Error>(value)
             })
             .await;
-            if let Ok(Ok(value)) = probe
-                && cached.expires > now_ms() / 1000
-            {
-                tracing::debug!(target, "reusing operation session");
-                return Ok((cached.ws, value, stamp, cached.expires));
+            match probe {
+                Ok(Ok(value)) if cached.expires > now_ms() / 1000 => {
+                    tracing::debug!(target, "reusing operation session");
+                    return Ok((cached.ws, value, stamp, cached.expires));
+                }
+                result => {
+                    tracing::debug!(target, ?result, "cached operation session probe failed");
+                }
             }
             // The probe contains no operation. A stale/broken connection can
             // safely be replaced; requests are never replayed here.
@@ -341,21 +359,24 @@ mod tests {
     async fn cache_caps_idle_sockets_and_expires_certificates_and_idle_entries() {
         let pool = Pool::default();
         let expires = now_ms() / 1000 + 300;
-        pool.put(
-            "oldest".into(),
-            entry(Instant::now() - Duration::from_secs(2), expires).await,
-        );
-        pool.put(
-            "second".into(),
-            entry(Instant::now() - Duration::from_secs(1), expires).await,
-        );
-        pool.put("third".into(), entry(Instant::now(), expires).await);
-        assert_eq!(pool.idle.lock().unwrap().len(), 2);
-        assert!(!pool.idle.lock().unwrap().contains_key("oldest"));
+        for index in 0..=MAX_IDLE {
+            pool.put(
+                format!("device{index}"),
+                entry(
+                    Instant::now() - Duration::from_secs((MAX_IDLE - index + 1) as u64),
+                    expires,
+                )
+                .await,
+            );
+        }
+        assert_eq!(pool.idle.lock().unwrap().len(), MAX_IDLE);
+        assert!(!pool.idle.lock().unwrap().contains_key("device0"));
         {
             let mut idle = pool.idle.lock().unwrap();
-            idle.get_mut("second").unwrap().expires = now_ms() / 1000;
-            idle.get_mut("third").unwrap().since = Instant::now() - IDLE;
+            idle.get_mut("device1").unwrap().expires = now_ms() / 1000;
+            for index in 2..=MAX_IDLE {
+                idle.get_mut(&format!("device{index}")).unwrap().since = Instant::now() - IDLE;
+            }
         }
         pool.prune();
         assert!(pool.idle.lock().unwrap().is_empty());

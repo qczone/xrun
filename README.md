@@ -34,7 +34,7 @@ xrun linux1 forward 8080:3000
 
 ## 安装与文档
 
-当前版本为 `0.0.1-beta.3`。macOS Apple Silicon 提供 DMG / App ZIP，Windows x86_64 提供用户级安装程序；CLI 提供三个平台的压缩包，其中 Linux 为 x86_64。安装包和自动安装脚本的使用见 [安装说明](docs/usage.md#安装)。
+当前版本为 `0.0.1-beta.4`。macOS Apple Silicon 提供 DMG / App ZIP，Windows x86_64 提供用户级安装程序；CLI 提供三个平台的压缩包，其中 Linux 为 x86_64。安装包和自动安装脚本的使用见 [安装说明](docs/usage.md#安装)。
 
 - [完整使用手册](docs/usage.md)：安装、加入、授权、执行、任务、文件、服务与排错。
 - [开发与发布](docs/development.md)：源码构建、检查、测试、打包和发布产物。

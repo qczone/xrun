@@ -1,4 +1,4 @@
-import { PROTOCOL, PROTOCOL_HEADER } from "../src/protocol";
+import { PROTOCOL } from "../src/protocol";
 import {
   mkdtemp,
   mkdir,
@@ -33,7 +33,12 @@ async function git(...args: string[]): Promise<string> {
   if ((await process.exited) !== 0) throw new Error(`git ${args[0]} failed`);
   return output;
 }
-async function measure(entry: string, sessions: number) {
+async function measure(
+  entry: string,
+  sessions: number,
+  fixtures = { fixture, VERSION },
+  protocol = PROTOCOL,
+) {
   const build = await Bun.build({
     entrypoints: [entry],
     target: "browser",
@@ -50,21 +55,27 @@ async function measure(entry: string, sessions: number) {
       durableObjects: { NETWORKS: { className: "TestRelay", useSQLite: true } },
       bindings: {
         RELAY_ROUTE: secret,
-        XRUN_PROTOCOL_MIN: PROTOCOL.min, XRUN_PROTOCOL_MAX: PROTOCOL.max,
+        XRUN_VERSION: fixtures.VERSION,
+        XRUN_PROTOCOL_MIN: protocol.min,
+        XRUN_PROTOCOL_MAX: protocol.max,
         XRUN_TEST_PROOF_GATE: "http://127.0.0.1",
       },
     }),
   );
   try {
     const origin = (await runtime.ready).origin;
-    const network = await fixture(),
+    const network = await fixtures.fixture(),
       target = await network.member(),
       source = await network.member();
     async function open(path: string) {
       const response = await runtime.dispatchFetch(
         `${origin}/${secret}${path}`,
         {
-          headers: { Upgrade: "websocket", "X-Xrun-Version": VERSION, "X-Xrun-Protocol": PROTOCOL_HEADER },
+          headers: {
+            Upgrade: "websocket",
+            "X-Xrun-Version": fixtures.VERSION,
+            "X-Xrun-Protocol": `${protocol.min}-${protocol.max}`,
+          },
         },
       );
       if (!response.webSocket) throw new Error(`Upgrade ${response.status}`);
@@ -157,7 +168,7 @@ try {
   )
     .trim()
     .split("\n");
-  const sourceDirectory = join(temporary, "src");
+  const sourceDirectory = join(temporary, "cloudflare/src");
   for (const file of files) {
     const destination = join(
       sourceDirectory,
@@ -171,6 +182,24 @@ try {
     join(temporary, "node_modules"),
     "junction",
   );
+  const fixtureFile = join(temporary, "cloudflare/tests/fixtures.ts");
+  await mkdir(resolve(fixtureFile, ".."), { recursive: true });
+  await writeFile(
+    fixtureFile,
+    await git("show", `${baseline}:cloudflare/tests/fixtures.ts`),
+  );
+  await writeFile(
+    join(temporary, "Cargo.toml"),
+    await git("show", `${baseline}:Cargo.toml`),
+  );
+  const previousFixtures = (await import(
+    fixtureFile
+  )) as typeof import("../tests/fixtures");
+  const previousProtocol = files.some(
+    (file) => file === "cloudflare/src/protocol.ts",
+  )
+    ? (await import(join(sourceDirectory, "protocol.ts"))).PROTOCOL
+    : PROTOCOL;
   const currentEntry = resolve(
     import.meta.dir,
     "../tests/workerd/relay-worker.ts",
@@ -183,7 +212,12 @@ try {
   await writeFile(oldEntry, source);
   const results = [];
   for (const sessions of [1, 8]) {
-    const before = await measure(oldEntry, sessions),
+    const before = await measure(
+        oldEntry,
+        sessions,
+        previousFixtures,
+        previousProtocol,
+      ),
       after = await measure(currentEntry, sessions);
     results.push({
       baseline,
