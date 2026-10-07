@@ -1,7 +1,16 @@
 import { expect, test } from "bun:test";
-import { act, fireEvent, screen, waitFor } from "@testing-library/react";
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
+import { Profiler } from "react";
 import { fixture } from "./fixtures";
 import type { Status } from "../src/api";
+import { NetworkSetup } from "../src/components/NetworkSetup";
+import { t } from "../src/i18n";
 test("joining passes the link only to join and clears it from the form", async () => {
   const { calls } = await fixture({}, false);
   const link = screen.getByLabelText("邀请链接") as HTMLInputElement;
@@ -12,7 +21,9 @@ test("joining passes the link only to join and clears it from the form", async (
   await act(async () => {
     fireEvent.submit(document.getElementById("join-form")!);
   });
-  await waitFor(() => expect(screen.queryByLabelText("邀请链接")).toBeNull());
+  await waitFor(() =>
+    expect(screen.queryByLabelText("邀请链接") === null).toBe(true),
+  );
   expect(calls.find((call) => call.command === "join")?.args).toEqual({
     link: "xrun://test-secret",
     name: "mac2",
@@ -60,7 +71,7 @@ test("network creation clears secrets, prevents duplicate submissions and opens 
   ).toHaveLength(1);
   await act(async () => complete());
   await waitFor(() =>
-    expect(screen.queryByLabelText("中转部署链接")).toBeNull(),
+    expect(screen.queryByLabelText("中转部署链接") === null).toBe(true),
   );
   expect(
     document
@@ -97,14 +108,18 @@ test("creation can retry after an identity was saved but publication failed", as
   fireEvent.change(screen.getByLabelText("本机名称"), {
     target: { value: "mac2" },
   });
-  fireEvent.submit(document.getElementById("create-network-form")!);
+  await act(async () => {
+    fireEvent.submit(document.getElementById("create-network-form")!);
+  });
   await screen.findByRole("button", { name: "重试创建网络" });
   expect(
     (screen.getByLabelText("中转部署链接") as HTMLInputElement).value,
   ).toBe("xrun-relay://retry-secret");
-  fireEvent.submit(document.getElementById("create-network-form")!);
+  await act(async () => {
+    fireEvent.submit(document.getElementById("create-network-form")!);
+  });
   await waitFor(() =>
-    expect(screen.queryByLabelText("中转部署链接")).toBeNull(),
+    expect(screen.queryByLabelText("中转部署链接") === null).toBe(true),
   );
   expect(
     calls.filter((call) => call.command === "create_network"),
@@ -143,11 +158,13 @@ for (const command of ["join", "create_network"] as const) {
     fireEvent.change(screen.getByLabelText("本机名称"), {
       target: { value: "mac2" },
     });
-    fireEvent.submit(
-      document.getElementById(
-        command === "join" ? "join-form" : "create-network-form",
-      )!,
-    );
+    await act(async () => {
+      fireEvent.submit(
+        document.getElementById(
+          command === "join" ? "join-form" : "create-network-form",
+        )!,
+      );
+    });
     await screen.findByText(
       command === "join"
         ? "已加入网络，后台服务未启动。请启动后台服务。"
@@ -157,14 +174,57 @@ for (const command of ["join", "create_network"] as const) {
       expect(
         screen.queryByLabelText(
           command === "join" ? "邀请链接" : "中转部署链接",
-        ),
-      ).toBeNull(),
+        ) === null,
+      ).toBe(true),
     );
     expect(document.body.textContent).not.toContain("registered-secret");
-    fireEvent.click(screen.getByRole("button", { name: "启动后台服务" }));
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "启动后台服务" }));
+    });
     await screen.findByText("后台服务已启动");
     expect(calls.filter((call) => call.command === command)).toHaveLength(1);
     expect(calls.filter((call) => call.command === "start")).toHaveLength(1);
-    expect(screen.queryByRole("alert")).toBeNull();
+    expect(screen.queryByRole("alert") === null).toBe(true);
   });
 }
+
+test("completed registration never reopens the secret form while handling a service startup failure", async () => {
+  let complete!: (success: boolean) => void;
+  const pending = new Promise<boolean>((resolve) => {
+    complete = resolve;
+  });
+  let registered = false;
+  const visibleAfterRegistration: boolean[] = [];
+  const form = () => (
+    <Profiler
+      id="network-setup"
+      onRender={() => {
+        if (registered)
+          visibleAfterRegistration.push(
+            document.getElementById("create-network-form") !== null,
+          );
+      }}
+    >
+      <NetworkSetup
+        joined={registered}
+        startFailed={registered}
+        busy={false}
+        pending={null}
+        action={() => pending}
+        onCreated={() => {}}
+      />
+    </Profiler>
+  );
+  const view = render(form());
+  fireEvent.click(screen.getByRole("button", { name: t("setup.createNew") }));
+  fireEvent.change(screen.getByLabelText(t("setup.relayLink")), {
+    target: { value: "xrun-relay://registered-secret" },
+  });
+  fireEvent.submit(document.getElementById("create-network-form")!);
+  registered = true;
+  view.rerender(form());
+  // Observe every commit, including the frame before passive effects clear retry state.
+  await act(async () => complete(false));
+  expect(visibleAfterRegistration.length).toBeGreaterThan(0);
+  expect(visibleAfterRegistration.some(Boolean)).toBe(false);
+});

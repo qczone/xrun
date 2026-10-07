@@ -259,9 +259,20 @@ async fn offline_device_receives_revocation_on_reconnect_and_reports_pending_del
             ],
         )
         .await);
+        let other_id = identity(&other)?.device_id;
+        // Pairing returns before the manager finishes distributing the new roster.
+        tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                if roster(&lab.target)?.member(&other_id).is_ok() {
+                    return Ok::<_, anyhow::Error>(());
+                }
+                tokio::time::sleep(Duration::from_millis(25)).await;
+            }
+        })
+        .await
+        .context("target did not receive the new member before granting access")??;
         ok(cli(&lab.target, &["allow-from", "other1"]).await);
         let old = roster(&lab.target)?;
-        let other_id = identity(&other)?.device_id;
         assert!(!old.member(&other_id)?.revoked);
         stop_daemon(&lab.target, &mut lab.daemon).await?;
         let revoked = json(cli(&lab.source, &["revoke", "other1", "--json"]).await);

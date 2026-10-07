@@ -32,7 +32,7 @@ export function NetworkSetup({
       setRetry(false);
     }
   }, [joined, retry, startFailed]);
-  if (joined && !retry) return null;
+  if (joined && (!retry || startFailed)) return null;
 
   return (
     <section className="panel padded">
