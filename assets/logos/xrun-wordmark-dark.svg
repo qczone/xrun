@@ -1,5 +1,5 @@
 <?xml version="1.0" ?>
-<svg xmlns="http://www.w3.org/2000/svg" width="530" height="132" viewBox="-27 -116 530 132" fill="none" role="img" aria-label="xrun wordmark">
+<svg xmlns="http://www.w3.org/2000/svg" width="406" height="132" viewBox="-27 -116 406 132" fill="none" role="img" aria-label="xrun wordmark">
   <g transform="translate(-36.4285714286 -121.4285714286) scale(0.7142857143)">
     <defs>
       <linearGradient id="xrun-wordmark-dark-xo" x1="40" y1="30" x2="160" y2="170" gradientUnits="userSpaceOnUse">
@@ -23,14 +23,10 @@
     </g>
     <path d="M43.24 30L76.31 30A6 6 0 0 1 81.39 32.81L161.84 160.81A6 6 0 0 1 156.76 170L123.69 170A6 6 0 0 1 118.61 167.19L38.16 39.19A6 6 0 0 1 43.24 30Z" fill="url(#xrun-wordmark-dark-xo)"/>
   </g>
-  <path d="M112 -11V-89M112 -44C112 -72 129 -89 155 -89" fill="none" stroke="#F4F4F1" stroke-width="22" stroke-linecap="round" stroke-linejoin="round"/>
-  <path d="M192 -89V-50A39 39 0 0 0 270 -50M270 -89V-11" fill="none" stroke="#F4F4F1" stroke-width="22" stroke-linecap="round" stroke-linejoin="round"/>
-  <path d="M312 -11V-89M312 -50A39 39 0 0 1 390 -50V-11" fill="none" stroke="#F4F4F1" stroke-width="22" stroke-linecap="round" stroke-linejoin="round"/>
-  <defs>
-    <linearGradient id="xrun-wordmark-darkc" x1="425" y1="-22" x2="487" y2="0" gradientUnits="userSpaceOnUse">
-      <stop offset="0" stop-color="#B8F55A"/>
-      <stop offset="1" stop-color="#1FCB6B"/>
-    </linearGradient>
-  </defs>
-  <rect x="425" y="-22" width="62" height="22" rx="11" fill="url(#xrun-wordmark-darkc)"/>
+  <desc>Lettering set in Manrope SemiBold, converted to outlines. Source: https://github.com/google/fonts/tree/main/ofl/manrope</desc>
+  <g fill="#F4F4F1">
+    <path transform="translate(88.55556 -1.5) scale(0.088888889 -0.088888889)" d="M140 0L140 1080L326 1080L326 818L300 852Q320 904 352 947.5Q384 991 426 1019Q467 1049 517.5 1065.5Q568 1082 621 1085.5Q674 1089 723 1080L723 884Q670 898 605.5 892Q541 886 487 851Q436 818 406.5 771Q377 724 364 666.5Q351 609 351 545L351 0Z"/>
+    <path transform="translate(158.15556 -1.5) scale(0.088888889 -0.088888889)" d="M547 -29Q435 -29 359 7Q283 43 235.5 101.5Q188 160 163 229Q138 298 129 364Q120 430 120 480L120 1080L332 1080L332 549Q332 486 342.5 419.5Q353 353 382.5 296Q412 239 465.5 204Q519 169 605 169Q661 169 711 187.5Q761 206 798.5 247Q836 288 857.5 355Q879 422 879 518L1009 469Q1009 322 954 209.5Q899 97 796 34Q693 -29 547 -29ZM904 0L904 312L879 312L879 1080L1090 1080L1090 0Z"/>
+    <path transform="translate(260.68889 -1.5) scale(0.088888889 -0.088888889)" d="M898 0L898 531Q898 594 887.5 660.5Q877 727 847.5 784Q818 841 764.5 876Q711 911 625 911Q569 911 519 892.5Q469 874 431.5 833Q394 792 372.5 725Q351 658 351 562L221 611Q221 758 276 870.5Q331 983 434 1046Q537 1109 683 1109Q795 1109 871 1073Q947 1037 994.5 978.5Q1042 920 1067 851Q1092 782 1101 716Q1110 650 1110 600L1110 0ZM139 0L139 1080L326 1080L326 768L351 768L351 0Z"/>
+  </g>
 </svg>

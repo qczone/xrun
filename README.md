@@ -1,50 +1,77 @@
-# xrun
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="assets/logos/xrun-wordmark-dark.svg">
+    <img src="assets/logos/xrun-wordmark-light.svg" alt="xrun" width="203" height="66">
+  </picture>
+</p>
 
-xrun 让开发者和 AI 在已授权的 macOS、Windows、Linux 设备上执行程序、管理后台任务、传输文件、转发开发服务端口和截图。
+<p align="center">
+  <strong>在你的设备之间执行程序、管理任务和传输文件。</strong>
+</p>
 
-设备主动连接自建 Linux Rust 中转或 Cloudflare 中转，无需向客户端开放入站端口。设备之间端到端加密；目标设备自己决定谁能以当前用户权限访问本机。
+<p align="center">
+  <a href="docs/usage.md#安装">安装</a> ·
+  <a href="docs/usage.md#开始使用">开始使用</a> ·
+  <a href="docs/usage.md">使用手册</a> ·
+  <a href="docs/development.md">开发与发布</a>
+</p>
 
-## 适合哪些场景
+xrun 是面向开发者和 AI 的跨设备工具。通过同一套 CLI，使用已授权的 macOS、Windows 和 Linux 设备完成构建、测试、后台运行、文件传输、端口转发和截图。桌面 App 提供网络、访问权限、后台服务与本机活动的管理界面，支持中英文和明暗主题。
 
-- 从 Mac 驱动 Windows 或 Linux 完成构建、测试和运行，取回结果。
-- 启动远端后台程序，查询任务、读取日志或取消执行。
-- 下载文件，在本地编辑后上传；通过 Git 同步项目代码。
-- 把远端开发服务转发到本机浏览器，或截图检查图形界面。
-- 让 AI 使用同一套 CLI 操作已授权设备，依据退出码和 JSON 结果判断下一步。
+## 能做什么
+
+- **跨平台执行**：从 Mac 调用 Windows 构建程序，或在 Linux 上运行测试并接收输出和退出结果。
+- **管理后台任务**：启动远端程序，随后查询状态、读取日志、等待完成或取消执行。
+- **传输文件**：取回构建产物和报告，在本地编辑文件后再上传。
+- **检查远端界面与服务**：截取远端屏幕，或把远端开发服务的端口转发到本机浏览器。
+- **交给 AI 操作**：通过 CLI、稳定错误码和 JSON 结果决定下一步；帮助与完整手册均可离线读取。
+
+设备加入网络并授权后，可以从 Mac 发起：
 
 ```bash
 xrun linux1 -C /home/user/demo -- cargo test
-xrun win1 start -C 'D:\demo' -- 'target\debug\demo.exe'
+xrun win1 start -C 'D:\demo' -- cargo build
 xrun win1 screenshot ./screen.png
 xrun linux1 forward 8080:3000
 ```
 
-## 组成与平台
+任务、输出日志和文件操作记录保存在目标设备，桌面 App 可以查看本机记录。当前文件传输以单文件为单位，截图覆盖主显示器；尚不支持 PTY 终端、目录同步和离线任务排队。
 
-| 组件 | 平台与职责 |
-| --- | --- |
-| CLI 和 daemon | macOS、Windows、Linux；同一个 Rust 二进制发起调用或接受已授权请求 |
-| 桌面 App | macOS 13+、Windows；管理网络、授权、后台服务及本机活动记录 |
-| 中转 | Linux Rust 服务，或 Cloudflare Worker + Durable Object；接通连接并转发密文 |
-| 管理设备 | 创建网络的设备；签发成员身份和邀请，撤销成员 |
+## 连接与授权
 
-日常执行不要求管理设备在线，加入网络需要管理设备在线。成员身份与访问授权分开，加入后默认不能控制其他设备。
+所有设备主动连接同一个中转，无需向设备开放入站端口。中转可选择自建 Linux Rust 服务或 Cloudflare Worker + Durable Object，负责接通连接、转发设备间的端到端加密数据，不保存成员清单、任务、日志或文件。
 
-任务、输出日志和文件操作记录保存在目标设备。中转不保存成员清单、任务、日志或文件。当前支持单文件传输和主显示器截图，不提供交互终端、目录同步或离线任务排队。
+创建网络的设备是管理设备，负责签发邀请和撤销成员。**加入网络不等于获得访问权限**：目标设备单独决定允许谁访问本机，所有操作以目标设备的当前用户权限运行。
 
-## 安装与文档
+加入网络时管理设备需要在线；已加入设备的日常执行只需要中转、双方在线且身份和授权有效。
 
-当前版本为 `0.0.1-beta.5`。macOS Apple Silicon 提供 DMG / App ZIP，Windows x86_64 提供用户级安装程序；CLI 提供三个平台的压缩包，其中 Linux 为 x86_64。安装包和自动安装脚本的使用见 [安装说明](docs/usage.md#安装)。
+## 平台与安装
 
-- [完整使用手册](docs/usage.md)：安装、加入、授权、执行、任务、文件、服务与排错。
-- [开发与发布](docs/development.md)：源码构建、检查、测试、打包和发布产物。
-- [设计文档](docs/design.md)：架构、协议、行为契约与验收边界。
-- [Cloudflare 子项目](cloudflare/README.md)：Worker 开发、部署和测试。
+当前版本为 `0.0.1-beta.5`。
+
+| 平台 | CLI | 桌面 App |
+| --- | --- | --- |
+| macOS 13+ · Apple Silicon | 压缩包 | DMG / App ZIP |
+| Windows · x86_64 | 压缩包 | 当前用户安装程序 |
+| Linux · x86_64 | 压缩包 | — |
+
+CLI、设备后台服务和 Linux Rust 中转使用同一个二进制。运行发布包不需要安装 Rust、Node.js 或 Bun。
+
+[查看安装说明](docs/usage.md#安装)。macOS 和 Windows 另提供适合 AI 与自动化的安装脚本，支持指定版本、SHA-256 校验和 JSON 结果，详见 [自动安装](docs/usage.md#ai-和命令行自动安装)。
 
 安装 CLI 后，`xrun help` 查看简洁帮助，`xrun doc` 查看完整离线手册，`xrun doc --list` 列出章节。内置手册与仓库使用同一份文件，随程序发布。
 
+## 文档
+
+| 文档 | 内容 |
+| --- | --- |
+| [使用手册](docs/usage.md) | 安装、加入、授权、执行、任务、文件、服务与排错 |
+| [开发与发布](docs/development.md) | 源码构建、检查、测试、打包和发布产物 |
+| [设计文档](docs/design.md) | 架构、协议、行为契约与验收边界 |
+| [Cloudflare 中转](cloudflare/README.md) | Worker 开发、部署和测试 |
+
 ## 开发
 
-核心使用 Rust，桌面端使用 Tauri 2、React 和 TypeScript，现有 Web 脚本与测试使用 Bun。源码构建和三平台检查使用仓库固定的 Rust 工具链，详见 [开发说明](docs/development.md)。
+核心使用 Rust，桌面端使用 Tauri 2、React 和 TypeScript，Web 脚本与测试使用 Bun。构建与检查使用仓库固定的工具链，详见 [开发说明](docs/development.md)。
 
-许可证见 [LICENSE](LICENSE)。
+[MIT License](LICENSE)
