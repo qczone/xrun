@@ -1,7 +1,7 @@
 //! Fresh schema initialization and explicit rejection of unsupported databases.
 use crate::error::ErrorCode;
 use anyhow::{Result, bail};
-use rusqlite::Connection;
+use rusqlite::{Connection, TransactionBehavior};
 
 pub(crate) fn initialize(
     db: &mut Connection,
@@ -13,17 +13,24 @@ pub(crate) fn initialize(
     if version == supported {
         return Ok(());
     }
-    let tables: i64 = db.query_row(
+    // Only initialization needs a writer. A competing opener may have completed
+    // the schema while we waited, so every decision is repeated under this lock.
+    let transaction = db.transaction_with_behavior(TransactionBehavior::Immediate)?;
+    let version: i64 = transaction.pragma_query_value(None, "user_version", |row| row.get(0))?;
+    if version == supported {
+        transaction.commit()?;
+        return Ok(());
+    }
+    let tables: i64 = transaction.query_row(
         "SELECT COUNT(*) FROM sqlite_schema WHERE type='table' AND name NOT LIKE 'sqlite_%'",
         [],
         |row| row.get(0),
     )?;
     if version != 0 || tables != 0 {
         bail!(ErrorCode::DbSchemaMismatch.error(format!(
-            "{kind} schema {version} is unsupported; expected {supported}. Recreate the database explicitly while stopped."
+            "{kind} schema {version} is unsupported; expected {supported}. Use a matching xrun version or see `xrun doc upgrade` for explicit recovery while stopped."
         )));
     }
-    let transaction = db.transaction()?;
     transaction.execute_batch(schema)?;
     transaction.pragma_update(None, "user_version", supported)?;
     transaction.commit()?;
@@ -33,6 +40,48 @@ pub(crate) fn initialize(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn concurrent_first_openers_share_one_schema_without_losing_rows() -> Result<()> {
+        let directory = tempfile::tempdir()?;
+        for attempt in 0..8 {
+            let path = directory.path().join(format!("fresh-{attempt}.sqlite"));
+            let barrier = std::sync::Barrier::new(8);
+            std::thread::scope(|scope| -> Result<()> {
+                let workers: Vec<_> = (0..8)
+                    .map(|id| {
+                        let path = &path;
+                        let barrier = &barrier;
+                        scope.spawn(move || -> Result<()> {
+                            let mut db = Connection::open(path)?;
+                            db.busy_timeout(std::time::Duration::from_secs(5))?;
+                            barrier.wait();
+                            initialize(
+                                &mut db,
+                                "test",
+                                1,
+                                "CREATE TABLE example(id INTEGER PRIMARY KEY)",
+                            )?;
+                            db.execute("INSERT INTO example VALUES(?1)", [id])?;
+                            Ok(())
+                        })
+                    })
+                    .collect();
+                for worker in workers {
+                    worker.join().expect("database opener panicked")?;
+                }
+                Ok(())
+            })?;
+            let db = Connection::open(path)?;
+            assert_eq!(
+                db.query_row("SELECT COUNT(*) FROM example", [], |row| row
+                    .get::<_, i64>(0))?,
+                8
+            );
+        }
+        Ok(())
+    }
+
     #[test]
     fn schema_initialization_is_atomic_and_rejects_old_and_future_layouts() -> Result<()> {
         let mut db = Connection::open_in_memory()?;

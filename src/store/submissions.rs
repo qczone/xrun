@@ -63,3 +63,29 @@ impl SubmissionStore {
         .collect()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parallel_cli_openers_initialize_the_same_submission_store() -> Result<()> {
+        let directory = tempfile::tempdir()?;
+        let path = directory.path().join("submissions.sqlite");
+        let barrier = std::sync::Barrier::new(8);
+        std::thread::scope(|scope| -> Result<()> {
+            let workers: Vec<_> = (0..8)
+                .map(|_| {
+                    scope.spawn(|| {
+                        barrier.wait();
+                        SubmissionStore::open(&path).map(|_| ())
+                    })
+                })
+                .collect();
+            for worker in workers {
+                worker.join().expect("CLI database opener panicked")?;
+            }
+            Ok(())
+        })
+    }
+}
