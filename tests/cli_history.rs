@@ -5,6 +5,35 @@ use common::*;
 use std::{process::Stdio, time::Duration};
 use tokio::io::AsyncWriteExt;
 
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn parallel_cli_processes_initialize_one_fresh_submission_store() -> Result<()> {
+    tokio::time::timeout(Duration::from_secs(45), async {
+        let directory = tempfile::tempdir()?;
+        for round in 0..4 {
+            let home = directory.path().join(round.to_string());
+            std::fs::create_dir_all(&home)?;
+            let barrier = std::sync::Arc::new(tokio::sync::Barrier::new(8));
+            let mut processes = tokio::task::JoinSet::new();
+            for _ in 0..8 {
+                let home = home.clone();
+                let barrier = barrier.clone();
+                processes.spawn(async move {
+                    barrier.wait().await;
+                    assert_eq!(
+                        json(cli(&home, &["recent", "--json"]).await),
+                        serde_json::json!([])
+                    );
+                });
+            }
+            while let Some(process) = processes.join_next().await {
+                process?;
+            }
+        }
+        Ok::<_, anyhow::Error>(())
+    })
+    .await?
+}
+
 async fn script(lab: &Lab, text: &str) -> Result<String> {
     let shell = if cfg!(windows) { "powershell" } else { "sh" };
     let mut child = command(&lab.source, &["target1", "start", "--script", shell])

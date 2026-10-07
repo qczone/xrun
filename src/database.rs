@@ -2,6 +2,34 @@
 use crate::error::ErrorCode;
 use anyhow::{Result, bail};
 use rusqlite::{Connection, TransactionBehavior};
+use std::time::{Duration, Instant};
+
+const BUSY_TIMEOUT: Duration = Duration::from_secs(5);
+const WAL_RETRY_DELAY: Duration = Duration::from_millis(10);
+
+pub(crate) fn configure(db: &Connection) -> Result<()> {
+    // Concurrent first openers can both hold a read lock while requesting WAL.
+    // SQLite can return BUSY immediately for that upgrade, bypassing its busy
+    // handler. Retry only this idempotent pragma, within the same total budget.
+    let deadline = Instant::now() + BUSY_TIMEOUT;
+    loop {
+        db.busy_timeout(deadline.saturating_duration_since(Instant::now()))?;
+        match db.pragma_update(None, "journal_mode", "WAL") {
+            Ok(()) => break,
+            Err(rusqlite::Error::SqliteFailure(error, _))
+                if error.code == rusqlite::ErrorCode::DatabaseBusy && Instant::now() < deadline =>
+            {
+                std::thread::sleep(
+                    WAL_RETRY_DELAY.min(deadline.saturating_duration_since(Instant::now())),
+                );
+            }
+            Err(error) => return Err(error.into()),
+        }
+    }
+    db.busy_timeout(BUSY_TIMEOUT)?;
+    db.pragma_update(None, "synchronous", "FULL")?;
+    Ok(())
+}
 
 pub(crate) fn initialize(
     db: &mut Connection,

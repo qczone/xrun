@@ -12,9 +12,7 @@ pub(super) fn database(path: &Path, create: bool) -> Result<Connection> {
     std::fs::create_dir_all(parent)?;
     config::restrict_dir(parent)?;
     let mut db = Connection::open(path)?;
-    db.busy_timeout(std::time::Duration::from_secs(5))?;
-    db.pragma_update(None, "journal_mode", "WAL")?;
-    db.pragma_update(None, "synchronous", "FULL")?;
+    crate::database::configure(&db)?;
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;

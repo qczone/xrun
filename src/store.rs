@@ -28,9 +28,7 @@ fn open(path: &Path, create: bool) -> Result<Connection> {
     std::fs::create_dir_all(parent)?;
     restrict_dir(parent)?;
     let db = Connection::open(path)?;
-    db.busy_timeout(std::time::Duration::from_secs(5))?;
-    db.pragma_update(None, "journal_mode", "WAL")?;
-    db.pragma_update(None, "synchronous", "FULL")?;
+    crate::database::configure(&db)?;
     let integrity: String = db.query_row("PRAGMA quick_check", [], |r| r.get(0))?;
     if integrity != "ok" {
         bail!(ErrorCode::DbCorrupt.error(integrity.to_string()))
