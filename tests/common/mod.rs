@@ -34,16 +34,20 @@ pub fn command(home: &Path, args: &[&str]) -> Command {
         .kill_on_drop(true);
     cmd
 }
-pub fn logged(home: &Path, args: &[&str], name: &str) -> Result<Command> {
+fn process_log_path(home: &Path, name: &str) -> std::path::PathBuf {
     let base = std::env::var_os("XRUN_TEST_LOG_DIR")
         .map(std::path::PathBuf::from)
         .unwrap_or_else(|| home.join("test-logs"));
-    std::fs::create_dir_all(&base)?;
     let hash = xrun::protocol::sha256(home.to_string_lossy().as_bytes());
+    base.join(format!("{name}-{}.log", &hash[..12]))
+}
+pub fn logged(home: &Path, args: &[&str], name: &str) -> Result<Command> {
+    let path = process_log_path(home, name);
+    std::fs::create_dir_all(path.parent().context("process log directory")?)?;
     let file = std::fs::OpenOptions::new()
         .create(true)
         .append(true)
-        .open(base.join(format!("{name}-{}.log", &hash[..12])))?;
+        .open(path)?;
     let mut cmd = command(home, args);
     cmd.env("RUST_LOG", "xrun=debug")
         .env("NO_COLOR", "1")
@@ -139,14 +143,21 @@ fn reserve_relay_port() -> Result<std::net::TcpListener> {
             bounds.len() == 2 && bounds[0] <= bounds[1],
             "invalid local port range"
         );
-        let ephemeral = bounds[0]..=bounds[1];
+        let lower_count = u32::from(bounds[0].saturating_sub(1024));
+        let upper_start = (u32::from(bounds[1]) + 1).max(1024);
+        let available = lower_count + 65536 - upper_start;
+        anyhow::ensure!(available > 0, "no ports outside the local port range");
         let seed = uuid::Uuid::new_v4();
-        let first = u16::from_le_bytes([seed.as_bytes()[0], seed.as_bytes()[1]]);
-        for offset in 0..=u16::MAX {
-            let port = first.wrapping_add(offset);
-            if port < 1024 || ephemeral.contains(&port) {
-                continue;
-            }
+        let first = u32::from_le_bytes(seed.as_bytes()[..4].try_into()?) % available;
+        // Pick within the usable ranges instead of clustering all excluded
+        // random starts at the first port after the ephemeral range.
+        for offset in 0..available {
+            let index = (first + offset) % available;
+            let port = u16::try_from(if index < lower_count {
+                1024 + index
+            } else {
+                upper_start + index - lower_count
+            })?;
             match std::net::TcpListener::bind((address, port)) {
                 Ok(listener) => return Ok(listener),
                 Err(error) if error.kind() == std::io::ErrorKind::AddrInUse => continue,
@@ -170,26 +181,35 @@ impl Drop for TestRelay {
 impl TestRelay {
     pub async fn new(home: &Path) -> Result<(Self, String)> {
         let _starting = RELAY_START.lock().await;
-        let reservation = reserve_relay_port()?;
-        let port = reservation.local_addr()?.port();
-        let config = ServerConfig {
-            port,
-            addresses: vec![format!("127.0.0.1:{port}")],
-            manual: true,
-            no_detect: true,
-            data_dir: home.join(".xrun/server"),
-        };
-        xrun::testing::config::write(&home.join(".xrun/config.toml"), &config)?;
-        let link = xrun::testing::relay::deployment_link(&config)?;
-        let mut relay = Self {
-            config,
-            home: home.into(),
-            process: None,
-            task: None,
-        };
-        drop(reservation);
-        relay.start().await?;
-        Ok((relay, link))
+        for _ in 0..8 {
+            let reservation = reserve_relay_port()?;
+            let port = reservation.local_addr()?.port();
+            let config = ServerConfig {
+                port,
+                addresses: vec![format!("127.0.0.1:{port}")],
+                manual: true,
+                no_detect: true,
+                data_dir: home.join(".xrun/server"),
+            };
+            xrun::testing::config::write(&home.join(".xrun/config.toml"), &config)?;
+            let link = xrun::testing::relay::deployment_link(&config)?;
+            let mut relay = Self {
+                config,
+                home: home.into(),
+                process: None,
+                task: None,
+            };
+            drop(reservation);
+            match relay.start().await {
+                Ok(()) => return Ok((relay, link)),
+                Err(error)
+                    if error
+                        .downcast_ref::<std::io::Error>()
+                        .is_some_and(|e| e.kind() == std::io::ErrorKind::AddrInUse) => {}
+                Err(error) => return Err(error),
+            }
+        }
+        anyhow::bail!("relay port was repeatedly claimed during startup")
     }
     pub async fn start(&mut self) -> Result<()> {
         anyhow::ensure!(
@@ -200,6 +220,8 @@ impl TestRelay {
         let ca_pem = std::fs::read_to_string(self.config.data_dir.join("ca.pem"))?;
         let probe = xrun::testing::crypto::http_client(&ca_pem, None)?;
         let url = format!("https://127.0.0.1:{}/", self.config.port);
+        let log_path = process_log_path(&self.home, "relay");
+        let log_offset = std::fs::metadata(&log_path).map_or(0, |m| m.len() as usize);
         if cfg!(target_os = "linux") {
             self.process = Some(logged(&self.home, &["relay", "run"], "relay")?.spawn()?);
         } else {
@@ -209,11 +231,18 @@ impl TestRelay {
         }
         tokio::time::timeout(Duration::from_secs(10), async {
             loop {
-                if let Some(process) = &mut self.process {
-                    anyhow::ensure!(
-                        process.try_wait()?.is_none(),
-                        "relay exited; see process logs"
-                    );
+                if let Some(process) = &mut self.process
+                    && let Some(status) = process.try_wait()?
+                {
+                    let log = std::fs::read(&log_path)?;
+                    let startup = String::from_utf8_lossy(log.get(log_offset..).unwrap_or(&[]));
+                    if startup
+                        .lines()
+                        .any(|line| line == "[xrun] Address already in use (os error 98)")
+                    {
+                        return Err(std::io::Error::from(std::io::ErrorKind::AddrInUse).into());
+                    }
+                    anyhow::bail!("relay exited with {status}; see process logs");
                 }
                 if self.task.as_ref().is_some_and(|task| task.is_finished()) {
                     match self.task.take().unwrap().await? {

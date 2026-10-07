@@ -207,6 +207,8 @@ async fn device_operations_connect_directly_while_info_still_queries_live_state(
         let mut lab = Lab::new().await?;
         let device: Device =
             serde_json::from_value(json(cli(&lab.source, &["target1", "info", "--json"]).await))?;
+        // The mock target must learn the new member during the peer handshake.
+        stop_daemon(&lab.target, &mut lab.daemon).await?;
         let observer = lab.root.path().join("observer");
         std::fs::create_dir_all(&observer)?;
         let invite = json(cli(&lab.source, &["invite", "--json"]).await);
@@ -224,7 +226,6 @@ async fn device_operations_connect_directly_while_info_still_queries_live_state(
         let observer_id: Identity =
             xrun::testing::config::read(&observer.join(".xrun/identity.toml"))?;
         stop_daemon(&lab.source, &mut lab.source_daemon).await?;
-        stop_daemon(&lab.target, &mut lab.daemon).await?;
         let cache = RosterCache::open(&lab.target.join(".xrun/roster.db"))?;
         let network = &lab.target_identity.network.as_ref().unwrap().network_id;
         let roster = cache.load(network)?;
@@ -239,6 +240,7 @@ async fn device_operations_connect_directly_while_info_still_queries_live_state(
         };
         let observer_roster =
             RosterCache::open(&observer.join(".xrun/roster.db"))?.load(network)?;
+        assert!(roster.roster.version < observer_roster.roster.version);
         let mut observer_control = relay_socket(
             Some(&observer_id),
             &observer_roster,
@@ -288,7 +290,7 @@ async fn device_operations_connect_directly_while_info_still_queries_live_state(
                         &mut ws,
                         &PeerState {
                             device: device.clone(),
-                            ack: ReceiptAck::create(&lab.target_identity, &roster)?,
+                            ack: ReceiptAck::create(&lab.target_identity, &cache.load(network)?)?,
                         },
                     )
                     .await?;
