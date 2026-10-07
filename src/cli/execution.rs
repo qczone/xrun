@@ -7,6 +7,7 @@ use crate::{
     store::{Submission, SubmissionStore},
 };
 use anyhow::{Context, Result, bail};
+use futures_util::SinkExt;
 use std::{collections::BTreeMap, time::Duration};
 
 use super::args::Execute;
@@ -128,30 +129,32 @@ pub(super) async fn run(
         job_id: None,
         status: "not_accepted".into(),
     });
-    let header = Data::Request {
-        request: Request::Exec {
-            execution: execution.clone(),
-            follow: !background,
-        },
+    let request = Request::Exec {
+        execution: execution.clone(),
+        follow: !background,
     };
-    if serde_json::to_vec(&header)?.len() > MAX_MESSAGE {
-        diagnostic(
-            json,
-            &anyhow::anyhow!(ErrorCode::InvalidCommand.error("execution header exceeds 1 MiB")),
-        );
-        return Ok(2);
-    }
-    store.save(&submission)?;
+    let prepared = match s.prepare_request(request) {
+        Ok(message) => message,
+        Err(error) if crate::error::is(&error, ErrorCode::MessageTooLarge) => {
+            diagnostic(
+                json,
+                &anyhow::anyhow!(ErrorCode::InvalidCommand.error("execution header exceeds 1 MiB")),
+            );
+            return Ok(2);
+        }
+        Err(error) => {
+            diagnostic(json, &error);
+            return Ok(125);
+        }
+    };
     submission.status = "unconfirmed".into();
     store.save(&submission)?;
     let sent = std::sync::atomic::AtomicBool::new(false);
     let submitted = async {
         sent.store(true, std::sync::atomic::Ordering::SeqCst);
-        s.send_request(Request::Exec {
-            execution: execution.clone(),
-            follow: !background,
-        })
-        .await?;
+        // A failed write may still have sent bytes. Only local preparation
+        // above can establish that the request was never attempted.
+        s.ws.send(prepared).await?;
         net::send_bytes(&mut s.ws, &input).await?;
         match response(&mut s.ws).await? {
             Data::Job { job } => Ok(job),

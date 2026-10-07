@@ -7,7 +7,9 @@ use crate::{
     protocol::*,
 };
 use anyhow::{Result, bail};
+use futures_util::SinkExt;
 use std::time::Duration;
+use tokio_tungstenite::tungstenite::Message;
 
 pub(crate) struct Session {
     pub ws: Ws,
@@ -56,8 +58,13 @@ impl Session {
         }
     }
     pub(crate) async fn send_request(&mut self, request: Request) -> Result<()> {
-        ProtocolRange::require(self.protocol, request.minimum_protocol())?;
-        net::send(&mut self.ws, &Data::Request { request }).await
+        let message = self.prepare_request(request)?;
+        self.ws.send(message).await?;
+        Ok(())
+    }
+    // Complete local validation before the caller records a possibly sent request.
+    pub(crate) fn prepare_request(&self, request: Request) -> Result<Message> {
+        encode_request(self.protocol, request.minimum_protocol(), request)
     }
     // Recycling is optional. A confirmed operation must not become a failure
     // just because the daemon/socket disappears after the final response.
@@ -81,5 +88,35 @@ impl Session {
         if !matches!(result, Ok(Ok(()))) {
             tracing::debug!("completed session was not cached");
         }
+    }
+}
+
+fn encode_request(protocol: u32, required: u32, request: Request) -> Result<Message> {
+    ProtocolRange::require(protocol, required)?;
+    let text = serde_json::to_string(&Data::Request { request })?;
+    if text.len() > MAX_MESSAGE {
+        bail!(ErrorCode::MessageTooLarge.error("request header limit exceeded"));
+    }
+    Ok(Message::Text(text.into()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn an_unsupported_future_operation_fails_before_it_can_be_sent() {
+        let request = || Request::Forward { port: 1234 };
+        let error = encode_request(1, 2, request()).unwrap_err();
+        assert!(crate::error::is(&error, ErrorCode::VersionMismatch));
+        let Message::Text(text) = encode_request(1, 1, request()).unwrap() else {
+            panic!("request header must be text");
+        };
+        assert!(matches!(
+            serde_json::from_str::<Data>(&text).unwrap(),
+            Data::Request {
+                request: Request::Forward { port: 1234 }
+            }
+        ));
     }
 }
