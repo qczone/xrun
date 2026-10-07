@@ -10,6 +10,12 @@ import { mockIPC } from "@tauri-apps/api/mocks";
 import { StrictMode } from "react";
 import { App } from "../src/App";
 import type { Device, Job, Settings, Status } from "../src/api";
+import {
+  initializeLanguage,
+  resolveLanguage,
+  t,
+  type LanguagePreference,
+} from "../src/i18n";
 type Args = Record<string, unknown>;
 
 type Handler = (args: Args) => unknown;
@@ -17,8 +23,13 @@ type Handler = (args: Args) => unknown;
 export async function fixture(
   handlers: Record<string, Handler> = {},
   joined = true,
+  locale = "zh-CN",
 ) {
   const calls: { command: string; args: Args }[] = [];
+  let languageSettings = {
+    preference: "system" as LanguagePreference,
+    language: resolveLanguage(locale),
+  };
   const status: Status = {
     local: {
       joined,
@@ -96,6 +107,17 @@ export async function fixture(
     calls.push({ command, args });
     if (handlers[command]) return handlers[command](args);
     switch (command) {
+      case "language_settings":
+        return structuredClone(languageSettings);
+      case "set_language": {
+        const preference = args.preference as LanguagePreference;
+        languageSettings = {
+          preference,
+          language:
+            preference === "system" ? resolveLanguage(locale) : preference,
+        };
+        return structuredClone(languageSettings);
+      }
       case "status":
         return structuredClone(status);
       case "settings":
@@ -129,6 +151,11 @@ export async function fixture(
         return null;
     }
   });
+  Object.defineProperty(globalThis, "isTauri", {
+    configurable: true,
+    value: true,
+  });
+  await initializeLanguage();
   const view = render(
     <StrictMode>
       <App />
@@ -136,7 +163,9 @@ export async function fixture(
   );
   await waitFor(() =>
     expect(
-      screen.getByLabelText("默认工作目录").getAttribute("placeholder"),
+      screen
+        .getByLabelText(t("settings.defaultCwd"))
+        .getAttribute("placeholder"),
     ).toBe("/Users/test"),
   );
   await act(async () => {});

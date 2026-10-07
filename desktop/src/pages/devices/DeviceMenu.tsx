@@ -1,6 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { Device } from "../../api";
 import { useOperations } from "../../app/useOperations";
+import { t } from "../../i18n";
 
 interface Props {
   device: Device;
@@ -76,26 +77,26 @@ export function DeviceMenu({
     >
       <summary
         ref={trigger}
-        aria-label={`${device.name} 的更多操作`}
+        aria-label={t("devices.moreNamed", { name: device.name })}
         aria-expanded={open}
         onClick={(event) => {
           event.preventDefault();
           toggle();
         }}
       >
-        更多
+        {t("devices.more")}
       </summary>
       <div ref={body} className="device-more-body">
-        <span className="field-help">设备 ID</span>
+        <span className="field-help">{t("common.deviceId")}</span>
         <code>{device.device_id}</code>
         {manager && !device.revoked && device.device_id !== managerId && (
           <button
             className="danger-button"
             disabled={busy}
-            aria-label={`撤销 ${device.name} 的成员身份`}
+            aria-label={t("revoke.named", { name: device.name })}
             onClick={revoke}
           >
-            撤销成员身份…
+            {t("revoke.menu")}
           </button>
         )}
       </div>

@@ -15,7 +15,7 @@ test("an unsupported database stops automatic output reads but permits an explic
       throw { code: "DB_SCHEMA_MISMATCH", message: "unsupported schema" };
     },
   });
-  page("活动记录");
+  page("活动");
   fireEvent.click(await screen.findByRole("button", { name: /ABC123/ }));
   await screen.findByText("DB_SCHEMA_MISMATCH: unsupported schema");
   expect(reads).toBe(1);
@@ -59,7 +59,7 @@ test("task output deduplicates sequences, decodes split UTF-8 and renders failur
             ],
           },
   });
-  page("活动记录");
+  page("活动");
   fireEvent.click(await screen.findByRole("button", { name: /ABC123/ }));
   await waitFor(() =>
     expect(document.getElementById("task-log")?.textContent).toContain("中"),
@@ -106,7 +106,7 @@ test("file records show interrupted transfers safely without requesting other de
       next_cursor: null,
     }),
   });
-  page("活动记录");
+  page("活动");
   fireEvent.click(screen.getByRole("button", { name: "文件与截图" }));
   await screen.findByText("失败或中断");
   expect(screen.getByText("接收文件")).toBeTruthy();
@@ -136,7 +136,7 @@ test("late output cannot replace another task and database reset stops automatic
       throw { code: "DB_RESET", message: "database replaced" };
     },
   });
-  page("活动记录");
+  page("活动");
   fireEvent.click(await screen.findByRole("button", { name: /OLD/ }));
   fireEvent.click(screen.getByRole("button", { name: "← 返回任务列表" }));
   fireEvent.click(await screen.findByRole("button", { name: /NEW/ }));
@@ -165,7 +165,7 @@ test("history pages and filters retain server cursors and stop polling while hid
       next_cursor: before ? null : 100,
     }),
   });
-  page("活动记录");
+  page("活动");
   await screen.findByRole("button", { name: /PAGE1/ });
   fireEvent.click(screen.getByRole("button", { name: "下一页" }));
   await screen.findByRole("button", { name: /PAGE2/ });
@@ -202,7 +202,7 @@ test("scrolling up pauses automatic scrolling while new output continues to arri
       events: [event(++reads, "stdout", `output ${reads}\n`)],
     }),
   });
-  page("活动记录");
+  page("活动");
   fireEvent.click(await screen.findByRole("button", { name: /ABC123/ }));
   await waitFor(() =>
     expect(document.getElementById("task-log")?.textContent).toContain(
@@ -241,7 +241,7 @@ test("returning from task details retains the current page and list scroll posit
     }),
     task_output: () => ({ job: task("PAGE2"), has_more: false, events: [] }),
   });
-  page("活动记录");
+  page("活动");
   await screen.findByRole("button", { name: /PAGE1/ });
   fireEvent.click(screen.getByRole("button", { name: "下一页" }));
   const row = await screen.findByRole("button", { name: /PAGE2/ });

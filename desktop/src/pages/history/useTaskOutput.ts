@@ -1,3 +1,4 @@
+import { t, type PlainMessageKey } from "../../i18n";
 import { useEffect, useRef, useState } from "react";
 import { api, type Job } from "../../api";
 import { errorCode, errorText } from "../../errors";
@@ -20,7 +21,8 @@ export function useTaskOutput({
 }: Input) {
   const [job, setJob] = useState(selection.job);
   const [error, setError] = useState<string | null>(null);
-  const [outputStatus, setOutputStatus] = useState("正在读取输出…");
+  const [outputStatus, setOutputStatus] =
+    useState<PlainMessageKey>("output.loading");
   const [revision, setRevision] = useState(0);
   const buffer = useRef(new OutputBuffer());
   const finished = useRef(false);
@@ -49,15 +51,15 @@ export function useTaskOutput({
         finished.current = !isRunning(result.job) && !more;
         setOutputStatus(
           more
-            ? "正在补读输出…"
+            ? "output.catchingUp"
             : finished.current
-              ? "任务已结束"
-              : "每 3 秒更新输出",
+              ? "output.finished"
+              : "output.polling",
         );
       } catch (e) {
         if (!disposed) {
           setError(errorText(e));
-          setOutputStatus("输出读取失败");
+          setOutputStatus("output.loadFailed");
           if (
             [
               "DB_RESET",
@@ -91,7 +93,7 @@ export function useTaskOutput({
   return {
     job,
     error,
-    outputStatus,
+    outputStatus: t(outputStatus),
     revision,
     buffer,
     clearError: () => setError(null),

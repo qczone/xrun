@@ -2,6 +2,7 @@ import type { Device, Status } from "../../api";
 import { useOperations } from "../../app/useOperations";
 import { Icon } from "../../components/Icon";
 import { osName } from "../../format";
+import { t } from "../../i18n";
 import { DeviceMenu } from "./DeviceMenu";
 interface Props {
   device: Device;
@@ -27,14 +28,14 @@ export function DeviceCard({
   const allowed =
     !device.revoked && !denied && (!!status?.local.allow_all || individual);
   const source = device.revoked
-    ? "成员已撤销"
+    ? t("devices.membershipRevoked")
     : denied
-      ? "单独拒绝"
+      ? t("devices.individualDeny")
       : individual
-        ? "单独授权"
+        ? t("devices.individualAllow")
         : status?.local.allow_all
-          ? "来自全体授权"
-          : "未授权";
+          ? t("devices.fromAll")
+          : t("devices.notAllowed");
   return (
     <div className="device" key={device.device_id}>
       <div className="device-identity">
@@ -44,7 +45,9 @@ export function DeviceCard({
         <div className="device-details">
           <div className="device-name">
             {device.name}
-            {device.admin && <span className="role-label">管理设备</span>}
+            {device.admin && (
+              <span className="role-label">{t("common.manager")}</span>
+            )}
           </div>
           <div className="device-info">
             <span
@@ -52,10 +55,10 @@ export function DeviceCard({
             />
             <span>
               {device.revoked
-                ? "已撤销"
+                ? t("devices.revoked")
                 : device.online
-                  ? "中转报告已连接"
-                  : "未连接中转"}
+                  ? t("devices.connected")
+                  : t("devices.disconnected")}
               {device.os && <> · {osName(device.os)}</>}
             </span>
           </div>
@@ -66,16 +69,16 @@ export function DeviceCard({
           <input
             type="checkbox"
             disabled={busy || device.revoked || !status?.local.joined}
-            aria-label={`允许 ${device.name} 访问本机`}
+            aria-label={t("devices.allowNamed", { name: device.name })}
             checked={allowed}
             onChange={async (event) => {
               const allow = event.target.checked;
               if (
                 allow &&
                 !(await confirm(
-                  `允许 ${device.name} 访问本机？`,
-                  "该设备将能以你的用户权限执行命令、传输文件和截图。请只授权你信任的设备。",
-                  { label: "允许访问本机" },
+                  t("devices.allowTitle", { name: device.name }),
+                  t("devices.allowMessage"),
+                  { label: t("devices.allowConfirm") },
                 ))
               )
                 return;
@@ -85,7 +88,7 @@ export function DeviceCard({
                   args: { device: device.device_id, allow },
                 })
               )
-                notify(allow ? "已允许访问本机" : "已拒绝访问本机");
+                notify(allow ? "devices.allowed" : "devices.denied");
             }}
           />
           <span className="switch-track" />

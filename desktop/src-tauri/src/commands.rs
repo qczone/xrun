@@ -2,12 +2,31 @@
 use super::{
     app::{Desktop, Status, local_status, record},
     error::{self, CommandError},
+    language::{LanguagePreference, LanguageSettings, LanguageState},
     platform, tray,
 };
-use tauri::State;
+use tauri::{Manager, State};
 use tauri_plugin_clipboard_manager::ClipboardExt;
 use tauri_plugin_dialog::DialogExt;
 use xrun::client::{ExecutionSettings, Invitation, Revocation, Settings};
+
+#[tauri::command]
+fn language_settings(language: State<'_, LanguageState>) -> LanguageSettings {
+    language.settings()
+}
+
+#[tauri::command]
+fn set_language<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    language: State<'_, LanguageState>,
+    preference: LanguagePreference,
+) -> Result<LanguageSettings, CommandError> {
+    let settings = language
+        .save(preference)
+        .map_err(CommandError::from_error)?;
+    let _ = tray::refresh_language(&app);
+    Ok(settings)
+}
 #[tauri::command]
 fn settings() -> Result<Settings, CommandError> {
     xrun::client::settings().map_err(CommandError::from_error)
@@ -31,7 +50,12 @@ async fn choose_directory<R: tauri::Runtime>(
     let (tx, rx) = tokio::sync::oneshot::channel();
     app.dialog()
         .file()
-        .set_title("选择默认工作目录")
+        .set_title(
+            app.state::<LanguageState>()
+                .settings()
+                .language
+                .text("Choose default working directory", "选择默认工作目录"),
+        )
         .pick_folder(move |path| {
             let _ = tx.send(path);
         });
@@ -242,8 +266,11 @@ fn hide_icon<R: tauri::Runtime>(app: tauri::AppHandle<R>) -> Result<(), CommandE
 
 pub(super) fn register<R: tauri::Runtime>(builder: tauri::Builder<R>) -> tauri::Builder<R> {
     builder
+        .manage(LanguageState::default())
         .manage(Desktop::default())
         .invoke_handler(tauri::generate_handler![
+            language_settings,
+            set_language,
             status,
             devices,
             task_history,
@@ -284,6 +311,53 @@ pub(crate) mod tests {
         config::{self, DaemonConfig, Identity, NetworkIdentity, ServerConfig},
         membership::{Manager as NetworkManager, RosterCache},
     };
+
+    #[test]
+    fn native_language_ipc_matches_the_language_used_by_native_menus() {
+        let (app, window) = build_app();
+        let expected = serde_json::to_value(app.state::<LanguageState>().settings()).unwrap();
+        assert_eq!(
+            invoke(&window, "language_settings", json!({})),
+            Ok(expected)
+        );
+    }
+
+    #[test]
+    fn native_language_changes_persist_across_application_restarts() -> Result<()> {
+        isolated(
+            "native_language_changes_persist_across_application_restarts",
+            || {
+                let directory = xrun::client::services::data_dir()?;
+                std::fs::create_dir_all(&directory)?;
+                std::fs::write(
+                    directory.join("desktop-language.json"),
+                    "invalid preference",
+                )?;
+                let (app, _window) = build_app();
+                assert_eq!(
+                    app.state::<LanguageState>().settings().preference,
+                    LanguagePreference::System
+                );
+                for (preference, language) in [("en", "en"), ("zh", "zh"), ("system", "system")] {
+                    let (app, window) = build_app();
+                    let saved =
+                        invoke(&window, "set_language", json!({ "preference": preference }))
+                            .unwrap();
+                    assert_eq!(saved["preference"], preference);
+                    if language != "system" {
+                        assert_eq!(saved["language"], language);
+                    }
+                    assert_eq!(
+                        saved,
+                        serde_json::to_value(app.state::<LanguageState>().settings())?
+                    );
+                    let (_reopened, window) = build_app();
+                    assert_eq!(invoke(&window, "language_settings", json!({})), Ok(saved));
+                }
+                Ok(())
+            },
+        )
+    }
 
     #[cfg(target_os = "macos")]
     #[test]

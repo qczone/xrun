@@ -1,3 +1,4 @@
+import { t } from "../i18n";
 export function ErrorNotice({
   title,
   detail,
@@ -17,17 +18,17 @@ export function ErrorNotice({
           <button
             className="text-button"
             onClick={dismiss}
-            aria-label="关闭错误提示"
+            aria-label={t("error.close")}
           >
-            关闭
+            {t("common.close")}
           </button>
         )}
       </div>
       <details className="error-details">
-        <summary>查看错误详情</summary>
+        <summary>{t("error.details")}</summary>
         <pre>{detail}</pre>
       </details>
-      {retry && <button onClick={retry}>重试</button>}
+      {retry && <button onClick={retry}>{t("common.retry")}</button>}
     </div>
   );
 }

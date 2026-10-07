@@ -1,3 +1,4 @@
+import { t } from "../../i18n";
 import { useEffect, useRef, type ReactNode } from "react";
 import type { Status } from "../../api";
 import { InvitePanel } from "../../components/InvitePanel";
@@ -31,9 +32,13 @@ export function InvitationDialog({
       onClose={close}
     >
       <div className="dialog-heading">
-        <h2 id="invite-title">邀请新设备</h2>
-        <button className="text-button" aria-label="关闭邀请" onClick={close}>
-          关闭
+        <h2 id="invite-title">{t("invite.title")}</h2>
+        <button
+          className="text-button"
+          aria-label={t("invite.close")}
+          onClick={close}
+        >
+          {t("common.close")}
         </button>
       </div>
       {open && (

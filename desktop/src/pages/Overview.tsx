@@ -4,6 +4,7 @@ import { useOperations } from "../app/useOperations";
 import { Icon } from "../components/Icon";
 import { NetworkSetup } from "../components/NetworkSetup";
 import { relayHost, relayState, serviceState } from "../format";
+import { t } from "../i18n";
 
 interface Props {
   status: Status | null;
@@ -23,40 +24,47 @@ export function Overview({ status, feedback, navigate }: Props) {
     0;
   const paused = !!local?.remote_access_paused;
   const accessText = !local
-    ? "检查中"
+    ? t("common.checking")
     : paused
-      ? "已暂停"
+      ? t("overview.paused")
       : local.allow_all
-        ? "全体成员可访问"
-        : "按设备授权";
+        ? t("overview.allMembers")
+        : t("overview.perDevice");
 
   return (
     <>
       <div className="page-heading">
         <div>
-          <h1>{local && !local.joined ? "连接你的设备" : "本机概览"}</h1>
+          <h1>
+            {local && !local.joined
+              ? t("overview.connectTitle")
+              : t("overview.title")}
+          </h1>
           <p>
             {local && !local.joined
-              ? "加入网络，让你的设备通过 xrun 互相连接。"
-              : "查看本机连接与访问状态，管理后台服务。"}
+              ? t("overview.connectDescription")
+              : t("overview.description")}
           </p>
         </div>
       </div>
       {feedback}
       {(!local || local.joined) && (
-        <section className="panel overview-status" aria-label="本机运行状态">
+        <section
+          className="panel overview-status"
+          aria-label={t("overview.deviceStatus")}
+        >
           <div className="overview-device">
             <div className="device-avatar">
               <Icon name="monitor" />
             </div>
             <div className="overview-identity">
-              <h2>{local?.name || "正在读取本机…"}</h2>
+              <h2>{local?.name || t("overview.reading")}</h2>
               <span className="muted">
                 {network
                   ? network.is_manager
-                    ? "管理设备"
-                    : "普通设备"
-                  : "本机设备"}
+                    ? t("common.manager")
+                    : t("common.member")
+                  : t("common.localDevice")}
               </span>
             </div>
             {local?.joined && (
@@ -67,7 +75,9 @@ export function Overview({ status, feedback, navigate }: Props) {
                     disabled={busy}
                     onClick={() => void action({ command: "start" })}
                   >
-                    {pending === "start" ? "正在启动…" : "启动后台服务"}
+                    {pending === "start"
+                      ? t("common.starting")
+                      : t("service.startBackground")}
                   </button>
                 ) : paused ? (
                   <button
@@ -80,7 +90,9 @@ export function Overview({ status, feedback, navigate }: Props) {
                       })
                     }
                   >
-                    {pending === "pause_access" ? "正在恢复…" : "恢复远程访问"}
+                    {pending === "pause_access"
+                      ? t("common.resuming")
+                      : t("overview.resume")}
                   </button>
                 ) : (
                   <>
@@ -88,7 +100,7 @@ export function Overview({ status, feedback, navigate }: Props) {
                       className="primary"
                       onClick={() => navigate("devices")}
                     >
-                      谁能访问本机
+                      {t("overview.whoHasAccess")}
                     </button>
                     <button
                       disabled={busy}
@@ -100,8 +112,8 @@ export function Overview({ status, feedback, navigate }: Props) {
                       }
                     >
                       {pending === "pause_access"
-                        ? "正在暂停…"
-                        : "暂停远程访问"}
+                        ? t("common.pausing")
+                        : t("overview.pause")}
                     </button>
                   </>
                 )}
@@ -110,45 +122,47 @@ export function Overview({ status, feedback, navigate }: Props) {
           </div>
           <div className="status-grid">
             <div>
-              <span className="status-label">后台服务</span>
+              <span className="status-label">{t("service.title")}</span>
               <strong className={`status-value ${serviceTone}`}>
                 <span className={`dot ${serviceTone}`} />
                 {serviceText}
               </strong>
               <small>
                 {service?.approval_required
-                  ? "请在系统设置中允许后台运行"
+                  ? t("overview.approvalHint")
                   : local?.daemon_running
-                    ? "独立于 App 运行"
-                    : "启动后才可接受远程操作"}
+                    ? t("overview.independent")
+                    : t("overview.startHint")}
               </small>
             </div>
             <div>
-              <span className="status-label">中转连接</span>
+              <span className="status-label">
+                {t("overview.relayConnection")}
+              </span>
               <strong className={`status-value ${relayTone}`}>
                 <span className={`dot ${relayTone}`} />
                 {relayText}
               </strong>
               <small>
                 {local?.daemon_connected === null
-                  ? "更新后台服务后可查看"
+                  ? t("overview.updateHint")
                   : local?.daemon_running && local.daemon_connected === false
-                    ? "网络恢复后自动重连"
-                    : "用于设备发现与连接"}
+                    ? t("overview.reconnectHint")
+                    : t("overview.relayHint")}
               </small>
             </div>
             <div>
-              <span className="status-label">远程访问</span>
+              <span className="status-label">{t("overview.remoteAccess")}</span>
               <strong className={`status-value ${paused ? "warning" : ""}`}>
                 <Icon name="shield" />
                 {accessText}
               </strong>
               <small>
                 {paused
-                  ? "恢复后沿用已有授权"
+                  ? t("overview.resumeHint")
                   : local?.allow_all
-                    ? "单独拒绝的设备除外"
-                    : `已单独授权 ${allowed} 台设备`}
+                    ? t("overview.denyException")
+                    : t("overview.allowedCount", { count: allowed })}
               </small>
             </div>
           </div>
@@ -158,8 +172,8 @@ export function Overview({ status, feedback, navigate }: Props) {
         <div className="notice">
           <Icon name="shield" />
           <div>
-            <strong>需要系统授权</strong>
-            <p>在系统设置 → 通用 → 登录项中允许 xrun，然后启动后台服务。</p>
+            <strong>{t("overview.approvalTitle")}</strong>
+            <p>{t("overview.approvalInstructions")}</p>
           </div>
         </div>
       )}
@@ -167,10 +181,8 @@ export function Overview({ status, feedback, navigate }: Props) {
         <div className="notice">
           <Icon name="shield" />
           <div>
-            <strong>远程访问已暂停</strong>
-            <p>
-              已受理的可靠任务继续运行；流式执行和转发连接关闭。恢复访问后沿用已有授权。
-            </p>
+            <strong>{t("action.paused")}</strong>
+            <p>{t("overview.pausedNotice")}</p>
             {!local.daemon_running && (
               <button
                 className="text-button"
@@ -182,7 +194,9 @@ export function Overview({ status, feedback, navigate }: Props) {
                   })
                 }
               >
-                {pending === "pause_access" ? "正在恢复…" : "恢复远程访问"}
+                {pending === "pause_access"
+                  ? t("common.resuming")
+                  : t("overview.resume")}
               </button>
             )}
           </div>
@@ -191,19 +205,19 @@ export function Overview({ status, feedback, navigate }: Props) {
       {local?.joined && (
         <section className="panel network-summary">
           <div className="panel-heading">
-            <h2>网络信息</h2>
+            <h2>{t("overview.networkInfo")}</h2>
             <span className="muted">
-              {network ? "端到端加密" : "暂时不可用"}
+              {network ? t("overview.encrypted") : t("common.unavailable")}
             </span>
           </div>
           {network && (
             <div className="network-facts">
               <div>
-                <span>管理设备</span>
+                <span>{t("common.manager")}</span>
                 <strong>{network.manager_name}</strong>
               </div>
               <div>
-                <span>中转</span>
+                <span>{t("overview.relay")}</span>
                 <strong>
                   {network.relay_addresses.map(relayHost).join(" · ")}
                 </strong>
@@ -211,14 +225,14 @@ export function Overview({ status, feedback, navigate }: Props) {
             </div>
           )}
           <details className="overview-details">
-            <summary>设备与网络详情</summary>
+            <summary>{t("overview.details")}</summary>
             <div className="panel-row">
-              <span>设备 ID</span>
+              <span>{t("common.deviceId")}</span>
               <code>{local.device_id}</code>
             </div>
             {network && (
               <div className="panel-row">
-                <span>完整中转地址</span>
+                <span>{t("overview.relayAddresses")}</span>
                 <div className="relay-addresses">
                   {network.relay_addresses.map((address) => (
                     <code key={address}>{address}</code>
@@ -227,15 +241,15 @@ export function Overview({ status, feedback, navigate }: Props) {
               </div>
             )}
             <div className="panel-row">
-              <span>服务安装</span>
+              <span>{t("overview.serviceInstall")}</span>
               <span>
                 {service?.development
-                  ? "开发模式"
+                  ? t("overview.development")
                   : service?.legacy_installed
-                    ? "CLI 安装的服务"
+                    ? t("overview.cliService")
                     : service?.installed
-                      ? "App 后台服务"
-                      : "尚未安装服务"}
+                      ? t("overview.appService")
+                      : t("overview.noService")}
               </span>
             </div>
             <div className="details-actions">
@@ -243,7 +257,7 @@ export function Overview({ status, feedback, navigate }: Props) {
                 className="text-button"
                 onClick={() => navigate("settings")}
               >
-                后台服务设置
+                {t("service.settings")}
               </button>
               {local.daemon_running && (
                 <button
@@ -251,7 +265,9 @@ export function Overview({ status, feedback, navigate }: Props) {
                   disabled={busy}
                   onClick={() => void stop()}
                 >
-                  {pending === "stop" ? "正在停止…" : "停止后台服务…"}
+                  {pending === "stop"
+                    ? t("common.stopping")
+                    : t("service.stopBackground")}
                 </button>
               )}
             </div>
@@ -274,16 +290,16 @@ export function Overview({ status, feedback, navigate }: Props) {
             <button onClick={() => navigate("devices")}>
               <Icon name="shield" />
               <span>
-                <strong>谁能访问本机</strong>
-                <small>查看设备，管理访问授权</small>
+                <strong>{t("overview.whoHasAccess")}</strong>
+                <small>{t("overview.devicesShortcut")}</small>
               </span>
               <Icon name="arrow" className="arrow" />
             </button>
             <button onClick={() => navigate("settings")}>
               <Icon name="settings" />
               <span>
-                <strong>执行环境</strong>
-                <small>工作目录、工具路径与任务数量</small>
+                <strong>{t("settings.execution")}</strong>
+                <small>{t("overview.environmentShortcut")}</small>
               </span>
               <Icon name="arrow" className="arrow" />
             </button>
@@ -293,10 +309,10 @@ export function Overview({ status, feedback, navigate }: Props) {
             onClick={() => navigate("history")}
           >
             <Icon name="terminal" />
-            查看本机活动记录
+            {t("overview.historyShortcut")}
             <Icon name="arrow" className="arrow" />
           </button>
-          <p className="footnote">关闭窗口或退出 App，后台服务会继续运行。</p>
+          <p className="footnote">{t("overview.footnote")}</p>
         </>
       )}
     </>

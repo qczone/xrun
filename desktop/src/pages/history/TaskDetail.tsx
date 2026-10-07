@@ -2,6 +2,7 @@ import { useLayoutEffect, useRef, useState } from "react";
 import type { Status } from "../../api";
 import { ErrorNotice } from "../../components/ErrorNotice";
 import { commandText, duration, isRunning, recordTime } from "../../format";
+import { t } from "../../i18n";
 import { StateChip } from "./TaskState";
 import { useTaskOutput, type Selection } from "./useTaskOutput";
 interface DetailProps {
@@ -45,36 +46,40 @@ export function TaskDetail({
   if (job.error) warnings.push(job.error);
   if (!job.output_complete) {
     const reasons: Record<string, string> = {
-      TRUNCATED: "输出已被截断。",
-      LOG_EXPIRED: "输出已按保留规则清理。",
-      DETACHED_OUTPUT: "后台子进程的部分输出未能收集。",
+      TRUNCATED: t("output.truncated"),
+      LOG_EXPIRED: t("output.expired"),
+      DETACHED_OUTPUT: t("output.detached"),
     };
     warnings.push(
       reasons[job.incomplete_reason || ""] ||
-        `输出不完整：${job.incomplete_reason || "原因未知"}`,
+        t("output.incomplete", {
+          reason: job.incomplete_reason || t("output.unknownReason"),
+        }),
     );
   }
-  if (job.leftover_possible) warnings.push("可能仍有未清理的子进程。");
+  if (job.leftover_possible) warnings.push(t("output.leftover"));
   if (isRunning(job) && status && !status.local.daemon_running)
-    warnings.push("后台服务已停止，记录中的任务状态可能尚未更新。");
+    warnings.push(t("output.stale"));
   const elapsed =
     job.duration_ms !== null
       ? duration(job.duration_ms)
       : isRunning(job)
-        ? `约 ${duration(Math.max(0, Date.now() - job.created_at_ms))}`
+        ? t("output.elapsed", {
+            duration: duration(Math.max(0, Date.now() - job.created_at_ms)),
+          })
         : "—";
   const result = job.signal
-    ? `信号 ${job.signal}`
+    ? t("output.signal", { signal: job.signal })
     : job.exit_code !== null
-      ? `退出码 ${job.exit_code}`
+      ? t("output.exitCode", { code: job.exit_code })
       : isRunning(job)
-        ? "尚未结束"
-        : "无退出码";
+        ? t("output.notFinished")
+        : t("output.noExitCode");
 
   return (
     <section id="task-detail">
       <button className="history-back" onClick={back}>
-        ← 返回任务列表
+        {t("output.back")}
       </button>
       <article className="panel task-heading">
         <div className="task-title">
@@ -82,22 +87,22 @@ export function TaskDetail({
           <StateChip job={job} />
         </div>
         <div className="task-summary-meta">
-          <span>来源：{source}</span>
-          <span>耗时 {elapsed}</span>
+          <span>{t("history.source", { name: source })}</span>
+          <span>{t("history.duration", { duration: elapsed })}</span>
           <span>{result}</span>
         </div>
         <details className="task-facts">
-          <summary>任务 {job.job_id} · 查看详情</summary>
+          <summary>{t("output.details", { id: job.job_id })}</summary>
           <div className="panel-row">
-            <span>来源设备 ID</span>
+            <span>{t("output.sourceId")}</span>
             <code>{job.source_device_id}</code>
           </div>
           <div className="panel-row">
-            <span>工作目录</span>
+            <span>{t("output.cwd")}</span>
             <code>{job.cwd}</code>
           </div>
           <div className="panel-row">
-            <span>开始时间</span>
+            <span>{t("output.startedAt")}</span>
             <span>{recordTime(job.created_at_ms)}</span>
           </div>
         </details>
@@ -109,18 +114,18 @@ export function TaskDetail({
       )}
       <section className="panel output-panel">
         <div className="output-toolbar">
-          <strong>执行输出</strong>
+          <strong>{t("output.title")}</strong>
           <label className="sr-only" htmlFor="output-stream">
-            输出类型
+            {t("output.type")}
           </label>
           <select
             id="output-stream"
             value={stream}
             onChange={(event) => setStream(event.target.value)}
           >
-            <option value="all">全部输出</option>
-            <option value="stdout">标准输出（stdout）</option>
-            <option value="stderr">错误输出（stderr）</option>
+            <option value="all">{t("output.all")}</option>
+            <option value="stdout">{t("output.stdout")}</option>
+            <option value="stderr">{t("output.stderr")}</option>
           </select>
           <label className="follow-output">
             <input
@@ -128,7 +133,7 @@ export function TaskDetail({
               checked={follow}
               onChange={(event) => setFollow(event.target.checked)}
             />
-            自动滚动到底部
+            {t("output.follow")}
           </label>
         </div>
         <pre
@@ -137,7 +142,7 @@ export function TaskDetail({
           className="task-log"
           data-filter={stream}
           tabIndex={0}
-          aria-label="任务输出"
+          aria-label={t("output.log")}
           onScroll={(event) => {
             const node = event.currentTarget;
             const movingUp = node.scrollTop < lastScrollTop.current;
@@ -161,22 +166,22 @@ export function TaskDetail({
               </span>
             ))
           ) : (
-            <span className="muted">暂无输出</span>
+            <span className="muted">{t("output.empty")}</span>
           )}
         </pre>
         <div className="output-footer">
           <span>{outputStatus}</span>
-          {buffer.current.truncated && <span>仅显示最近的输出</span>}
+          {buffer.current.truncated && <span>{t("output.recentOnly")}</span>}
           {!follow && (
             <button className="text-button" onClick={() => setFollow(true)}>
-              回到最新输出
+              {t("output.jumpToLatest")}
             </button>
           )}
         </div>
       </section>
       {error && (
         <ErrorNotice
-          title="任务输出未能读取，请重试。"
+          title={t("output.failed")}
           detail={error}
           retry={retry}
           dismiss={clearError}

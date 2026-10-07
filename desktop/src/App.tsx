@@ -2,6 +2,8 @@ import { useRef, useState } from "react";
 import { Icon, IconDefinitions, type IconName } from "./components/Icon";
 import { ErrorNotice } from "./components/ErrorNotice";
 import { serviceLabel } from "./format";
+import { t, useLanguage } from "./i18n";
+import { Logo } from "./components/Logo";
 import { Overview } from "./pages/Overview";
 import { Devices } from "./pages/Devices";
 import { SettingsPage } from "./pages/Settings";
@@ -12,18 +14,17 @@ import { ConfirmationDialog, useConfirmation } from "./app/useConfirmation";
 import {
   OperationsContext,
   useOperationController,
-  operationLabels,
   type Activity,
   type Page,
 } from "./app/useOperations";
-const pages: { id: Page; label: string; icon: IconName }[] = [
-  { id: "overview", label: "本机", icon: "monitor" },
-  { id: "devices", label: "设备", icon: "devices" },
-  { id: "history", label: "活动记录", icon: "terminal" },
-  { id: "settings", label: "设置", icon: "settings" },
-];
-
 export function App() {
+  useLanguage();
+  const pages: { id: Page; label: string; icon: IconName }[] = [
+    { id: "overview", label: t("nav.overview"), icon: "monitor" },
+    { id: "devices", label: t("nav.devices"), icon: "devices" },
+    { id: "history", label: t("nav.history"), icon: "terminal" },
+    { id: "settings", label: t("nav.settings"), icon: "settings" },
+  ];
   const [page, setPage] = useState<Page>("overview");
   const main = useRef<HTMLElement>(null);
   const activity = useRef<Activity>({ busy: false, confirming: false });
@@ -75,10 +76,10 @@ export function App() {
       <IconDefinitions />
       <aside className="sidebar">
         <div className="brand">
-          <img src="/icon.png" alt="" />
+          <Logo />
           <span>xrun</span>
         </div>
-        <nav aria-label="主要导航">
+        <nav aria-label={t("nav.main")}>
           {pages.map((item) => (
             <button
               key={item.id}
@@ -103,13 +104,13 @@ export function App() {
           <div className="sidebar-device">
             <span className={`dot ${stateTone}`} />
             <div>
-              <strong>{status?.local.name || "本机设备"}</strong>
+              <strong>{status?.local.name || t("common.localDevice")}</strong>
               <span>{badge}</span>
             </div>
           </div>
           {pending && (
             <span className="operation-progress" role="status">
-              {operationLabels[pending]}
+              {t(`operation.${pending}`)}
             </span>
           )}
           <span className="version">
@@ -121,7 +122,7 @@ export function App() {
         <main ref={main} aria-busy={busy}>
           {statusError && statusError !== error?.detail && (
             <ErrorNotice
-              title="本机检查遇到问题，请查看详情。"
+              title={t("error.status")}
               detail={statusError}
               retry={() => void statusController.refresh()}
               dismiss={() => {

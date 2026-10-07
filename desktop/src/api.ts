@@ -1,5 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import type { ApiError } from "./errors";
+import type { PlainMessageKey } from "./i18n";
 
 export interface LocalStatus {
   joined: boolean;
@@ -128,7 +129,7 @@ export type PendingOperation =
   ActionRequest["command"] | "invite" | "copy_invitation" | "revoke";
 export type Operation = <T>(
   operation: () => Promise<T>,
-  context: { name: PendingOperation; title: string },
+  context: { name: PendingOperation; title: PlainMessageKey },
 ) => Promise<T | undefined>;
 
 export interface Invitation {

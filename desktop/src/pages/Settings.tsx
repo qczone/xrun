@@ -14,7 +14,10 @@ import {
 } from "../api";
 import { Icon } from "../components/Icon";
 import { ErrorNotice } from "../components/ErrorNotice";
+import { LanguageSelect } from "../components/LanguageSelect";
+import { Logo } from "../components/Logo";
 import { errorText, osName, serviceState } from "../format";
+import { t } from "../i18n";
 
 interface Props {
   status: Status | null;
@@ -78,21 +81,22 @@ export function SettingsPage({ status, feedback }: Props) {
     <>
       <div className="page-heading">
         <div>
-          <h1>设置</h1>
-          <p>配置启动方式和本机执行环境。</p>
+          <h1>{t("nav.settings")}</h1>
+          <p>{t("settings.description")}</p>
         </div>
       </div>
       {feedback}
       <div className="settings-section">
-        <h2>启动与显示</h2>
+        <h2>{t("settings.startup")}</h2>
         <section className="panel">
+          <LanguageSelect />
           <label className="setting-row" htmlFor="autostart">
             <span>
-              <strong>登录时显示 xrun 图标</strong>
+              <strong>{t("settings.showAtLogin")}</strong>
               <small>
                 {service?.development
-                  ? "开发模式下不设置 App 的登录启动"
-                  : "登录后自动显示菜单栏或系统托盘图标"}
+                  ? t("settings.developmentLoginHint")
+                  : t("settings.loginHint")}
               </small>
             </span>
             <span className="switch">
@@ -113,24 +117,26 @@ export function SettingsPage({ status, feedback }: Props) {
           </label>
           <div className="setting-row">
             <span>
-              <strong>菜单栏 / 托盘图标</strong>
-              <small>隐藏后，再次打开 xrun 即可恢复图标与窗口</small>
+              <strong>{t("settings.tray")}</strong>
+              <small>{t("settings.trayHint")}</small>
             </span>
             <button
               className="subtle"
               disabled={busy}
               onClick={() => void action({ command: "hide_icon" })}
             >
-              {pending === "hide_icon" ? "正在隐藏…" : "隐藏图标"}
+              {pending === "hide_icon"
+                ? t("common.hiding")
+                : t("settings.hideIcon")}
             </button>
           </div>
         </section>
       </div>
       <div className="settings-section">
-        <h2>执行环境</h2>
+        <h2>{t("settings.execution")}</h2>
         {loadError && (
           <ErrorNotice
-            title="执行环境未能读取，请重试。"
+            title={t("settings.loadFailed")}
             detail={loadError}
             retry={() => void loadSettings()}
           />
@@ -146,19 +152,19 @@ export function SettingsPage({ status, feedback }: Props) {
             ) {
               // Use the saved snapshot; subsequent status reads never reset the form.
               setSettings((previous) => previous && { ...previous, execution });
-              notify("执行环境已保存");
+              notify("settings.saved");
             }
           }}
         >
           <div className="field-heading">
-            <label htmlFor="cwd">默认工作目录</label>
-            <span className="field-tag">新任务生效</span>
+            <label htmlFor="cwd">{t("settings.defaultCwd")}</label>
+            <span className="field-tag">{t("settings.newTasks")}</span>
           </div>
           <div className="input-with-button">
             <input
               id="cwd"
               type="text"
-              placeholder={settings?.home_dir || "使用用户主目录"}
+              placeholder={settings?.home_dir || t("settings.homePlaceholder")}
               spellCheck={false}
               disabled={disabled}
               value={cwd}
@@ -172,21 +178,19 @@ export function SettingsPage({ status, feedback }: Props) {
                   const selected = await api.chooseDirectory();
                   if (selected) setCwd(selected);
                 } catch (e) {
-                  onError(e, "无法选择工作目录，请重试。");
+                  onError(e, "settings.chooseFailed");
                 }
               }}
             >
               <Icon name="folder" />
-              选择
+              {t("settings.choose")}
             </button>
           </div>
-          <p className="field-help">
-            其他设备未指定工作目录时，使用此目录。留空使用用户主目录。
-          </p>
+          <p className="field-help">{t("settings.cwdHint")}</p>
           <div className="concurrency-row">
             <div>
-              <label htmlFor="concurrency">同时运行的任务数</label>
-              <p className="field-help">范围 1–64，仅影响新任务</p>
+              <label htmlFor="concurrency">{t("settings.concurrency")}</label>
+              <p className="field-help">{t("settings.concurrencyHint")}</p>
             </div>
             <input
               id="concurrency"
@@ -200,54 +204,58 @@ export function SettingsPage({ status, feedback }: Props) {
             />
           </div>
           <details className="advanced">
-            <summary>工具搜索路径（PATH）</summary>
+            <summary>{t("settings.pathTitle")}</summary>
             <label className="sr-only" htmlFor="path">
-              工具搜索路径
+              {t("settings.path")}
             </label>
             <textarea
               id="path"
               rows={2}
               spellCheck={false}
-              placeholder="留空继承后台服务的 PATH"
+              placeholder={t("settings.pathPlaceholder")}
               disabled={disabled}
               value={path}
               onChange={(event) => setPath(event.target.value)}
             />
             <p className="field-help">
-              多个目录用{settings?.os === "windows" ? "分号（;）" : "冒号（:）"}
-              分隔。留空继承后台服务的 PATH。
+              {t("settings.pathHint", {
+                separator:
+                  settings?.os === "windows"
+                    ? t("settings.semicolon")
+                    : t("settings.colon"),
+              })}
             </p>
           </details>
           <div className="form-footer">
             <span className={dirty ? "dirty" : ""}>
-              {dirty ? "有未保存的更改" : "保存后对新任务生效，无需重启服务。"}
+              {dirty ? t("settings.unsaved") : t("settings.savedHint")}
             </span>
             <button
               type="submit"
               className="primary"
               disabled={disabled || !dirty}
             >
-              {pending === "save_settings" ? "正在保存…" : "保存更改"}
+              {pending === "save_settings"
+                ? t("common.saving")
+                : t("settings.save")}
             </button>
           </div>
-          {!joined && (
-            <p className="field-help">加入网络后，即可配置执行环境。</p>
-          )}
+          {!joined && <p className="field-help">{t("settings.joinFirst")}</p>}
         </form>
       </div>
       <div className="settings-section">
-        <h2>后台服务</h2>
+        <h2>{t("service.title")}</h2>
         <section className="panel">
           <div className="setting-row">
             <span>
               <strong>
-                运行状态
+                {t("settings.serviceState")}
                 <span className={`inline-status ${serviceTone}`}>{badge}</span>
               </strong>
               <small>
                 {service?.development
-                  ? "开发模式手动启动，退出 App 后仍继续运行"
-                  : "后台服务独立于 App 运行，安装后随用户登录启动"}
+                  ? t("settings.developmentServiceHint")
+                  : t("settings.serviceHint")}
               </small>
             </span>
             <button
@@ -260,24 +268,22 @@ export function SettingsPage({ status, feedback }: Props) {
               }
             >
               {pending === "start"
-                ? "正在启动…"
+                ? t("common.starting")
                 : pending === "stop"
-                  ? "正在停止…"
+                  ? t("common.stopping")
                   : local?.daemon_running
-                    ? "停止服务"
-                    : "启动服务"}
+                    ? t("service.stop")
+                    : t("service.start")}
             </button>
           </div>
           {service?.legacy_installed && !service.development && (
-            <div className="inline-notice">
-              当前使用 CLI 安装的服务。停止后再次启动，将迁移为 App 的后台服务。
-            </div>
+            <div className="inline-notice">{t("settings.legacyHint")}</div>
           )}
           {local?.daemon_installed && (
             <div className="setting-row">
               <span>
-                <strong>移除后台服务</strong>
-                <small>停止任务并取消服务的登录启动，保留设备身份和记录</small>
+                <strong>{t("settings.removeService")}</strong>
+                <small>{t("settings.removeHint")}</small>
               </span>
               <button
                 className="danger-button"
@@ -285,48 +291,52 @@ export function SettingsPage({ status, feedback }: Props) {
                 onClick={async () => {
                   if (
                     await confirm(
-                      "移除后台服务？",
-                      "这会停止服务和运行中的任务，并取消服务的登录启动。设备身份和数据会保留。",
-                      { label: "移除后台服务", tone: "danger" },
+                      t("settings.removeTitle"),
+                      t("settings.removeMessage"),
+                      { label: t("settings.removeService"), tone: "danger" },
                     )
                   )
                     await action({ command: "remove_service" });
                 }}
               >
-                {pending === "remove_service" ? "正在移除…" : "移除…"}
+                {pending === "remove_service"
+                  ? t("common.removing")
+                  : t("settings.remove")}
               </button>
             </div>
           )}
         </section>
       </div>
       <div className="settings-section">
-        <h2>关于</h2>
+        <h2>{t("settings.about")}</h2>
         <section className="panel">
           <div className="setting-row">
             <div className="about-brand">
-              <img src="/icon.png" alt="" />
+              <Logo />
               <span>
                 <strong>xrun</strong>
-                <small>跨设备执行与文件传输</small>
+                <small>{t("settings.tagline")}</small>
               </span>
             </div>
             <span className="mono muted">{local?.version}</span>
           </div>
           <div className="setting-row">
             <span>
-              <strong>系统</strong>
-              <small>{settings ? osName(settings.os) : "正在读取…"}</small>
+              <strong>{t("settings.system")}</strong>
+              <small>
+                {settings ? osName(settings.os) : t("common.loading")}
+              </small>
             </span>
           </div>
           <div className="setting-row data-row">
             <span>
-              <strong>本机数据目录</strong>
-              <small>身份、权限、任务记录和日志的保存位置</small>
+              <strong>{t("settings.dataDir")}</strong>
+              <small>{t("settings.dataHint")}</small>
             </span>
             <input
               type="text"
               readOnly
-              aria-label="本机数据目录"
+              aria-label={t("settings.dataDir")}
               value={settings?.data_dir || ""}
               onFocus={(event) => event.target.select()}
             />

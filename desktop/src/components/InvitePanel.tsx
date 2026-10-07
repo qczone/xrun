@@ -1,6 +1,8 @@
 import { useOperations } from "../app/useOperations";
 import { useEffect, useRef, useState } from "react";
 import { api, type Invitation, type Status } from "../api";
+import { clockTime } from "../format";
+import { t } from "../i18n";
 
 interface Props {
   active: boolean;
@@ -44,11 +46,9 @@ export function InvitePanel({ active, status }: Props) {
     const grant = allow;
     if (
       grant &&
-      !(await confirm(
-        "邀请新设备并互相授权？",
-        "新设备将能以你的用户权限访问本机，本机也能访问新设备。请只向你信任的设备分享链接。",
-        { label: "生成互相授权邀请" },
-      ))
+      !(await confirm(t("invite.confirmTitle"), t("invite.confirmMessage"), {
+        label: t("invite.confirm"),
+      }))
     )
       return;
     if (request !== generation.current) return;
@@ -56,7 +56,7 @@ export function InvitePanel({ active, status }: Props) {
     setExpired(false);
     const result = await operate(() => api.invite(grant), {
       name: "invite",
-      title: "邀请链接未能生成，请检查本机连接后重试。",
+      title: "invite.failed",
     });
     if (result && request === generation.current)
       setInvitation({
@@ -65,12 +65,9 @@ export function InvitePanel({ active, status }: Props) {
       });
   };
   return (
-    <section className="invite-content" aria-label="邀请选项">
+    <section className="invite-content" aria-label={t("invite.options")}>
       <div className="section-title">
-        <p>
-          由本机生成邀请。链接单次使用，10
-          分钟内有效；加入时本机后台服务需要在线。
-        </p>
+        <p>{t("invite.description")}</p>
       </div>
       <label className="invitation-option">
         <input
@@ -82,27 +79,27 @@ export function InvitePanel({ active, status }: Props) {
             setInvitation(null);
           }}
         />
-        允许新设备与本机互相访问
+        {t("invite.mutualAccess")}
       </label>
       <p className="field-help">
         {status?.local.allow_all
-          ? "本机已开启全体授权，新成员加入后即可访问本机；单独拒绝仍生效。"
-          : "默认仅注册成员，不附带访问授权；各设备已开启的全体授权仍会生效。"}
+          ? t("invite.allowAllHint")
+          : t("invite.registrationHint")}
       </p>
       <button
         className="primary"
         disabled={busy || !status?.local.daemon_connected}
         onClick={() => void generate()}
       >
-        {pending === "invite" ? "正在生成…" : "生成邀请链接"}
+        {pending === "invite" ? t("invite.generating") : t("invite.generate")}
       </button>
       {!status?.local.daemon_connected && (
-        <p className="field-help">先启动后台服务并连接中转，再生成邀请。</p>
+        <p className="field-help">{t("invite.connectFirst")}</p>
       )}
-      {expired && <p role="status">链接已过期，请重新生成。</p>}
+      {expired && <p role="status">{t("invite.expired")}</p>}
       {invitation && (
         <div className="invitation-result">
-          <label htmlFor="invitation-link">生成的邀请链接</label>
+          <label htmlFor="invitation-link">{t("invite.generatedLink")}</label>
           <textarea
             id="invitation-link"
             className="mono"
@@ -113,9 +110,9 @@ export function InvitePanel({ active, status }: Props) {
           />
           <p className="field-help">
             {invitation.allow
-              ? "加入后双方互相授权。"
-              : "仅注册成员，访问权限按各设备的授权策略生效。"}{" "}
-            请在 {new Date(invitation.expiresAt).toLocaleTimeString()} 前使用。
+              ? t("invite.mutualGranted")
+              : t("invite.registrationOnly")}{" "}
+            {t("invite.useBefore", { time: clockTime(invitation.expiresAt) })}
           </p>
           <div className="hero-actions">
             <button
@@ -133,16 +130,18 @@ export function InvitePanel({ active, status }: Props) {
                   },
                   {
                     name: "copy_invitation",
-                    title: "邀请链接未能复制，请手动选中链接复制。",
+                    title: "invite.copyFailed",
                   },
                 );
-                if (copied) notify("邀请链接已复制");
+                if (copied) notify("invite.copied");
               }}
             >
-              {pending === "copy_invitation" ? "正在复制…" : "复制链接"}
+              {pending === "copy_invitation"
+                ? t("invite.copying")
+                : t("invite.copy")}
             </button>
             <button disabled={busy} onClick={() => setInvitation(null)}>
-              隐藏链接
+              {t("invite.hide")}
             </button>
           </div>
         </div>

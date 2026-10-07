@@ -1,6 +1,7 @@
 import { afterEach, mock } from "bun:test";
 import { clearMocks } from "@tauri-apps/api/mocks";
 import { JSDOM } from "jsdom";
+import { setLanguage } from "../src/i18n";
 
 const dom = new JSDOM("<!doctype html><html><body></body></html>", {
   url: "http://localhost/",
@@ -43,4 +44,7 @@ afterEach(() => {
   cleanup();
   clearMocks();
   mock.restore();
+  setLanguage("en");
+  window.localStorage.clear();
+  Reflect.deleteProperty(globalThis, "isTauri");
 });

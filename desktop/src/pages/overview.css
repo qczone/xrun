@@ -25,7 +25,7 @@
 
 .overview-identity {
   min-width: 0;
-  flex: 1;
+  flex: 1 1 140px;
 }
 
 .overview-identity h2 {

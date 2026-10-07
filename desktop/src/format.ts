@@ -1,62 +1,70 @@
 import type { Job, Status } from "./api";
+import { formatLocale, t } from "./i18n";
 
 export const osName = (os: string | null | undefined) =>
   ({ macos: "macOS", windows: "Windows", linux: "Linux" })[os || ""] ||
   os ||
-  "未知系统";
+  t("format.unknownOs");
 export const recordTime = (time: number) =>
-  new Date(time).toLocaleString("zh-CN", { hour12: false });
+  new Date(time).toLocaleString(formatLocale(), { hour12: false });
+export const clockTime = (time: number) =>
+  new Date(time).toLocaleTimeString(formatLocale());
 export const isRunning = (job: Job) =>
   job.state === "starting" || job.state === "running";
 
 export function duration(ms: number | null) {
   if (ms === null) return "—";
   if (ms < 1000) return `${ms} ms`;
-  if (ms < 60000) return `${(ms / 1000).toFixed(1)} 秒`;
-  return `${Math.floor(ms / 60000)} 分 ${Math.floor((ms % 60000) / 1000)} 秒`;
+  if (ms < 60000)
+    return t("format.seconds", { seconds: (ms / 1000).toFixed(1) });
+  return t("format.minutes", {
+    minutes: Math.floor(ms / 60000),
+    seconds: Math.floor((ms % 60000) / 1000),
+  });
 }
 
 export function serviceLabel(status: Status | null): [string, string] {
-  if (!status) return ["检查状态", "正在读取本机状态…"];
+  if (!status) return [t("status.check"), t("status.reading")];
   const { local, service } = status;
-  if (!local.joined)
-    return ["尚未加入", "创建或加入网络，让你的设备互相连接。"];
+  if (!local.joined) return [t("status.notJoined"), t("status.joinHint")];
   if (service.approval_required)
-    return ["等待授权", "需要允许 xrun 在后台运行。"];
+    return [t("status.approval"), t("status.approvalHint")];
   if (!local.daemon_running)
-    return ["已停止", "后台服务已停止，其他设备暂时无法访问本机。"];
+    return [t("status.stopped"), t("status.stoppedHint")];
   if (local.remote_access_paused)
-    return ["访问已暂停", "已受理的可靠任务继续运行；流式执行和转发连接关闭。"];
+    return [t("status.paused"), t("status.pausedHint")];
   if (local.daemon_connected === true)
-    return ["已连接", "后台服务运行中，已连接到中转。"];
+    return [t("status.connected"), t("status.connectedHint")];
   if (local.daemon_connected === null)
-    return ["运行中", "旧版后台服务正在运行，更新后可查看实时连接状态。"];
-  return ["连接中", "正在尝试连接中转，网络恢复后会自动重连。"];
+    return [t("status.running"), t("status.olderServiceHint")];
+  return [t("status.connecting"), t("status.connectingHint")];
 }
 
 export function serviceState(status: Status | null): [string, string] {
-  if (!status) return ["检查中", "neutral"];
-  if (status.service.approval_required) return ["等待系统授权", "warning"];
+  if (!status) return [t("common.checking"), "neutral"];
+  if (status.service.approval_required)
+    return [t("status.systemApproval"), "warning"];
   return status.local.daemon_running
-    ? ["运行中", "online"]
-    : ["已停止", "neutral"];
+    ? [t("status.running"), "online"]
+    : [t("status.stopped"), "neutral"];
 }
 
 export function relayState(status: Status | null): [string, string] {
-  if (!status) return ["检查中", "neutral"];
-  if (!status.local.joined) return ["尚未加入网络", "neutral"];
-  if (!status.local.daemon_running) return ["服务未运行", "neutral"];
-  if (status.local.daemon_connected === null) return ["状态不可用", "neutral"];
+  if (!status) return [t("common.checking"), "neutral"];
+  if (!status.local.joined) return [t("status.noNetwork"), "neutral"];
+  if (!status.local.daemon_running) return [t("status.noService"), "neutral"];
+  if (status.local.daemon_connected === null)
+    return [t("status.unavailable"), "neutral"];
   return status.local.daemon_connected
-    ? ["已连接", "online"]
-    : ["正在重连", "warning"];
+    ? [t("status.connected"), "online"]
+    : [t("status.reconnecting"), "warning"];
 }
 
 export function relayHost(address: string) {
   try {
     return new URL(address).host;
   } catch {
-    return "查看中转详情";
+    return t("status.relayDetails");
   }
 }
 
@@ -65,21 +73,21 @@ export { errorText } from "./errors";
 export function taskState(job: Job): [string, string] {
   if (job.state === "exited")
     return job.exit_code === 0 && !job.signal
-      ? ["执行成功", "success"]
-      : ["异常退出", "failed"];
+      ? [t("task.success"), "success"]
+      : [t("task.nonzeroExit"), "failed"];
   const states = {
-    starting: ["正在启动", "active"],
-    running: ["运行中", "active"],
-    failed: ["执行失败", "failed"],
-    canceled: ["已取消", "neutral"],
-    timed_out: ["已超时", "failed"],
-    lost: ["结果丢失", "failed"],
+    starting: [t("task.starting"), "active"],
+    running: [t("status.running"), "active"],
+    failed: [t("task.failed"), "failed"],
+    canceled: [t("task.canceled"), "neutral"],
+    timed_out: [t("task.timedOut"), "failed"],
+    lost: [t("task.lost"), "failed"],
   } satisfies Record<string, [string, string]>;
   return states[job.state];
 }
 
 export function commandText(job: Job) {
-  return [job.program || "脚本", ...job.args]
+  return [job.program || t("task.script"), ...job.args]
     .map((arg) => (/[\s"'\\]/.test(arg) ? JSON.stringify(arg) : arg))
     .join(" ");
 }

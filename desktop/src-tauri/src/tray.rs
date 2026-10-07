@@ -1,6 +1,7 @@
 //! Tray visibility, actions and user-visible service status.
 use super::{
-    app::{Desktop, Status, record},
+    app::{Desktop, Status, local_status, record},
+    language::{Language, LanguageState},
     platform,
 };
 use tauri::{
@@ -9,6 +10,45 @@ use tauri::{
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
 };
 
+struct TrayMenu<R: tauri::Runtime>(Menu<R>);
+
+fn labels(language: Language) -> [(&'static str, &'static str); 5] {
+    [
+        ("show", language.text("Open xrun", "打开 xrun")),
+        (
+            "start",
+            language.text("Start background service", "启动后台服务"),
+        ),
+        (
+            "stop",
+            language.text("Stop background service", "停止后台服务"),
+        ),
+        ("hide", language.text("Hide icon", "隐藏图标")),
+        (
+            "quit",
+            language.text(
+                "Quit app (service keeps running)",
+                "退出 App（服务继续运行）",
+            ),
+        ),
+    ]
+}
+
+pub(super) fn refresh_language<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> tauri::Result<()> {
+    let language = app.state::<LanguageState>().settings().language;
+    if let Some(menu) = app.try_state::<TrayMenu<R>>() {
+        let status = text(language, local_status(app));
+        for (id, label) in labels(language).into_iter().chain([("state", status)]) {
+            if let Some(item) = menu.0.get(id).and_then(|item| item.as_menuitem().cloned()) {
+                item.set_text(label)?;
+            }
+        }
+        if let Some(icon) = app.tray_by_id("xrun") {
+            icon.set_tooltip(Some(status))?;
+        }
+    }
+    Ok(())
+}
 pub(super) fn hide<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> tauri::Result<()> {
     if let Some(tray) = app.tray_by_id("xrun") {
         tray.set_visible(false)?;
@@ -58,17 +98,20 @@ pub(super) fn menu_event<R: tauri::Runtime>(
 }
 
 pub(super) fn build<R: tauri::Runtime>(app: &tauri::App<R>) -> tauri::Result<MenuItem<R>> {
-    let state = MenuItem::with_id(app, "state", "xrun · 检查状态…", false, None::<&str>)?;
-    let show = MenuItem::with_id(app, "show", "打开 xrun", true, None::<&str>)?;
-    let start = MenuItem::with_id(app, "start", "启动后台服务", true, None::<&str>)?;
-    let stop = MenuItem::with_id(app, "stop", "停止后台服务", true, None::<&str>)?;
-    let hide = MenuItem::with_id(app, "hide", "隐藏图标", true, None::<&str>)?;
-    let quit = MenuItem::with_id(app, "quit", "退出 App（服务继续运行）", true, None::<&str>)?;
-    let separator = PredefinedMenuItem::separator(app)?;
-    let menu = Menu::with_items(
+    let language = app.state::<LanguageState>().settings().language;
+    let state = MenuItem::with_id(
         app,
-        &[&state, &separator, &show, &start, &stop, &hide, &quit],
+        "state",
+        language.text("xrun · Checking status…", "xrun · 检查状态…"),
+        false,
+        None::<&str>,
     )?;
+    let separator = PredefinedMenuItem::separator(app)?;
+    let menu = Menu::with_items(app, &[&state, &separator])?;
+    for (id, label) in labels(language) {
+        menu.append(&MenuItem::with_id(app, id, label, true, None::<&str>)?)?;
+    }
+    app.manage(TrayMenu(menu.clone()));
     TrayIconBuilder::with_id("xrun")
         .icon(tauri::image::Image::from_bytes(
             if cfg!(target_os = "macos") {
@@ -102,27 +145,61 @@ pub(super) fn build<R: tauri::Runtime>(app: &tauri::App<R>) -> tauri::Result<Men
     Ok(state)
 }
 
-pub(super) fn text(status: anyhow::Result<Status>) -> &'static str {
+pub(super) fn text(language: Language, status: anyhow::Result<Status>) -> &'static str {
     match status {
-        Ok(s) if !s.local.joined => "xrun · 尚未加入",
-        Ok(s) if s.service.approval_required => "xrun · 需要系统授权",
-        Ok(s) if !s.local.daemon_running => "xrun · 服务已停止",
-        Ok(s) if s.local.remote_access_paused => "xrun · 远程访问已暂停",
-        Ok(s) if s.local.daemon_connected == Some(true) => "xrun · 已连接",
-        Ok(s) if s.local.daemon_connected.is_none() => "xrun · 旧版服务运行中",
-        Ok(_) => "xrun · 连接中…",
-        Err(_) => "xrun · 状态读取失败",
+        Ok(s) if !s.local.joined => language.text("xrun · Not joined", "xrun · 尚未加入"),
+        Ok(s) if s.service.approval_required => {
+            language.text("xrun · Approval required", "xrun · 需要系统授权")
+        }
+        Ok(s) if !s.local.daemon_running => {
+            language.text("xrun · Service stopped", "xrun · 服务已停止")
+        }
+        Ok(s) if s.local.remote_access_paused => {
+            language.text("xrun · Remote access paused", "xrun · 远程访问已暂停")
+        }
+        Ok(s) if s.local.daemon_connected == Some(true) => {
+            language.text("xrun · Connected", "xrun · 已连接")
+        }
+        Ok(s) if s.local.daemon_connected.is_none() => {
+            language.text("xrun · Older service running", "xrun · 旧版服务运行中")
+        }
+        Ok(_) => language.text("xrun · Connecting…", "xrun · 连接中…"),
+        Err(_) => language.text("xrun · Status unavailable", "xrun · 状态读取失败"),
     }
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::super::{
         app::local_status,
         commands::tests::{build_app, isolated},
     };
     use super::*;
     use anyhow::Result;
+
+    // Run against the real menu on the process main thread in native_ui.
+    #[cfg(target_os = "macos")]
+    pub(crate) fn verify_language_switch<R: tauri::Runtime>(
+        app: &tauri::AppHandle<R>,
+    ) -> Result<()> {
+        use super::super::language::LanguagePreference;
+        let state = app.state::<LanguageState>();
+        let original = state.settings().preference;
+        for (preference, expected) in [
+            (LanguagePreference::En, "Open xrun"),
+            (LanguagePreference::Zh, "打开 xrun"),
+        ] {
+            state.save(preference)?;
+            refresh_language(app)?;
+            let menu = app.state::<TrayMenu<R>>();
+            let show = menu.0.get("show").unwrap();
+            assert_eq!(show.as_menuitem().unwrap().text()?, expected);
+        }
+        state.save(original)?;
+        refresh_language(app)?;
+        Ok(())
+    }
+
     #[test]
     fn tray_text_prioritizes_setup_approval_stop_and_pause_over_connectivity() -> Result<()> {
         isolated(
@@ -144,12 +221,18 @@ mod tests {
                     status.local.daemon_running = running;
                     status.local.remote_access_paused = paused;
                     status.local.daemon_connected = connected;
-                    assert_eq!(text(Ok(status)), expected);
+                    assert_eq!(text(Language::Zh, Ok(status)), expected);
                 }
                 assert_eq!(
-                    text(Err(anyhow::anyhow!("unreadable config"))),
+                    text(Language::Zh, Err(anyhow::anyhow!("unreadable config"))),
                     "xrun · 状态读取失败"
                 );
+                let mut status = local_status(app.handle())?;
+                status.local.joined = true;
+                status.local.daemon_running = true;
+                status.local.daemon_connected = Some(true);
+                status.service.approval_required = false;
+                assert_eq!(text(Language::En, Ok(status)), "xrun · Connected");
                 Ok(())
             },
         )

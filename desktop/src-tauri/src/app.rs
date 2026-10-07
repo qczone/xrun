@@ -1,5 +1,5 @@
 //! Native state, feedback and application lifecycle assembly.
-use super::{commands, error::CommandError, platform, tray};
+use super::{commands, error::CommandError, language::LanguageState, platform, tray};
 use serde::Serialize;
 use std::sync::Mutex;
 use tauri::Manager;
@@ -68,7 +68,10 @@ pub(super) fn app_builder<R: tauri::Runtime>(
             let handle = app.handle().clone();
             tauri::async_runtime::spawn(async move {
                 loop {
-                    let text = tray::text(local_status(&handle));
+                    let text = tray::text(
+                        handle.state::<LanguageState>().settings().language,
+                        local_status(&handle),
+                    );
                     let _ = item.set_text(text);
                     if let Some(icon) = handle.tray_by_id("xrun") {
                         let _ = icon.set_tooltip(Some(text));
@@ -242,6 +245,7 @@ pub(crate) mod tests {
             let code = app.run_return(move |app, event| match event {
                 tauri::RunEvent::Ready => {
                     assert!(app.tray_by_id("xrun").is_some());
+                    super::super::super::tray::tests::verify_language_switch(app).unwrap();
                     let window = app.get_webview_window("main").unwrap();
                     assert_eq!(window.is_visible().unwrap(), !background && !joined);
                     select(app, "show");

@@ -1,3 +1,4 @@
+import { t } from "../i18n";
 import { useEffect, useRef, useState } from "react";
 import type { Action, PendingOperation } from "../api";
 import { Icon } from "./Icon";
@@ -36,7 +37,7 @@ export function NetworkSetup({
   return (
     <section className="panel padded">
       {!joined && (
-        <div className="setup-tabs" aria-label="连接方式">
+        <div className="setup-tabs" aria-label={t("setup.connectionMethod")}>
           {(["join", "create"] as const).map((value) => (
             <button
               key={value}
@@ -49,23 +50,16 @@ export function NetworkSetup({
                 setRetry(false);
               }}
             >
-              {value === "create" ? "创建新网络" : "加入已有网络"}
+              {value === "create"
+                ? t("setup.createNew")
+                : t("setup.joinExisting")}
             </button>
           ))}
         </div>
       )}
       <div className="section-title">
-        <h2>{creating ? "在本机创建网络" : "加入已有网络"}</h2>
-        <p>
-          {creating ? (
-            <>
-              粘贴中转部署完成后提供的 HTTPS 地址或部署链接。
-              创建后，本机成为管理设备，负责邀请和撤销成员。
-            </>
-          ) : (
-            "向管理设备获取邀请链接，再将这台设备加入网络。"
-          )}
-        </p>
+        <h2>{creating ? t("setup.createHere") : t("setup.joinExisting")}</h2>
+        <p>{creating ? t("setup.createHint") : t("setup.joinHint")}</p>
       </div>
       <form
         className="network-setup-form"
@@ -90,12 +84,12 @@ export function NetworkSetup({
         }}
       >
         <label htmlFor="setup-link">
-          {creating ? "中转部署链接" : "邀请链接"}
+          {creating ? t("setup.relayLink") : t("setup.invitationLink")}
         </label>
         <input
           id="setup-link"
           type="password"
-          placeholder={creating ? "https://… 或 xrun-relay://…" : "xrun://…"}
+          placeholder={creating ? t("setup.relayPlaceholder") : "xrun://…"}
           autoComplete="off"
           spellCheck={false}
           required
@@ -103,11 +97,11 @@ export function NetworkSetup({
           value={link}
           onChange={(event) => setLink(event.target.value)}
         />
-        <label htmlFor="setup-name">本机名称</label>
+        <label htmlFor="setup-name">{t("setup.deviceName")}</label>
         <input
           id="setup-name"
           type="text"
-          placeholder="例如 mac1 或 win1"
+          placeholder={t("setup.namePlaceholder")}
           pattern="[a-z][a-z0-9-]{0,31}"
           maxLength={32}
           autoComplete="off"
@@ -117,21 +111,19 @@ export function NetworkSetup({
           value={name}
           onChange={(event) => setName(event.target.value)}
         />
-        <p className="field-help">
-          1–32 位小写字母、数字和短横线，以字母开头。
-        </p>
-        <p className="setup-help">完成后自动启动本机后台服务。</p>
+        <p className="field-help">{t("setup.nameHint")}</p>
+        <p className="setup-help">{t("setup.startHint")}</p>
         <div className="hero-actions">
           <button className="primary" type="submit" disabled={busy}>
             {pending === "create_network"
-              ? "正在创建…"
+              ? t("setup.creating")
               : pending === "join"
-                ? "正在加入…"
+                ? t("setup.joining")
                 : creating
                   ? retry
-                    ? "重试创建网络"
-                    : "创建网络"
-                  : "加入网络"}
+                    ? t("setup.retryCreate")
+                    : t("setup.create")
+                  : t("setup.join")}
             <Icon name="arrow" />
           </button>
           {joined && retry && (
@@ -143,7 +135,7 @@ export function NetworkSetup({
                 setRetry(false);
               }}
             >
-              关闭
+              {t("common.close")}
             </button>
           )}
         </div>

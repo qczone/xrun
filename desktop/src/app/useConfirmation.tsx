@@ -1,3 +1,4 @@
+import { t } from "../i18n";
 import {
   useCallback,
   useEffect,
@@ -74,7 +75,7 @@ export function ConfirmationDialog({
         <h2 id="confirm-title">{prompt?.title}</h2>
         <p>{prompt?.message}</p>
         <div className="dialog-actions">
-          <button value="cancel">取消</button>
+          <button value="cancel">{t("common.cancel")}</button>
           <button
             className={
               prompt?.options.tone === "danger" ? "danger-primary" : "primary"

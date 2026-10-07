@@ -3,6 +3,7 @@ import type { Device, Status, TaskFilter } from "../api";
 import { Icon } from "../components/Icon";
 import { ErrorNotice } from "../components/ErrorNotice";
 import { commandText, duration, fileSize, recordTime } from "../format";
+import { t } from "../i18n";
 import { StateChip } from "./history/TaskState";
 import { TaskDetail } from "./history/TaskDetail";
 import type { Selection } from "./history/useTaskOutput";
@@ -43,21 +44,27 @@ export function History({ active, paused, status, devices }: Props) {
     <>
       <div className="page-heading">
         <div>
-          <h1>本机活动记录</h1>
-          <p>在这台设备执行的任务、文件操作和截图；后台服务停止后也可查看。</p>
+          <h1>{t("history.title")}</h1>
+          <p>{t("history.description")}</p>
         </div>
         <button
           disabled={selected ? outputLoading : loading}
           onClick={refreshRecords}
         >
           <Icon name="refresh" />
-          {(selected ? outputLoading : loading) ? "正在刷新…" : "刷新"}
+          {(selected ? outputLoading : loading)
+            ? t("common.refreshing")
+            : t("common.refresh")}
         </button>
       </div>
       <div className={`history-layout ${selected ? "has-selection" : ""}`}>
         <div className="history-list">
           <div className="history-toolbar">
-            <div className="segmented" role="group" aria-label="记录类型">
+            <div
+              className="segmented"
+              role="group"
+              aria-label={t("history.recordType")}
+            >
               <button
                 aria-pressed={tab === "tasks"}
                 className={tab === "tasks" ? "selected" : ""}
@@ -66,7 +73,7 @@ export function History({ active, paused, status, devices }: Props) {
                   setSelected(null);
                 }}
               >
-                执行任务
+                {t("history.tasks")}
               </button>
               <button
                 aria-pressed={tab === "files"}
@@ -76,23 +83,23 @@ export function History({ active, paused, status, devices }: Props) {
                   setSelected(null);
                 }}
               >
-                文件与截图
+                {t("history.files")}
               </button>
             </div>
             {tab === "tasks" && (
               <label>
-                状态
+                {t("history.state")}
                 <select
-                  aria-label="任务状态"
+                  aria-label={t("history.taskState")}
                   value={filter}
                   onChange={(event) => {
                     history.selectFilter(event.target.value as TaskFilter);
                     setSelected(null);
                   }}
                 >
-                  <option value="all">全部任务</option>
-                  <option value="running">正在运行</option>
-                  <option value="failed">异常结束</option>
+                  <option value="all">{t("history.allTasks")}</option>
+                  <option value="running">{t("history.running")}</option>
+                  <option value="failed">{t("history.failed")}</option>
                 </select>
               </label>
             )}
@@ -118,10 +125,15 @@ export function History({ active, paused, status, devices }: Props) {
                         <StateChip job={job} />
                       </span>
                       <span className="record-meta">
-                        来源：{deviceLabel(job.source_device_id)} ·{" "}
+                        {t("history.source", {
+                          name: deviceLabel(job.source_device_id),
+                        })}{" "}
+                        ·{" "}
                         {job.duration_ms === null
-                          ? "点击查看输出"
-                          : `耗时 ${duration(job.duration_ms)}`}
+                          ? t("history.viewOutput")
+                          : t("history.duration", {
+                              duration: duration(job.duration_ms),
+                            })}
                       </span>
                       <span className="record-secondary">
                         <code>{job.job_id}</code>
@@ -138,23 +150,27 @@ export function History({ active, paused, status, devices }: Props) {
                         <strong>
                           {(
                             {
-                              push: "接收文件",
-                              pull: "发送文件",
-                              screenshot: "截图",
+                              push: t("history.receiveFile"),
+                              pull: t("history.sendFile"),
+                              screenshot: t("history.screenshot"),
                             } as Record<string, string>
                           )[record.op] || record.op}
                         </strong>
                         <span
                           className={`task-state ${record.result === "ok" ? "success" : "failed"}`}
                         >
-                          {record.result === "ok" ? "已完成" : "失败或中断"}
+                          {record.result === "ok"
+                            ? t("history.completed")
+                            : t("history.interrupted")}
                         </span>
                       </div>
                       {record.path && (
                         <p className="record-command mono">{record.path}</p>
                       )}
                       <p className="record-meta">
-                        来源：{deviceLabel(record.source_device_id)}
+                        {t("history.source", {
+                          name: deviceLabel(record.source_device_id),
+                        })}
                         {fileSize(record.size)}
                       </p>
                       <span className="record-secondary">
@@ -166,12 +182,12 @@ export function History({ active, paused, status, devices }: Props) {
             {!records.length && !error && (
               <p className="empty-state">
                 {loading
-                  ? "正在读取记录…"
+                  ? t("history.loading")
                   : tab === "files"
-                    ? "暂无文件操作或截图记录。"
+                    ? t("history.emptyFiles")
                     : filter === "all"
-                      ? "暂无任务。通过 xrun 在本机执行的任务会出现在这里。"
-                      : "暂无符合状态的任务。"}
+                      ? t("history.emptyTasks")
+                      : t("history.emptyFiltered")}
               </p>
             )}
           </section>
@@ -180,19 +196,21 @@ export function History({ active, paused, status, devices }: Props) {
               disabled={loading || pagination.index === 0 || selected !== null}
               onClick={history.previousPage}
             >
-              上一页
+              {t("history.previous")}
             </button>
-            <span className="muted">第 {pagination.index + 1} 页</span>
+            <span className="muted">
+              {t("history.page", { page: pagination.index + 1 })}
+            </span>
             <button
               disabled={loading || next === null || selected !== null}
               onClick={history.nextPage}
             >
-              下一页
+              {t("history.next")}
             </button>
           </div>
           {error && (
             <ErrorNotice
-              title="活动记录未能读取，请重试。"
+              title={t("history.loadFailed")}
               detail={error}
               retry={refreshRecords}
               dismiss={history.clearError}
@@ -217,9 +235,7 @@ export function History({ active, paused, status, devices }: Props) {
           />
         )}
       </div>
-      <p className="footnote">
-        任务结果会保留，已结束任务的输出和文件操作记录按现有规则保留 7 天。
-      </p>
+      <p className="footnote">{t("history.footnote")}</p>
     </>
   );
 }

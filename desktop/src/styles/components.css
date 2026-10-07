@@ -408,3 +408,9 @@ dialog p {
     flex-wrap: wrap;
   }
 }
+.brand-logo {
+  display: block;
+  width: 30px;
+  height: 30px;
+  flex-shrink: 0;
+}

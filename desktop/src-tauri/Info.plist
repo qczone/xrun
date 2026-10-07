@@ -3,4 +3,6 @@
 <plist version="1.0"><dict>
   <key>LSUIElement</key><true/>
   <key>CFBundleDisplayName</key><string>xrun</string>
+  <key>CFBundleDevelopmentRegion</key><string>en</string>
+  <key>CFBundleLocalizations</key><array><string>en</string><string>zh-Hans</string></array>
 </dict></plist>

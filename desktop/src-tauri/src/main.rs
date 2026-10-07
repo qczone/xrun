@@ -3,6 +3,7 @@
 pub(crate) mod app;
 mod commands;
 mod error;
+mod language;
 mod platform;
 mod tray;
 

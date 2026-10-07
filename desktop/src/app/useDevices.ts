@@ -1,3 +1,4 @@
+import { t, type PlainMessageKey } from "../i18n";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api, type Device, type Revocation, type Status } from "../api";
 import { errorText } from "../errors";
@@ -13,7 +14,7 @@ export function useDevices(
   const currentScope = useRef(scope);
   currentScope.current = scope;
   const [devices, setDevices] = useState<Device[]>([]);
-  const [message, setMessage] = useState("正在读取设备列表…");
+  const [message, setMessage] = useState<PlainMessageKey>("devices.reading");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const request = useRef(0);
@@ -21,7 +22,7 @@ export function useDevices(
     if (!scope || scope !== currentScope.current) return;
     const token = ++request.current;
     setLoading(true);
-    setMessage("正在查询设备…");
+    setMessage("devices.querying");
     try {
       const result = await api.devices();
       if (token !== request.current || scope !== currentScope.current) return;
@@ -34,13 +35,11 @@ export function useDevices(
         ),
       );
       setError(null);
-      setMessage(
-        "暂时没有其他设备。新设备需要管理设备生成的邀请链接才能加入。",
-      );
+      setMessage("devices.empty");
     } catch (failure) {
       if (token === request.current && scope === currentScope.current) {
         setError(errorText(failure));
-        setMessage("设备列表暂时不可用，请刷新重试。");
+        setMessage("devices.unavailable");
       }
     } finally {
       if (token === request.current) setLoading(false);
@@ -51,11 +50,7 @@ export function useDevices(
     setDevices([]);
     setError(null);
     setLoading(false);
-    setMessage(
-      scope
-        ? "正在读取设备列表…"
-        : "先创建或加入网络，就能在这里查看其他设备。",
-    );
+    setMessage(scope ? "devices.reading" : "devices.joinFirst");
     void refresh();
     return () => {
       request.current++;
@@ -78,5 +73,13 @@ export function useDevices(
       ),
     );
   };
-  return { devices, message, loading, error, refresh, applyRevocation, scope };
+  return {
+    devices,
+    message: t(message),
+    loading,
+    error,
+    refresh,
+    applyRevocation,
+    scope,
+  };
 }

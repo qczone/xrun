@@ -1,3 +1,4 @@
+import { t } from "../../i18n";
 import { useEffect, useRef, useState } from "react";
 import { api, type Revocation } from "../../api";
 import type { useDevices } from "../../app/useDevices";
@@ -20,12 +21,12 @@ export function useMembership(members: ReturnType<typeof useDevices>) {
     const result = await operate(
       async () => {
         const result = await api.revoke(device);
-        if (!result.revoked) throw "撤销结果未确认，请刷新后重试。";
+        if (!result.revoked) throw t("revoke.unconfirmed");
         members.applyRevocation(result, network);
         await members.refresh();
         return result;
       },
-      { name: "revoke", title: "成员身份未能撤销，请重试。" },
+      { name: "revoke", title: "revoke.failed" },
     );
     if (result && token === generation.current) setRevocation(result);
   };
