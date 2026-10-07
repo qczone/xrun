@@ -26,15 +26,17 @@ CLI 和 daemon 是同一个 Rust 二进制，运行已构建程序不需要 Rust
 
 | 平台 | 安装方式 |
 | --- | --- |
-| macOS Apple Silicon | macOS 13+，DMG 拖入应用程序，或完整 App ZIP / CLI 压缩包 |
-| Windows x86_64 | 当前用户 NSIS 安装程序，或 CLI 压缩包 |
-| Linux x86_64 | CLI 压缩包，不提供桌面 App |
+| macOS x86_64 / arm64 | macOS 13+，DMG 拖入应用程序，或完整 App ZIP / CLI 压缩包 |
+| Windows x86_64 / arm64 | 当前用户 NSIS 安装程序，或 CLI 压缩包 |
+| Linux x86_64 / arm64 | CLI 压缩包，不提供桌面 App |
+
+按设备架构选择对应包：`x86_64` 即 AMD64，Intel Mac 使用这一版；`arm64` 对应 Apple Silicon、Windows ARM 和 ARM Linux。每个包只包含一种架构。
 
 CLI 可放在 `~/.local/bin/xrun`，Windows 可用 `%LOCALAPPDATA%\xrun\bin\xrun.exe`。将工具目录加入 PATH，运行 `xrun --version`、`xrun help`。服务注册当前二进制的绝对路径，请安装到固定位置。
 
 ### AI 和命令行自动安装
 
-[install.sh](../scripts/install.sh) 支持 macOS Apple Silicon，[install.ps1](../scripts/install.ps1) 支持 Windows x86_64。指定完整发布版本，默认安装桌面 App；`--component cli`／`-Component cli` 只安装 CLI。脚本校验平台、版本、SHA-256 和安装后的程序；macOS App 另检查签名。整个过程通过 stdout 返回一条 JSON，失败时 `ok` 为 `false`、包含 `error.code` 和 `error.message`，进程退出码为 1；成功返回版本、安装路径、可执行文件路径、`changed` 和自检结果。重复安装相同产物时返回 `changed: false`。
+[install.sh](../scripts/install.sh) 支持 macOS，[install.ps1](../scripts/install.ps1) 支持 Windows，两者均自动识别 x86_64 / arm64 设备。指定完整发布版本，默认安装桌面 App；`--component cli`／`-Component cli` 只安装 CLI。脚本校验平台、版本、SHA-256 和安装后的程序；macOS App 另检查签名。整个过程通过 stdout 返回一条 JSON，失败时 `ok` 为 `false`、包含 `error.code` 和 `error.message`，进程退出码为 1；成功返回版本、安装路径、可执行文件路径、`changed` 和自检结果。重复安装相同产物时返回 `changed: false`。
 
 CLI 压缩包和源码中的安装脚本位于 `scripts/`。以下命令从解压目录或项目根目录执行；单独下载发布附件中的脚本时，将脚本路径替换为下载位置：
 
@@ -48,7 +50,9 @@ powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File .\script
 powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File .\scripts\install.ps1 -Version 0.0.1-beta.6 -Component cli
 ```
 
-默认下载地址是 `https://github.com/qczone/xrun/releases/download/v<完整版本>/`。`--base-url`／`-BaseUrl` 可指定其他 HTTPS 产物目录。每个目录需包含对应的 `xrun-darwin-arm64.json` 或 `xrun-windows-x86_64.json` 清单及其引用的文件。安装时不需要 Bun；产物准备见 [开发与发布](development.md#发布与内置文档)。
+macOS 默认识别设备的真实架构，即使终端通过 Rosetta 运行也会选择 arm64 包。已安装 Rosetta 的 Apple Silicon Mac 可用 `--arch x86_64` 安装 Intel 版，例如 `bash scripts/install.sh --version 0.0.1-beta.6 --arch x86_64`；Intel Mac 不支持安装 arm64 版。Windows 按系统架构自动选择原生包。
+
+默认下载地址是 `https://github.com/qczone/xrun/releases/download/v<完整版本>/`。`--base-url`／`-BaseUrl` 可指定其他 HTTPS 产物目录。每个目录需包含对应的 `xrun-darwin-<架构>.json` 或 `xrun-windows-<架构>.json` 清单及其引用的文件，架构为 `x86_64` 或 `arm64`。安装时不需要 Bun；产物准备见 [开发与发布](development.md#发布与内置文档)。
 
 离线安装或验收本地打包产物时，用 `--source-dir`／`-SourceDir` 指定产物目录。例如 macOS：
 

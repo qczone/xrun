@@ -54,6 +54,8 @@ jobs:
           bun install --frozen-lockfile
           bun run check
           bun run build --debug --verbose
+      - name: Test installer architecture selection and manifest validation
+        run: bun test tests/installer-platforms.test.ts
       - name: Check desktop code and bundled helper
         run: |
           cargo clippy --locked -p xrun-desktop --all-targets -- -D warnings

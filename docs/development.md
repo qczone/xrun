@@ -12,7 +12,9 @@ cargo build --locked --release
 
 将 `target/release/xrun`（Windows 为 `xrun.exe`）放到固定目录并加入 PATH，再安装服务。CLI、daemon 和 Linux Rust 中转使用同一个二进制；Cloudflare 中转单独部署。网络组件按支持的协议范围协商，本机 CLI / App helper 与 daemon 要求发布版本一致。发布要求见 [design.md 的版本说明](design.md#63-版本和限制)。
 
-GitHub Actions 的 `Package` 工作流可手动构建三个平台的 CLI 压缩包，以及 macOS Apple Silicon DMG、App ZIP 和 Windows x86_64 用户级 NSIS 安装包；macOS App 和 DMG 的签名、公证需要配置工作流列出的凭据。每个平台的产物还包含版本和 SHA-256 清单，macOS、Windows 同时提供自动安装脚本。
+GitHub Actions 的 [Package](../.github/workflows/package.yml) 工作流可手动构建 Linux、macOS、Windows 的 x86_64 与 arm64，共六组产物。Linux 提供 CLI 压缩包，macOS 另提供 DMG 和 App ZIP，Windows 另提供当前用户 NSIS 安装程序。macOS App 和 DMG 的签名、公证需要配置工作流列出的凭据。每组产物还包含版本和 SHA-256 清单，macOS、Windows 同时提供自动安装脚本。
+
+Linux 与 Windows 的两种架构分别使用对应的原生 runner；macOS 两组均使用 ARM runner，Intel 版交叉编译并通过 Rosetta 执行 smoke 和安装检查，不代表 Intel 实机验收。构建缓存和产物按目标架构分开。
 
 ## 桌面开发与打包
 
@@ -36,6 +38,20 @@ bun run --cwd desktop build
 | Windows | 当前用户的 NSIS 安装程序 | `target/release/bundle/nsis/` 下的安装 `.exe` |
 
 macOS 构建同时保留 `target/release/bundle/macos/xrun.app`；签名检查通过后，用 `ditto` 将同一份 App 打包为 ZIP。正式工作流会先完成 App 公证及票据附加，再生成 ZIP。
+
+同一系统内可用 `--target` 指定目标架构，App 与内嵌 helper 会使用同一个 Rust target。首次使用先安装目标标准库，例如在 Apple Silicon Mac 上构建 Intel 包：
+
+```bash
+rustup target add x86_64-apple-darwin
+bun run --cwd desktop build --target x86_64-apple-darwin
+```
+
+| 系统 | x86_64 target | arm64 target |
+| --- | --- | --- |
+| macOS | `x86_64-apple-darwin` | `aarch64-apple-darwin` |
+| Windows | `x86_64-pc-windows-msvc` | `aarch64-pc-windows-msvc` |
+
+Windows 交叉编译还需安装对应架构的 MSVC 工具与 Windows SDK。显式指定 `--target` 后，产物位于 `target/<target>/release/bundle/`，加 `--debug` 则为 `target/<target>/debug/bundle/`。不指定 target 时保留上表的本机默认路径。每次生成单一架构的包，不生成 macOS universal 包，也不支持从另一个操作系统构建桌面安装包。
 
 本机调试时添加 `--debug`，产物改为 `target/debug/bundle/`：
 
@@ -67,7 +83,7 @@ cargo test --locked
 xvfb-run -a -s '-screen 0 1024x768x24' cargo test --locked --test screenshot -- --ignored
 ```
 
-[Test Linux](../.github/workflows/test-linux.yml)、[Test macOS](../.github/workflows/test-macos.yml) 和 [Test Windows](../.github/workflows/test-windows.yml) 分别在对应平台原生运行核心测试，覆盖配对、授权、执行、任务、文件传输、流式执行、端口转发、会话缓存和故障恢复。测试直接调用 Rust 中转库，`xrun relay` 部署命令仍仅支持 Linux。Linux 工作流另运行 Xvfb 截图测试和 Cloudflare workerd 测试；macOS、Windows 还检查桌面端、安装包内的 helper 和自动安装脚本，覆盖中文及空格路径、重复安装、损坏产物、版本不符，以及 macOS 回滚和 Windows 静默升级／卸载失败。每次提交是否通过，以对应的 Actions 结果为准。
+[Test Linux](../.github/workflows/test-linux.yml) 和 [Test Windows](../.github/workflows/test-windows.yml) 在 x86_64 与 arm64 runner 上分别原生运行核心测试；[Test macOS](../.github/workflows/test-macos.yml) 在 ARM runner 上原生运行。核心测试覆盖配对、授权、执行、任务、文件传输、流式执行、端口转发、会话缓存和故障恢复。测试直接调用 Rust 中转库，`xrun relay` 部署命令仍仅支持 Linux。Linux 工作流另运行 Xvfb 截图测试和 Cloudflare workerd 测试；macOS、Windows 还检查桌面端、安装包内的 helper 和自动安装脚本，覆盖中文及空格路径、重复安装、损坏产物、版本不符，以及 macOS 回滚和 Windows 静默升级／卸载失败。macOS x86_64 的产物检查在 Package 工作流中通过 Rosetta 执行。每次提交是否通过，以对应的 Actions 结果为准。
 
 Cloudflare 中转的本地检查无需云端凭证：
 
@@ -83,6 +99,16 @@ Ubuntu 26.04 x86_64 云主机与 macOS ARM64 本机已通过公网 TCP 8080 实�
 ## 发布与内置文档
 
 Package 工作流只生成 Actions 附件，不创建 Release。对外发布时将附件上传到 v<完整版本> Release。产物清单由 [package-manifest.ts](../desktop/scripts/package-manifest.ts) 使用现有 Bun 生成；用户运行安装程序不需要 Bun，见 [安装说明](usage.md#安装)。
+
+产物中的架构统一命名为 `x86_64` 和 `arm64`（Rust target 使用 `aarch64`）：
+
+| 平台标识 | CLI | 桌面 App | 清单 |
+| --- | --- | --- | --- |
+| `linux-x86_64` / `linux-arm64` | `xrun-<平台标识>.tar.gz` | — | `xrun-<平台标识>.json` |
+| `darwin-x86_64` / `darwin-arm64` | `xrun-<平台标识>.tar.gz` | `xrun-app-<平台标识>.dmg`、`.zip` | `xrun-<平台标识>.json` |
+| `windows-x86_64` / `windows-arm64` | `xrun-<平台标识>.zip` | `xrun-app-<平台标识>.exe` | `xrun-<平台标识>.json` |
+
+本地需要准备与发布相同的清单时，先将相应产物放入目录，再运行例如 `bun desktop/scripts/package-manifest.ts --platform darwin-x86_64 --directory dist`；清单记录各文件的 SHA-256，并复制对应的自动安装脚本。
 
 CLI 压缩包包含 LICENSE、README、docs/ 和 scripts/ 下的安装脚本，使用手册中的相对链接在压缩包中可用；开发文档引用的源码和 CI 文件在仓库中查看。`docs/usage.md` 编译进 CLI，随程序发布，仓库、附件和离线 `xrun doc` 使用同一份手册；更新后需要重新构建。文档测试验证无身份、无网络的帮助和章节查询，打包 smoke 检查内置手册。
 

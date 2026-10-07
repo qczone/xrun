@@ -7,8 +7,19 @@ permissions:
   contents: read
 jobs:
   test:
-    runs-on: ubuntu-24.04
+    name: Linux ${{ matrix.arch }}
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x86_64
+            runner: ubuntu-24.04
+            target: x86_64-unknown-linux-gnu
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-gnu
     env:
       RUST_BACKTRACE: '1'
       XRUN_TEST_LOG_DIR: ${{ github.workspace }}/target/test-logs
@@ -21,6 +32,7 @@ jobs:
         id: toolchain
         shell: bash
         run: |
+          rustup set default-host '${{ matrix.target }}'
           rustup toolchain install --no-self-update
           echo "version=$(rustc --version)" >> "$GITHUB_OUTPUT"
       - name: Cache Cargo dependencies and test build
@@ -30,8 +42,8 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             target/debug
-          key: xrun-${{ runner.os }}-${{ runner.arch }}-test-${{ steps.toolchain.outputs.version }}-${{ hashFiles('Cargo.lock') }}
-          restore-keys: xrun-${{ runner.os }}-${{ runner.arch }}-test-${{ steps.toolchain.outputs.version }}-
+          key: xrun-${{ runner.os }}-${{ matrix.target }}-test-${{ steps.toolchain.outputs.version }}-${{ hashFiles('Cargo.lock') }}
+          restore-keys: xrun-${{ runner.os }}-${{ matrix.target }}-test-${{ steps.toolchain.outputs.version }}-
       - name: Format, lint and test
         shell: bash
         run: |
@@ -66,8 +78,8 @@ jobs:
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.bun/install/cache
-          key: xrun-${{ runner.os }}-${{ runner.arch }}-cloudflare-${{ hashFiles('cloudflare/bun.lock', 'cloudflare/package.json') }}
-          restore-keys: xrun-${{ runner.os }}-${{ runner.arch }}-cloudflare-
+          key: xrun-${{ runner.os }}-${{ matrix.target }}-cloudflare-${{ hashFiles('cloudflare/bun.lock', 'cloudflare/package.json') }}
+          restore-keys: xrun-${{ runner.os }}-${{ matrix.target }}-cloudflare-
       - name: Check Cloudflare relay in workerd
         working-directory: cloudflare
         env:

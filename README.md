@@ -51,9 +51,11 @@ xrun linux1 forward 8080:3000
 
 | 平台 | CLI | 桌面 App |
 | --- | --- | --- |
-| macOS 13+ · Apple Silicon | 压缩包 | DMG / App ZIP |
-| Windows · x86_64 | 压缩包 | 当前用户安装程序 |
-| Linux · x86_64 | 压缩包 | — |
+| macOS 13+ · x86_64 / arm64 | 压缩包 | DMG / App ZIP |
+| Windows · x86_64 / arm64 | 压缩包 | 当前用户安装程序 |
+| Linux · x86_64 / arm64 | 压缩包 | — |
+
+每种系统分别提供两种架构的包：`x86_64` 即 AMD64，`arm64` 对应 Apple Silicon、Windows ARM 和 ARM Linux。
 
 CLI、设备后台服务和 Linux Rust 中转使用同一个二进制。运行发布包不需要安装 Rust、Node.js 或 Bun。
 

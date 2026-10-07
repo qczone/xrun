@@ -1,4 +1,10 @@
-param([string]$ProfileDir, [string]$ArtifactDir, [switch]$Release)
+param(
+    [string]$ProfileDir,
+    [string]$ArtifactDir,
+    [switch]$Release,
+    [ValidateSet('x86_64', 'arm64')][string]$Arch,
+    [string]$Target
+)
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 $root = Split-Path $PSScriptRoot -Parent
@@ -10,6 +16,16 @@ $sandboxHome = Join-Path $testDir 'home'
 
 function Assert-That([bool]$Condition, [string]$Message) {
     if (-not $Condition) { throw $Message }
+}
+function Assert-BinaryArchitecture([string]$File) {
+    # The NSIS bootstrap is x86 even for ARM64 apps; check its installed payload instead.
+    $bytes = [IO.File]::ReadAllBytes($File)
+    $peOffset = [BitConverter]::ToInt32($bytes, 0x3c)
+    Assert-That ($peOffset -ge 0 -and $peOffset + 6 -le $bytes.Length) "Invalid PE executable: $File"
+    Assert-That ([BitConverter]::ToUInt32($bytes, $peOffset) -eq 0x00004550) "Missing PE signature: $File"
+    $machine = [BitConverter]::ToUInt16($bytes, $peOffset + 4)
+    $expected = if ($Arch -eq 'arm64') { 0xaa64 } else { 0x8664 }
+    Assert-That ($machine -eq $expected) "Installed executable has the wrong architecture: $File"
 }
 function Invoke-Process([string]$File, [string]$Arguments, [int]$Timeout = 120000) {
     $info = New-Object Diagnostics.ProcessStartInfo
@@ -47,50 +63,77 @@ function Run-Installer([string]$Component, [string]$Directory, [string]$Source =
 }
 
 try {
+    $nativeArch = switch ([Runtime.InteropServices.RuntimeInformation]::OSArchitecture.ToString()) {
+        'X64' { 'x86_64' }
+        'Arm64' { 'arm64' }
+        default { throw 'Installer tests require Windows x86_64 or arm64.' }
+    }
+    if (-not $Arch) { $Arch = $nativeArch }
+    Assert-That ($Arch -eq $nativeArch) 'Windows installer tests must run on the target architecture.'
+    $platform = "windows-$Arch"
+    if ($Target) {
+        $expectedTarget = if ($Arch -eq 'arm64') { 'aarch64-pc-windows-msvc' } else { 'x86_64-pc-windows-msvc' }
+        Assert-That ($Target -ceq $expectedTarget) 'Rust target does not match the requested architecture.'
+    }
     if (-not $ArtifactDir) { $ArtifactDir = Join-Path $testDir 'artifacts' }
     $ArtifactDir = [IO.Path]::GetFullPath($ArtifactDir)
     [void](New-Item -ItemType Directory -Path $ArtifactDir -Force)
-    $cliArchive = Join-Path $ArtifactDir 'xrun-windows-x86_64.zip'
+    $cliArchive = Join-Path $ArtifactDir "xrun-$platform.zip"
     if (-not (Test-Path -LiteralPath $cliArchive)) {
         Compress-Archive -Path (Join-Path $buildProfileDir 'xrun.exe') -DestinationPath $cliArchive
     }
-    $installer = Join-Path $ArtifactDir 'xrun-app-windows-x86_64.exe'
+    $installer = Join-Path $ArtifactDir "xrun-app-$platform.exe"
     if (-not (Test-Path -LiteralPath $installer)) {
         $bundles = @(Get-ChildItem (Join-Path $buildProfileDir 'bundle/nsis/*.exe'))
         Assert-That ($bundles.Count -eq 1) 'Expected one NSIS installer.'
         Copy-Item -LiteralPath $bundles[0].FullName -Destination $installer
     }
-    & bun "$root/desktop/scripts/package-manifest.ts" --platform windows-x86_64 --directory $ArtifactDir
+    & bun "$root/desktop/scripts/package-manifest.ts" --platform $platform --directory $ArtifactDir
     Assert-That ($LASTEXITCODE -eq 0) 'Artifact manifest generation failed.'
-    $manifest = Get-Content -LiteralPath (Join-Path $ArtifactDir 'xrun-windows-x86_64.json') -Raw | ConvertFrom-Json
+    $manifest = Get-Content -LiteralPath (Join-Path $ArtifactDir "xrun-$platform.json") -Raw | ConvertFrom-Json
     $version = $manifest.version
     $appDir = Join-Path $testDir '安装 App with spaces'
     $cliDir = Join-Path $testDir 'CLI with spaces'
     $result = Run-Installer 'app' $appDir
     Assert-That ($result.ExitCode -eq 0 -and $result.Data.ok -and $result.Data.changed) "App installation failed: $($result.Data | ConvertTo-Json -Compress)"
     Assert-That ($result.Data.path -ceq $appDir) 'JSON did not preserve the Unicode installation path.'
+    Assert-That ($result.Data.platform -ceq $platform) 'Installer selected the wrong architecture.'
     $appBinary = $result.Data.executable
+    Assert-BinaryArchitecture $appBinary
+    Assert-BinaryArchitecture $result.Data.desktop_executable
     $result = Run-Installer 'app' $appDir
     Assert-That ($result.ExitCode -eq 0 -and -not $result.Data.changed) 'Repeated App installation should reuse the verified installation.'
     $result = Run-Installer 'cli' $cliDir
     Assert-That ($result.ExitCode -eq 0 -and $result.Data.ok -and $result.Data.changed) 'CLI installation failed.'
     $cliBinary = $result.Data.executable
+    Assert-BinaryArchitecture $cliBinary
     $result = Run-Installer 'cli' $cliDir
     Assert-That ($result.ExitCode -eq 0 -and -not $result.Data.changed) 'Repeated CLI installation should reuse identical bytes.'
 
     $bad = Join-Path $testDir 'corrupt'
     [void](New-Item -ItemType Directory -Path $bad)
     Copy-Item -LiteralPath $installer -Destination $bad
-    Copy-Item -LiteralPath (Join-Path $ArtifactDir 'xrun-windows-x86_64.json') -Destination $bad
-    [IO.File]::AppendAllText((Join-Path $bad 'xrun-app-windows-x86_64.exe'), 'corrupt')
+    Copy-Item -LiteralPath (Join-Path $ArtifactDir "xrun-$platform.json") -Destination $bad
+    [IO.File]::AppendAllText((Join-Path $bad "xrun-app-$platform.exe"), 'corrupt')
     $before = (Get-FileHash -LiteralPath $appBinary).Hash
     $result = Run-Installer 'app' $appDir $bad
     Assert-That ($result.ExitCode -ne 0 -and $result.Data.error.code -eq 'CHECKSUM_MISMATCH') 'Corrupt installer was not rejected.'
     Assert-That ((Get-FileHash -LiteralPath $appBinary).Hash -eq $before) 'Checksum failure changed the installed helper.'
     $manifest.version = '9.9.9'
-    $manifest | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath (Join-Path $bad 'xrun-windows-x86_64.json') -Encoding UTF8
+    $manifest | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath (Join-Path $bad "xrun-$platform.json") -Encoding UTF8
     $result = Run-Installer 'app' $appDir $bad
     Assert-That ($result.ExitCode -ne 0 -and $result.Data.error.code -eq 'INVALID_MANIFEST') 'Wrong-version manifest was not rejected.'
+    $manifest.version = $version
+    $manifest.platform = 'wrong-platform'
+    $manifest | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath (Join-Path $bad "xrun-$platform.json") -Encoding UTF8
+    $result = Run-Installer 'app' $appDir $bad
+    Assert-That ($result.ExitCode -ne 0 -and $result.Data.error.code -eq 'INVALID_MANIFEST') 'Wrong-platform manifest was not rejected.'
+    $manifest.platform = $platform
+    $manifest.artifacts.app.file = 'other-architecture.exe'
+    $manifest | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath (Join-Path $bad "xrun-$platform.json") -Encoding UTF8
+    $result = Run-Installer 'app' $appDir $bad
+    Assert-That ($result.ExitCode -ne 0 -and $result.Data.error.code -eq 'INVALID_MANIFEST') 'Wrong artifact name was not rejected.'
+    Assert-That ((Get-FileHash -LiteralPath $appBinary).Hash -eq $before) 'Manifest failure changed the installed helper.'
 
     # The CLI rejects App-only flags, providing a real failing preparation process.
     $blocked = Join-Path $testDir 'blocked update'
@@ -120,6 +163,7 @@ try {
     Set-Location $root
     $cargoArgs = @('test', '--locked')
     if ($Release) { $cargoArgs += '--release' }
+    if ($Target) { $cargoArgs += @('--target', $Target) }
     $cargoArgs += @('--test', 'smoke', '--', '--nocapture')
     $env:XRUN_TEST_BINARY = $appBinary
     & cargo @cargoArgs

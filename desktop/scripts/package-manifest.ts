@@ -14,30 +14,25 @@ const { values } = parseArgs({
   },
 });
 const platform = values.platform;
-if (
-  !platform ||
-  !["linux-x86_64", "darwin-arm64", "windows-x86_64"].includes(platform)
-) {
-  throw new Error(
-    "Specify --platform linux-x86_64, darwin-arm64 or windows-x86_64",
-  );
+if (!platform || !/^(linux|darwin|windows)-(x86_64|arm64)$/.test(platform)) {
+  throw new Error("Specify --platform <linux|darwin|windows>-<x86_64|arm64>");
 }
 const directory = resolve(values.directory);
 const config = Bun.TOML.parse(
   await readFile(resolve(root, "Cargo.toml"), "utf8"),
 ) as { package: { version: string } };
 const version = config.package.version;
-const extension = platform === "windows-x86_64" ? "zip" : "tar.gz";
+const extension = platform.startsWith("windows-") ? "zip" : "tar.gz";
 const files: Record<string, string> = {
   cli: `xrun-${platform}.${extension}`,
 };
 let installer: string | undefined;
-if (platform === "darwin-arm64") {
-  files.app = "xrun-app-darwin-arm64.zip";
-  files.dmg = "xrun-app-darwin-arm64.dmg";
+if (platform.startsWith("darwin-")) {
+  files.app = `xrun-app-${platform}.zip`;
+  files.dmg = `xrun-app-${platform}.dmg`;
   installer = "install.sh";
-} else if (platform === "windows-x86_64") {
-  files.app = "xrun-app-windows-x86_64.exe";
+} else if (platform.startsWith("windows-")) {
+  files.app = `xrun-app-${platform}.exe`;
   installer = "install.ps1";
 }
 const artifacts: Record<string, { file: string; sha256: string }> = {};

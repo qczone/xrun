@@ -99,8 +99,12 @@ try {
         Fail-Install 'UNSUPPORTED_PLATFORM' 'install.ps1 supports Windows.'
     }
     $architecture = [Runtime.InteropServices.RuntimeInformation]::OSArchitecture.ToString()
-    if ($architecture -ne 'X64') { Fail-Install 'UNSUPPORTED_PLATFORM' 'This release provides Windows x86_64 artifacts.' }
-    $platform = 'windows-x86_64'
+    $artifactArchitecture = switch ($architecture) {
+        'X64' { 'x86_64' }
+        'Arm64' { 'arm64' }
+        default { Fail-Install 'UNSUPPORTED_PLATFORM' 'This release supports Windows x86_64 and arm64.' }
+    }
+    $platform = "windows-$artifactArchitecture"
     if (-not $InstallDir) {
         $InstallDir = if ($Component -eq 'app') { Join-Path $env:LOCALAPPDATA 'Programs\xrun' } else { Join-Path $env:LOCALAPPDATA 'xrun\bin' }
     }
@@ -115,7 +119,7 @@ try {
         Fail-Install 'INVALID_MANIFEST' 'Manifest version or platform does not match the requested release.'
     }
     $entry = $manifest.artifacts.$Component
-    $expected = if ($Component -eq 'app') { 'xrun-app-windows-x86_64.exe' } else { 'xrun-windows-x86_64.zip' }
+    $expected = if ($Component -eq 'app') { "xrun-app-$platform.exe" } else { "xrun-$platform.zip" }
     if ($entry.file -cne $expected -or $entry.sha256 -cnotmatch '^[0-9a-f]{64}$') {
         Fail-Install 'INVALID_MANIFEST' 'Manifest artifact name or SHA-256 is invalid.'
     }

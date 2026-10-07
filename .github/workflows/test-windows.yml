@@ -7,8 +7,21 @@ permissions:
   contents: read
 jobs:
   test:
-    runs-on: windows-2022
+    name: Windows ${{ matrix.arch }}
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x86_64
+            runner: windows-2022
+            msvc_arch: x64
+            target: x86_64-pc-windows-msvc
+          - arch: arm64
+            runner: windows-11-arm
+            msvc_arch: arm64
+            target: aarch64-pc-windows-msvc
     env:
       RUST_BACKTRACE: '1'
       XRUN_TEST_LOG_DIR: ${{ github.workspace }}/target/test-logs
@@ -19,13 +32,15 @@ jobs:
           persist-credentials: false
       - uses: ilammy/msvc-dev-cmd@0b201ec74fa43914dc39ae48a89fd1d8cb592756
         with:
-          arch: x64
+          arch: ${{ matrix.msvc_arch }}
       - name: Rust toolchain
         id: toolchain
         shell: pwsh
         run: |
           $PSNativeCommandUseErrorActionPreference = $true
+          rustup set default-host '${{ matrix.target }}'
           rustup toolchain install --no-self-update
+          rustup target add '${{ matrix.target }}'
           "version=$(rustc --version)" >> $env:GITHUB_OUTPUT
       - name: Cache Cargo dependencies and test build
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
@@ -34,15 +49,16 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             target/debug
-          key: xrun-${{ runner.os }}-${{ runner.arch }}-test-${{ steps.toolchain.outputs.version }}-${{ hashFiles('Cargo.lock') }}
-          restore-keys: xrun-${{ runner.os }}-${{ runner.arch }}-test-${{ steps.toolchain.outputs.version }}-
+            target/${{ matrix.target }}/debug
+          key: xrun-${{ runner.os }}-${{ matrix.target }}-test-${{ steps.toolchain.outputs.version }}-${{ hashFiles('Cargo.lock') }}
+          restore-keys: xrun-${{ runner.os }}-${{ matrix.target }}-test-${{ steps.toolchain.outputs.version }}-
       - name: Format, lint and test
         shell: pwsh
         run: |
           $PSNativeCommandUseErrorActionPreference = $true
           cargo fmt --all -- --check
-          cargo clippy --locked --all-targets -- -D warnings
-          cargo test --locked
+          cargo clippy --locked --target '${{ matrix.target }}' --all-targets -- -D warnings
+          cargo test --locked --target '${{ matrix.target }}'
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
         with:
           bun-version-file: desktop/package.json
@@ -50,8 +66,8 @@ jobs:
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.bun/install/cache
-          key: xrun-${{ runner.os }}-${{ runner.arch }}-bun-${{ hashFiles('desktop/bun.lock', 'desktop/package.json') }}
-          restore-keys: xrun-${{ runner.os }}-${{ runner.arch }}-bun-
+          key: xrun-${{ runner.os }}-${{ matrix.target }}-bun-${{ hashFiles('desktop/bun.lock', 'desktop/package.json') }}
+          restore-keys: xrun-${{ runner.os }}-${{ matrix.target }}-bun-
       - name: Build desktop installer
         working-directory: desktop
         shell: pwsh
@@ -60,24 +76,24 @@ jobs:
           $artifactDir = Join-Path $env:RUNNER_TEMP 'xrun-installer-artifacts'
           New-Item -ItemType Directory -Force $artifactDir | Out-Null
           # Preserve the console CLI before building the GUI-subsystem App helper.
-          Compress-Archive -Path ../target/debug/xrun.exe -DestinationPath (Join-Path $artifactDir 'xrun-windows-x86_64.zip') -Force
+          Compress-Archive -Path ../target/${{ matrix.target }}/debug/xrun.exe -DestinationPath (Join-Path $artifactDir 'xrun-windows-${{ matrix.arch }}.zip') -Force
           bun install --frozen-lockfile
           bun run check
-          bun run build --debug --verbose
+          bun run build --debug --target '${{ matrix.target }}' --verbose
       - name: Check desktop code and bundled helper
         shell: pwsh
         run: |
           $PSNativeCommandUseErrorActionPreference = $true
-          cargo clippy --locked -p xrun-desktop --all-targets -- -D warnings
-          cargo test --locked -p xrun-desktop
-          $p = Start-Process -FilePath target/debug/xrun-desktop.exe -ArgumentList '--self-check' -Wait -PassThru -NoNewWindow
+          cargo clippy --locked -p xrun-desktop --target '${{ matrix.target }}' --all-targets -- -D warnings
+          cargo test --locked -p xrun-desktop --target '${{ matrix.target }}'
+          $p = Start-Process -FilePath target/${{ matrix.target }}/debug/xrun-desktop.exe -ArgumentList '--self-check' -Wait -PassThru -NoNewWindow
           if ($p.ExitCode -ne 0) { throw 'Desktop self-check failed' }
       - name: Install and test the packaged App helper
         shell: pwsh
         timeout-minutes: 5
         run: |
           $PSNativeCommandUseErrorActionPreference = $true
-          $installers = @(Get-ChildItem target/debug/bundle/nsis/*.exe)
+          $installers = @(Get-ChildItem target/${{ matrix.target }}/debug/bundle/nsis/*.exe)
           if ($installers.Count -ne 1) { throw 'Expected one NSIS installer' }
           $installDir = Join-Path $env:RUNNER_TEMP 'xrun-app-smoke'
           $p = Start-Process -FilePath $installers[0].FullName -ArgumentList '/S', "/D=$installDir" -Wait -PassThru
@@ -85,10 +101,10 @@ jobs:
           $p = Start-Process -FilePath (Join-Path $installDir 'xrun-desktop.exe') -ArgumentList '--self-check' -Wait -PassThru -NoNewWindow
           if ($p.ExitCode -ne 0) { throw 'Installed desktop self-check failed' }
           $env:XRUN_TEST_BINARY = Join-Path $installDir 'xrun.exe'
-          cargo test --locked --test smoke -- --nocapture
+          cargo test --locked --target '${{ matrix.target }}' --test smoke -- --nocapture
       - name: Test automatic installation and silent failures
         shell: pwsh
-        run: ./tests/install-windows.ps1 -ProfileDir target/debug -ArtifactDir (Join-Path $env:RUNNER_TEMP 'xrun-installer-artifacts')
+        run: ./tests/install-windows.ps1 -ProfileDir 'target/${{ matrix.target }}/debug' -ArtifactDir (Join-Path $env:RUNNER_TEMP 'xrun-installer-artifacts') -Arch '${{ matrix.arch }}' -Target '${{ matrix.target }}'
       - name: Upload failed test process logs
         if: failure()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1

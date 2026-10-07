@@ -3,6 +3,7 @@
 set -Eeuo pipefail
 
 component=app
+architecture=
 version=
 install_dir=
 source_dir=
@@ -60,13 +61,14 @@ trap 'fail INTERRUPTED "Installation interrupted."' INT TERM
 while (($#)); do
   case "$1" in
     --help|-h)
-      printf '%s\n' 'Usage: bash install.sh --version VERSION [--component app|cli] [--install-dir DIR] [--source-dir DIR | --base-url HTTPS_URL]'
+      printf '%s\n' 'Usage: bash install.sh --version VERSION [--component app|cli] [--arch x86_64|arm64] [--install-dir DIR] [--source-dir DIR | --base-url HTTPS_URL]'
       exit 0 ;;
-    --version|--component|--install-dir|--source-dir|--base-url)
+    --version|--component|--arch|--install-dir|--source-dir|--base-url)
       (($# >= 2)) || fail INVALID_ARGUMENT "Missing value for $1."
       case "$1" in
         --version) version=${2#v} ;;
         --component) component=$2 ;;
+        --arch) architecture=$2 ;;
         --install-dir) install_dir=$2 ;;
         --source-dir) source_dir=$2 ;;
         --base-url) base_url=$2 ;;
@@ -77,10 +79,16 @@ while (($#)); do
 done
 [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$ ]] || fail INVALID_ARGUMENT 'Specify the full release version with --version.'
 [[ "$component" == app || "$component" == cli ]] || fail INVALID_ARGUMENT 'Component must be app or cli.'
+[[ -z "$architecture" || "$architecture" == x86_64 || "$architecture" == arm64 ]] || fail INVALID_ARGUMENT 'Architecture must be x86_64 or arm64.'
 [[ -z "$source_dir" || -z "$base_url" ]] || fail INVALID_ARGUMENT 'Choose source-dir or base-url.'
 [[ $(uname -s) == Darwin ]] || fail UNSUPPORTED_PLATFORM 'install.sh supports macOS; use the platform CLI archive on Linux.'
-[[ $(uname -m) == arm64 || $(sysctl -n hw.optional.arm64 2>/dev/null || true) == 1 ]] || fail UNSUPPORTED_PLATFORM 'This release provides macOS Apple Silicon artifacts.'
-platform=darwin-arm64
+host_architecture=$(uname -m)
+# A shell running under Rosetta still selects the native Apple Silicon release.
+if [[ $(sysctl -n hw.optional.arm64 2>/dev/null || true) == 1 ]]; then host_architecture=arm64; fi
+[[ "$host_architecture" == x86_64 || "$host_architecture" == arm64 ]] || fail UNSUPPORTED_PLATFORM 'This release supports macOS x86_64 and arm64.'
+if [[ -z "$architecture" ]]; then architecture=$host_architecture; fi
+[[ "$host_architecture" == arm64 || "$architecture" == x86_64 ]] || fail UNSUPPORTED_PLATFORM 'An arm64 release cannot run on an Intel Mac.'
+platform="darwin-$architecture"
 if [[ -z "$install_dir" ]]; then
   if [[ "$component" == app ]]; then install_dir="$HOME/Applications"; else install_dir="$HOME/.local/bin"; fi
 fi
@@ -101,7 +109,7 @@ fetch "xrun-$platform.json"
 [[ $(field schema) == 1 && $(field version) == "$version" && $(field platform) == "$platform" ]] || fail INVALID_MANIFEST 'Manifest version or platform does not match the requested release.'
 artifact=$(field "artifacts.$component.file")
 digest=$(field "artifacts.$component.sha256")
-if [[ "$component" == app ]]; then expected=xrun-app-darwin-arm64.zip; else expected=xrun-darwin-arm64.tar.gz; fi
+if [[ "$component" == app ]]; then expected="xrun-app-$platform.zip"; else expected="xrun-$platform.tar.gz"; fi
 [[ "$artifact" == "$expected" && "$digest" =~ ^[0-9a-f]{64}$ ]] || fail INVALID_MANIFEST 'Manifest artifact name or SHA-256 is invalid.'
 fetch "$artifact"
 actual=$(shasum -a 256 "$work_dir/$artifact")
