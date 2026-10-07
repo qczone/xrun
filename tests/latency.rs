@@ -59,6 +59,7 @@ async fn invalidate(
     lab: &Lab,
     id: &str,
     name: &str,
+    budget: Duration,
     change: impl FnOnce() -> Result<()>,
 ) -> Result<serde_json::Value> {
     let mut socket = subscription(lab, id).await?;
@@ -66,9 +67,11 @@ async fn invalidate(
     // Start after the atomic configuration/roster commit. This excludes CLI
     // startup, delivery of the administrative command and write/fsync latency.
     let started = Instant::now();
-    tokio::time::timeout(ACCESS_BUDGET, closed(&mut socket))
+    tokio::time::timeout(budget, closed(&mut socket))
         .await
-        .with_context(|| format!("{name} did not close the established session within 200 ms"))??;
+        .with_context(|| {
+            format!("{name} did not close the established session within {budget:?}")
+        })??;
     Ok(serde_json::json!({"change":name,"closure_ms":started.elapsed().as_secs_f64()*1000.0}))
 }
 
@@ -98,6 +101,20 @@ async fn runner(root: &Path) -> Result<std::path::PathBuf> {
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 #[ignore = "controlled idle-machine acceptance; run alone with --ignored --test-threads=1"]
 async fn established_sessions_react_within_budgets() -> Result<()> {
+    acceptance(ACCESS_BUDGET, OUTPUT_BUDGET, "controlled idle machine").await
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn established_sessions_deliver_output_and_invalidate_access() -> Result<()> {
+    acceptance(
+        Duration::from_secs(5),
+        Duration::from_secs(5),
+        "functional CI",
+    )
+    .await
+}
+
+async fn acceptance(access_budget: Duration, output_budget: Duration, mode: &str) -> Result<()> {
     let lab = Lab::new().await?;
     let executable = runner(lab.root.path()).await?;
     let gate = TcpListener::bind("127.0.0.1:0").await?;
@@ -121,7 +138,7 @@ async fn established_sessions_react_within_budgets() -> Result<()> {
     let mut logs = subscription(&lab, id).await?;
     let output_started = Instant::now();
     producer.write_all(&[1]).await?;
-    let visible = tokio::time::timeout(OUTPUT_BUDGET, async {
+    let visible = tokio::time::timeout(output_budget, async {
         loop {
             if let Data::Logs { events, .. } = net::receive::<Data>(&mut logs).await?
                 && !events.is_empty()
@@ -131,7 +148,7 @@ async fn established_sessions_react_within_budgets() -> Result<()> {
         }
     })
     .await
-    .context("triggered output was not visible within 100 ms over established loopback")??;
+    .with_context(|| format!("triggered output was not visible within {output_budget:?}"))??;
     let output_ms = output_started.elapsed().as_secs_f64() * 1000.0;
     ensure!(visible[0].stream == "stdout");
     ensure!(STANDARD.decode(&visible[0].data_base64)? == b"gated output\n");
@@ -141,7 +158,7 @@ async fn established_sessions_react_within_budgets() -> Result<()> {
     let mut results = Vec::new();
     for name in ["deny-from", "pause", "pause-resume"] {
         results.push(
-            invalidate(&lab, id, name, || {
+            invalidate(&lab, id, name, access_budget, || {
                 let mut next: DaemonConfig = config::read(&config_path)?;
                 if name == "deny-from" {
                     next.deny_from.push(lab.source_identity.device_id.clone());
@@ -175,7 +192,7 @@ async fn established_sessions_react_within_budgets() -> Result<()> {
         .cert_pem;
     ensure!(renewed.cert_pem != lab.target_identity.cert_pem);
     results.push(
-        invalidate(&lab, id, "certificate-renewal", || {
+        invalidate(&lab, id, "certificate-renewal", access_budget, || {
             config::write(&lab.target.join(".xrun/identity.toml"), &renewed)
         })
         .await?,
@@ -183,15 +200,15 @@ async fn established_sessions_react_within_budgets() -> Result<()> {
     let revoked = manager.revoke(&lab.target_identity.device_id)?;
     let cache = RosterCache::open(&lab.target.join(".xrun/roster.db"))?;
     results.push(
-        invalidate(&lab, id, "revocation", || {
+        invalidate(&lab, id, "revocation", access_budget, || {
             cache.observe(&revoked.roster.network_id, &revoked)
         })
         .await?,
     );
     let report = serde_json::json!({
         "platform":std::env::consts::OS,
-        "path":"established encrypted sessions through loopback Rust relay, idle machine",
-        "access_budget_ms":200,"output_budget_ms":100,
+        "path":"established encrypted sessions through loopback Rust relay", "mode":mode,
+        "access_budget_ms":access_budget.as_millis(),"output_budget_ms":output_budget.as_millis(),
         "output_trigger_to_remote_visibility_ms":output_ms,"access":results,
     });
     println!("{report}");

@@ -10,6 +10,12 @@ import {
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
+import {
+  DEVELOPMENT_BASELINE,
+  earlierTags,
+  overlaps,
+  protocolRange as range,
+} from "./compatibility-baseline";
 
 // Real historical source builds. Old release-bound beta protocols are intentionally excluded.
 const root = resolve(import.meta.dir, "..");
@@ -34,13 +40,6 @@ async function run(
   if (await child.exited) throw new Error(`${args[0]} ${args[1]} failed`);
   return output;
 }
-function range(source: string) {
-  const max = Number(/pub const PROTOCOL: u32 = (\d+);/.exec(source)?.[1]);
-  const min = Number(/min:\s*(\d+)/.exec(source)?.[1]);
-  if (!min || !max || min > max)
-    throw new Error("No implemented protocol range");
-  return { min, max };
-}
 const currentVersion = /^version = "([^"]+)"/m.exec(
   await readFile(join(root, "Cargo.toml"), "utf8"),
 )?.[1];
@@ -48,43 +47,42 @@ const current = range(
   await readFile(join(root, "src/protocol/version.rs"), "utf8"),
 );
 let baseline = process.argv[2];
+let baselineKind = "explicit reference";
 if (!baseline) {
-  const tags = (await run(["git", "tag", "--sort=-version:refname"]))
-    .trim()
-    .split("\n")
-    .filter(Boolean);
-  for (const tag of tags) {
-    try {
-      const manifest = await run(["git", "show", `${tag}:Cargo.toml`]);
-      if (/^version = "([^"]+)"/m.exec(manifest)?.[1] === currentVersion)
-        continue;
-      const previous = range(
-        await run(["git", "show", `${tag}:src/protocol/version.rs`]),
-      );
-      if (
-        Math.max(current.min, previous.min) <=
-        Math.min(current.max, previous.max)
-      ) {
-        baseline = tag;
-        break;
-      }
-    } catch {
-      /* Before protocol 1 there is no supported historical compatibility. */
+  const tags = (await run(["git", "tag"])).trim().split("\n").filter(Boolean);
+  if (!currentVersion) throw new Error("No current release version");
+  for (const tag of earlierTags(tags, currentVersion)) {
+    // Only releases preceding the explicit wire contract are excluded.
+    // Missing objects, malformed contracts and failed Git commands are errors.
+    if (!(await run(["git", "ls-tree", tag, "src/protocol/version.rs"])).trim())
+      continue;
+    const previous = range(
+      await run(["git", "show", `${tag}:src/protocol/version.rs`]),
+    );
+    if (overlaps(current, previous)) {
+      baseline = tag;
+      baselineKind = "release tag";
+      break;
     }
+  }
+  if (!baseline) {
+    baseline = DEVELOPMENT_BASELINE;
+    baselineKind = "frozen development snapshot, not a published release";
   }
 }
 if (!baseline) {
-  console.log(
-    "Protocol 1 bootstrap: no earlier compatible release tag exists; future releases test real previous builds.",
+  throw new Error(
+    "No compatibility baseline; skipping is not a successful test",
   );
 } else {
+  console.log(`Compatibility baseline: ${baseline} (${baselineKind})`);
   const reference = (
     await run(["git", "rev-parse", "--verify", `${baseline}^{commit}`])
   ).trim();
   const previous = range(
     await run(["git", "show", `${reference}:src/protocol/version.rs`]),
   );
-  if (Math.max(current.min, previous.min) > Math.min(current.max, previous.max))
+  if (!overlaps(current, previous))
     throw new Error("Selected historical build has no common protocol");
   const temporary = await mkdtemp(join(tmpdir(), "xrun-compatibility-"));
   try {
