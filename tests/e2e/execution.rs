@@ -257,6 +257,13 @@ pub(super) async fn check(suite: &Suite) -> Result<String> {
         .await;
         assert_eq!(invalid.status.code(), Some(125));
         assert!(String::from_utf8_lossy(&invalid.stderr).contains("INVALID_SCRIPT_ARGUMENT"));
+        assert_eq!(
+            ok(input(source,
+                &["runner1", "--script", "cmd", "--", "", "marker", "", ""],
+                b"@echo off\necho first=[%1]\necho second=[%~2]\necho third=[%3]\necho fourth=[%4]\necho fifth=[%5]\n",
+            ).await),
+            "first=[\"\"]\r\nsecond=[marker]\r\nthird=[\"\"]\r\nfourth=[\"\"]\r\nfifth=[]\r\n"
+        );
     }
     // Capacity rejection does not create a job or poison the request ID.
     let mut jobs = vec![];

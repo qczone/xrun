@@ -407,7 +407,13 @@ mod windows {
                 if i != 0 {
                     cmdline.push(' ');
                 }
-                cmdline.push_str(&format!("\"%{name}%\""));
+                if arg.is_empty() {
+                    // Empty environment values are undefined to cmd, so an
+                    // expansion could become the literal variable reference.
+                    cmdline.push_str("\"\"");
+                } else {
+                    cmdline.push_str(&format!("\"%{name}%\""));
+                }
             }
             cmdline.push('\"');
         } else {
