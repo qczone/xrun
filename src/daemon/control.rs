@@ -64,7 +64,12 @@ async fn control_once(rt: Arc<Runtime>) -> Result<()> {
 }
 const LOG_PRUNE_INTERVAL: Duration = Duration::from_secs(10 * 60);
 fn check_control_access(rt: &Runtime, address: &str) -> Result<()> {
-    let access = rt.authorization()?;
+    // Session leases fail closed on an invalid snapshot. Keep the routing
+    // connection long enough to report the original refusal and allow repair;
+    // tearing it down first would discard those typed errors with its tunnels.
+    let Ok(access) = rt.authorization() else {
+        return Ok(());
+    };
     if !access
         .roster
         .roster
@@ -104,17 +109,25 @@ async fn handle_control_message(
             *last = tokio::time::Instant::now();
             match serde_json::from_str::<RelayMessage>(&text)? {
                 RelayMessage::Incoming { session_id } => {
-                    let Ok(permit) = rt.sessions.clone().try_acquire_owned() else {
-                        let error = ErrorCode::DeviceBusy.error("encrypted session limit reached");
-                        net::send(
-                            ws,
-                            &RelayMessage::Reject {
-                                session_id,
-                                error: Box::new(Data::error(&error.into())),
-                            },
-                        )
-                        .await?;
-                        return Ok(());
+                    let admission = rt.authorization().and_then(|_| {
+                        rt.sessions
+                            .clone()
+                            .try_acquire_owned()
+                            .context(ErrorCode::DeviceBusy.error("encrypted session limit reached"))
+                    });
+                    let permit = match admission {
+                        Ok(permit) => permit,
+                        Err(error) => {
+                            net::send(
+                                ws,
+                                &RelayMessage::Reject {
+                                    session_id,
+                                    error: Box::new(Data::error(&error)),
+                                },
+                            )
+                            .await?;
+                            return Ok(());
+                        }
                     };
                     let runtime = rt.clone();
                     let address = address.to_owned();

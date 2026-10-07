@@ -11,6 +11,10 @@ pub mod config {
 }
 /// Probe and stop isolated daemon fixtures, including transport and lifecycle failures.
 pub mod control {
+    /// Request a real private-IPC reload of an isolated daemon's authorization.
+    pub async fn refresh_access(dir: &std::path::Path) -> anyhow::Result<()> {
+        crate::ipc::refresh_access(dir).await
+    }
     pub use crate::control::{request_shutdown, state};
 }
 /// Construct pinned TLS identities and forged certificate/proof inputs.

@@ -14,7 +14,7 @@ pub struct State {
     pub generation: String,
     pub connected: bool,
 }
-type ReloadReply = tokio::sync::oneshot::Sender<std::result::Result<(), String>>;
+type ReloadReply = tokio::sync::oneshot::Sender<Result<()>>;
 type ReloadRequests = tokio::sync::mpsc::Receiver<ReloadReply>;
 pub(crate) struct Control {
     dir: PathBuf,
@@ -52,9 +52,7 @@ impl Control {
     pub(crate) async fn reload_access(&self) -> Result<()> {
         let (reply, result) = tokio::sync::oneshot::channel();
         self.reload.send(reply).await?;
-        result
-            .await?
-            .map_err(|message| anyhow::anyhow!(ErrorCode::StorageError.error(message)))
+        result.await?
     }
     pub(crate) fn connected(&self, connected: bool) -> Result<()> {
         let mut value = self.value.lock().unwrap();

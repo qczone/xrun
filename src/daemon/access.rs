@@ -2,7 +2,7 @@
 use super::Runtime;
 use crate::{
     config::{DaemonConfig, Identity},
-    error::ErrorCode,
+    error::{CodedError, ErrorCode},
     membership::SignedRoster,
 };
 use anyhow::{Result, bail};
@@ -21,7 +21,7 @@ pub(super) struct Authorization {
     pub roster: SignedRoster,
     pub files: Option<(Fingerprint, Fingerprint)>,
 }
-pub(super) type Snapshot = Result<Arc<Authorization>, Arc<str>>;
+pub(super) type Snapshot = Result<Arc<Authorization>, Arc<CodedError>>;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct Fingerprint {
@@ -30,20 +30,34 @@ pub(super) struct Fingerprint {
     file_id: (u64, u64),
 }
 fn fingerprint(path: &Path) -> Result<Fingerprint> {
+    #[cfg(unix)]
     let metadata = std::fs::metadata(path)?;
     #[cfg(unix)]
     let file_id = {
         use std::os::unix::fs::MetadataExt;
         (metadata.dev(), metadata.ino())
     };
-    #[cfg(not(unix))]
-    let file_id = (
-        metadata
-            .created()?
-            .duration_since(SystemTime::UNIX_EPOCH)?
-            .as_nanos() as u64,
-        0,
-    );
+    #[cfg(windows)]
+    let (metadata, file_id) = {
+        use std::os::windows::io::AsRawHandle;
+        use windows_sys::Win32::Storage::FileSystem::{
+            BY_HANDLE_FILE_INFORMATION, GetFileInformationByHandle,
+        };
+        // Metadata and identity must come from the same open file. Its default
+        // Windows share flags allow the CLI to atomically replace the pathname.
+        let file = std::fs::File::open(path)?;
+        let mut info = BY_HANDLE_FILE_INFORMATION::default();
+        if unsafe { GetFileInformationByHandle(file.as_raw_handle() as _, &mut info) } == 0 {
+            return Err(std::io::Error::last_os_error().into());
+        }
+        (
+            file.metadata()?,
+            (
+                u64::from(info.dwVolumeSerialNumber),
+                (u64::from(info.nFileIndexHigh) << 32) | u64::from(info.nFileIndexLow),
+            ),
+        )
+    };
     Ok(Fingerprint {
         modified: metadata.modified()?,
         bytes: metadata.len(),
@@ -51,7 +65,7 @@ fn fingerprint(path: &Path) -> Result<Fingerprint> {
     })
 }
 
-fn scan(rt: &Runtime, dir: &Path) -> Result<Option<Arc<Authorization>>> {
+fn scan(rt: &Runtime, dir: &Path, force: bool) -> Result<Option<Arc<Authorization>>> {
     let files = (
         fingerprint(&dir.join("daemon.toml"))?,
         fingerprint(&dir.join("identity.toml"))?,
@@ -67,7 +81,7 @@ fn scan(rt: &Runtime, dir: &Path) -> Result<Option<Arc<Authorization>>> {
             .borrow()
             .as_ref()
             .is_ok_and(|value| value.roster.signature == roster.signature);
-    if unchanged {
+    if unchanged && !force {
         return Ok(None);
     }
     let identity = Identity::load()?;
@@ -93,31 +107,32 @@ pub(super) async fn monitor(rt: Arc<Runtime>, dir: PathBuf) -> Result<()> {
             _ = roster_changes.changed() => None,
             reply = reloads.recv() => reply,
         };
-        let result = refresh(rt.clone(), dir.clone()).await;
+        let result = refresh(rt.clone(), dir.clone(), reply.is_some()).await;
         if let Some(reply) = reply {
-            let _ = reply.send(result.map_err(|error| format!("{error:#}")));
+            let _ = reply.send(result);
         }
     }
 }
-fn refresh_blocking(rt: &Runtime, dir: &Path) -> Result<()> {
+fn refresh_blocking(rt: &Runtime, dir: &Path, force: bool) -> Result<()> {
     let _guard = rt.access_scan.lock().unwrap();
-    let result = scan(rt, dir);
+    let result = scan(rt, dir, force);
     match &result {
         Ok(Some(snapshot)) => {
             let _ = rt.access.send_replace(Ok(snapshot.clone()));
         }
         Ok(None) => {}
         Err(error) => {
-            let message = format!("{error:#}");
-            if rt.access.borrow().as_ref().err().map(AsRef::as_ref) != Some(message.as_str()) {
-                let _ = rt.access.send_replace(Err(message.into()));
+            let (code, message) = crate::error::wire(error);
+            let failure = Arc::new(CodedError::from_wire(code, message));
+            if rt.access.borrow().as_ref().err() != Some(&failure) {
+                let _ = rt.access.send_replace(Err(failure));
             }
         }
     }
     result.map(|_| ())
 }
-pub(super) async fn refresh(rt: Arc<Runtime>, dir: PathBuf) -> Result<()> {
-    tokio::task::spawn_blocking(move || refresh_blocking(&rt, &dir)).await?
+pub(super) async fn refresh(rt: Arc<Runtime>, dir: PathBuf, force: bool) -> Result<()> {
+    tokio::task::spawn_blocking(move || refresh_blocking(&rt, &dir, force)).await?
 }
 
 impl Runtime {
@@ -125,7 +140,7 @@ impl Runtime {
         self.access
             .borrow()
             .clone()
-            .map_err(|message| anyhow::anyhow!(ErrorCode::StorageError.error(message.to_string())))
+            .map_err(|failure| anyhow::anyhow!(failure.as_ref().clone()))
     }
 }
 
@@ -134,13 +149,41 @@ mod tests {
     use super::*;
 
     #[test]
-    fn fingerprint_detects_atomic_replacement_even_with_equal_length() -> Result<()> {
+    fn fingerprint_detects_replacement_with_equal_length_and_timestamps() -> Result<()> {
         let dir = tempfile::tempdir()?;
         let path = dir.path().join("daemon.toml");
         crate::config::atomic_private_write(&path, b"first")?;
+        let metadata = std::fs::metadata(&path)?;
         let before = fingerprint(&path)?;
         crate::config::atomic_private_write(&path, b"other")?;
-        assert_ne!(before, fingerprint(&path)?);
+        let replacement = std::fs::OpenOptions::new().write(true).open(&path)?;
+        replacement.set_times(std::fs::FileTimes::new().set_modified(metadata.modified()?))?;
+        #[cfg(windows)]
+        {
+            use std::os::windows::{fs::MetadataExt, io::AsRawHandle};
+            use windows_sys::Win32::{Foundation::FILETIME, Storage::FileSystem::SetFileTime};
+            let created = metadata.creation_time();
+            let created = FILETIME {
+                dwLowDateTime: created as u32,
+                dwHighDateTime: (created >> 32) as u32,
+            };
+            if unsafe {
+                SetFileTime(
+                    replacement.as_raw_handle() as _,
+                    &created,
+                    std::ptr::null(),
+                    std::ptr::null(),
+                )
+            } == 0
+            {
+                return Err(std::io::Error::last_os_error().into());
+            }
+        }
+        drop(replacement);
+        let after = fingerprint(&path)?;
+        assert_eq!(before.modified, after.modified);
+        assert_eq!(before.bytes, after.bytes);
+        assert_ne!(before.file_id, after.file_id);
         Ok(())
     }
 }

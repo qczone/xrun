@@ -235,7 +235,7 @@ impl ErrorCode {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 /// Error carrying a machine code separately from its human-readable diagnostic.
 pub struct CodedError {
     /// Explicit failure identity; formatting the message never changes it.

@@ -20,7 +20,7 @@ pub(super) async fn data_session(
     generation: &str,
     sid: &str,
 ) -> Result<()> {
-    super::access::refresh(rt.clone(), crate::config::device_dir()?).await?;
+    super::access::refresh(rt.clone(), crate::config::device_dir()?, false).await?;
     let id = rt.authorization()?.identity.clone();
     let (mut ws, certificate) = tokio::time::timeout(CONNECT_TIMEOUT, async {
         let (outer, flow_control) = network::attach(&id, address, generation, sid).await?;
@@ -61,7 +61,7 @@ pub(super) async fn data_session(
                     _ = stop.changed() => bail!(ErrorCode::DaemonStopping.error("daemon shutting down")),
                     result = access_ended(&rt, &lease) => return result,
                 };
-                super::access::refresh(rt.clone(), crate::config::device_dir()?).await?;
+                super::access::refresh(rt.clone(), crate::config::device_dir()?, false).await?;
                 rt.check_session(&source, generation)?;
                 lease.check(&rt)?;
                 if let Data::SessionProbe { roster_version } = req {
