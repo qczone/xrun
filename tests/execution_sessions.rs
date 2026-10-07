@@ -39,7 +39,7 @@ async fn submission_rejection_and_uncertainty_keep_distinct_exit_codes() -> Resu
                 secure::exchange_server(&mut ws, &cache, network, &cert.context("certificate")?).await?;
                 assert!(matches!(net::receive(&mut ws).await?, secure::Purpose::Execute));
                 net::send(&mut ws, &Data::Ready {
-                    version: VERSION.into(), protocol: xrun::protocol::ProtocolRange::CURRENT, selected_protocol: 1, device_id: lab.target_identity.device_id.clone(),
+                    version: VERSION.into(), protocol: xrun::protocol::ProtocolRange::CURRENT, selected_protocol: xrun::protocol::PROTOCOL, device_id: lab.target_identity.device_id.clone(),
                     db_id: "test-db".into(), default_cwd: lab.target.to_string_lossy().into(),
                 }).await?;
                 let Data::Request { request } = net::receive(&mut ws).await? else { bail!("request") };
@@ -172,7 +172,7 @@ async fn foreground_uses_one_session_and_recovers_without_resubmitting() -> Resu
                         &Data::Ready {
                             version: VERSION.into(),
                             protocol: xrun::protocol::ProtocolRange::CURRENT,
-                            selected_protocol: 1,
+                            selected_protocol: xrun::protocol::PROTOCOL,
                             device_id: lab.target_identity.device_id.clone(),
                             db_id: "test-db".into(),
                             default_cwd: lab.target.to_string_lossy().into(),
@@ -370,7 +370,10 @@ async fn differing_release_and_optional_metadata_do_not_prevent_a_negotiated_ope
                 Some(&lab.source_identity.device_id),
             )?;
             let exchange: serde_json::Value = net::receive(&mut socket).await?;
-            assert_eq!(exchange["protocol"], serde_json::json!({"min":1,"max":1}));
+            assert_eq!(
+                exchange["protocol"],
+                serde_json::to_value(xrun::protocol::ProtocolRange::CURRENT)?
+            );
             assert!(matches!(
                 net::receive(&mut socket).await?,
                 secure::Purpose::Execute
@@ -387,7 +390,7 @@ async fn differing_release_and_optional_metadata_do_not_prevent_a_negotiated_ope
                 &mut socket,
                 &serde_json::json!({
                     "type":"ready", "version":"future-release", "protocol":{"min":1,"max":2},
-                    "selected_protocol":1, "device_id":lab.target_identity.device_id,
+                    "selected_protocol":2, "device_id":lab.target_identity.device_id,
                     "db_id":"test-db", "default_cwd":lab.target.to_string_lossy(),
                     "diagnostic":"safe optional metadata",
                 }),
@@ -445,14 +448,14 @@ async fn pipelined_purpose_never_sends_execution_before_handshake_acceptance() -
                 if failure == "revoked" {
                     sent_roster = Manager::open(&lab.source.join(".xrun/manager"))?.revoke("target1")?;
                 }
-                net::send(&mut ws, &serde_json::json!({ "version": "future-release", "protocol": { "min": if failure == "protocol" { 2 } else { 1 }, "max": 2 }, "roster": sent_roster })).await?;
+                net::send(&mut ws, &serde_json::json!({ "version": "future-release", "protocol": { "min": if failure == "protocol" { 3 } else { 1 }, "max": 3 }, "roster": sent_roster })).await?;
                 if failure.starts_with("ready-") || failure == "denied" {
                     // Even a valid roster does not permit sending Exec before Ready.
                     assert!(tokio::time::timeout(Duration::from_millis(50), net::receive::<Data>(&mut ws)).await.is_err());
                     let response = if failure == "denied" {
                         Data::Error { code: "PERMISSION_DENIED".into(), message: "not allowed".into() }
                     } else {
-                        Data::Ready { version: "future-release".into(), protocol: xrun::protocol::ProtocolRange::CURRENT, selected_protocol: if failure == "ready-protocol" { 2 } else { 1 }, device_id: if failure == "ready-identity" { lab.source_identity.device_id.clone() } else { lab.target_identity.device_id.clone() }, db_id: "test-db".into(), default_cwd: lab.target.to_string_lossy().into() }
+                        Data::Ready { version: "future-release".into(), protocol: xrun::protocol::ProtocolRange::CURRENT, selected_protocol: if failure == "ready-protocol" { 1 } else { xrun::protocol::PROTOCOL }, device_id: if failure == "ready-identity" { lab.source_identity.device_id.clone() } else { lab.target_identity.device_id.clone() }, db_id: "test-db".into(), default_cwd: lab.target.to_string_lossy().into() }
                     };
                     net::send(&mut ws, &response).await?;
                 }

@@ -72,7 +72,7 @@ async fn screenshot_download_checks_metadata_integrity_errors_and_local_destinat
                     &Data::Ready {
                         version: VERSION.into(),
                         protocol: xrun::protocol::ProtocolRange::CURRENT,
-                        selected_protocol: 1,
+                        selected_protocol: xrun::protocol::PROTOCOL,
                         device_id: lab.target_identity.device_id.clone(),
                         db_id: "screenshot-db".into(),
                         default_cwd: lab.target.to_string_lossy().into(),

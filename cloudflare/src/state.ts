@@ -1,5 +1,6 @@
 import { DEVICE, object } from "./auth";
 import { WINDOW } from "./limits";
+import { PROTOCOL } from "./protocol";
 import {
   NETWORK,
   relativeRoute,
@@ -11,6 +12,7 @@ export interface ConnectionBase {
   id: string;
   network: string;
   ip: string;
+  protocol: number;
 }
 export type ChallengeState = ConnectionBase &
   ChallengeRoute & {
@@ -42,6 +44,7 @@ interface TunnelFields extends ConnectionBase, SessionBinding {
 export interface SourceState extends TunnelFields {
   role: "source";
   anonymous: boolean;
+  cachedSince: number | null;
 }
 export interface TargetState extends TunnelFields {
   role: "target";
@@ -53,7 +56,7 @@ export interface ClosedState extends ConnectionBase {
 export type Attachment =
   ChallengeState | ControlState | PendingState | TunnelState | ClosedState;
 
-const BASE_KEYS = ["id", "role", "network", "ip"];
+const BASE_KEYS = ["id", "role", "network", "ip", "protocol"];
 const BINDING_KEYS = ["target", "generation", "sid"];
 const TUNNEL_KEYS = [
   ...BASE_KEYS,
@@ -94,6 +97,7 @@ export function attachment(value: unknown): Attachment | undefined {
       "device",
       "manager",
       "anonymous",
+      "cachedSince",
     ])
   )
     return;
@@ -104,10 +108,19 @@ export function attachment(value: unknown): Attachment | undefined {
     typeof value.ip !== "string"
   )
     return;
+  const protocol = value.protocol ?? 1;
+  if (
+    typeof protocol !== "number" ||
+    !Number.isInteger(protocol) ||
+    protocol < PROTOCOL.min ||
+    protocol > PROTOCOL.max
+  )
+    return;
   const base: ConnectionBase = {
     id: value.id,
     network: value.network,
     ip: value.ip,
+    protocol,
   };
   switch (value.role) {
     case "auth":
@@ -193,7 +206,9 @@ export function attachment(value: unknown): Attachment | undefined {
     case "target": {
       const session = binding(value);
       const keys =
-        value.role === "source" ? [...TUNNEL_KEYS, "anonymous"] : TUNNEL_KEYS;
+        value.role === "source"
+          ? [...TUNNEL_KEYS, "anonymous", "cachedSince"]
+          : TUNNEL_KEYS;
       if (
         !object(value, keys) ||
         !session ||
@@ -214,7 +229,18 @@ export function attachment(value: unknown): Attachment | undefined {
       };
       if (value.role === "target") return { ...tunnel, role: "target" };
       if (typeof value.anonymous !== "boolean") return;
-      return { ...tunnel, role: "source", anonymous: value.anonymous };
+      const cachedSince = value.cachedSince ?? null;
+      if (
+        cachedSince !== null &&
+        (!deadline(cachedSince) || protocol < 2 || value.anonymous)
+      )
+        return;
+      return {
+        ...tunnel,
+        role: "source",
+        anonymous: value.anonymous,
+        cachedSince,
+      };
     }
     case "closed":
       if (object(value, BASE_KEYS)) return { ...base, role: "closed" };
@@ -222,7 +248,12 @@ export function attachment(value: unknown): Attachment | undefined {
 }
 
 export function base(state: ConnectionBase): ConnectionBase {
-  return { id: state.id, network: state.network, ip: state.ip };
+  return {
+    id: state.id,
+    network: state.network,
+    ip: state.ip,
+    protocol: state.protocol,
+  };
 }
 export function tunnel(state: Attachment): state is TunnelState {
   return state.role === "source" || state.role === "target";

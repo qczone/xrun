@@ -55,7 +55,7 @@ pub(crate) fn identity_binding(id: &Identity) -> String {
 }
 async fn framed(io: Io, role: Role) -> Ws {
     WebSocketStream::from_raw_socket(
-        io,
+        net::SocketIo::new(io),
         role,
         Some(
             WebSocketConfig::default()

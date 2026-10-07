@@ -167,6 +167,83 @@ async fn attach(
         _ => anyhow::bail!("invalid attach result"),
     }
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn authenticated_devices_behind_one_nat_do_not_share_a_source_quota() -> Result<()> {
+    tokio::time::timeout(Duration::from_secs(25), async {
+        let temp = tempfile::tempdir()?;
+        let port = std::net::TcpListener::bind("127.0.0.1:0")?
+            .local_addr()?
+            .port();
+        let cfg = ServerConfig {
+            port,
+            addresses: vec![format!("127.0.0.1:{port}")],
+            manual: true,
+            no_detect: true,
+            data_dir: temp.path().join("relay"),
+        };
+        let network = network(&temp.path().join("manager"), &cfg)?;
+        let server = Relay(tokio::spawn(xrun::testing::relay::run(cfg.clone())));
+        while tokio::net::TcpStream::connect(("127.0.0.1", port))
+            .await
+            .is_err()
+        {
+            assert!(!server.0.is_finished());
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+        let (mut control, generation) = control(&cfg, &network.id, &network.target, None).await?;
+        let mut devices = vec![network.source.clone()];
+        for index in 0..4 {
+            let name = format!("source{}", index + 2);
+            let (key, csr) = crypto::new_device_request()?;
+            let paired = network
+                .manager
+                .pair(&network.manager.invite(false)?, &name, &csr)?;
+            devices.push(identity(
+                paired.member.device_id,
+                &name,
+                &network.source.ca_pem,
+                paired.cert_pem,
+                key,
+            ));
+        }
+        let mut sessions = Vec::new();
+        for device in devices
+            .iter()
+            .flat_map(|device| std::iter::repeat_n(device, 3))
+            .chain(std::iter::repeat_n(&network.manager_identity, 8))
+        {
+            let mut sender =
+                source(&cfg, &network.id, &network.target.device_id, Some(device)).await?;
+            let sid = incoming(&mut control).await?;
+            let receiver = attach(
+                &cfg,
+                &network.id,
+                &network.target.device_id,
+                &generation,
+                &sid,
+            )
+            .await?;
+            assert!(matches!(
+                net::receive(&mut sender).await?,
+                RelayMessage::Connected { .. }
+            ));
+            sessions.push((sender, receiver));
+        }
+        assert_eq!(sessions.len(), 23);
+        // The same loopback source IP has 23 live sessions, across six identities.
+        for (sender, receiver) in &mut sessions {
+            sender.send(Message::Binary(vec![7].into())).await?;
+            assert_eq!(
+                receiver.next().await.context("receiver closed")??,
+                Message::Binary(vec![7].into())
+            );
+        }
+        drop((sessions, server));
+        Ok::<_, anyhow::Error>(())
+    })
+    .await?
+}
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn relay_routes_only_proven_members_and_keeps_binding_and_resource_limits() -> Result<()> {
     common::library_logs()?;

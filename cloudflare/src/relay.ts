@@ -17,6 +17,7 @@ import {
   WINDOW,
 } from "./limits";
 import { route, type AttachRoute } from "./routes";
+import { PROTOCOL } from "./protocol";
 import {
   base,
   expired,
@@ -175,7 +176,23 @@ export class XrunRelay extends DurableObject<Env> {
         "Session missing, expired or already claimed",
       );
     const [client, server] = Object.values(new WebSocketPair());
-    const connection = { id: crypto.randomUUID(), network: parsed.network, ip };
+    const protocol = Number(request.headers.get("X-Xrun-Negotiated-Protocol"));
+    if (
+      !Number.isInteger(protocol) ||
+      protocol < PROTOCOL.min ||
+      protocol > PROTOCOL.max
+    )
+      return error(
+        "VERSION_MISMATCH",
+        "Missing negotiated relay protocol",
+        409,
+      );
+    const connection = {
+      id: crypto.randomUUID(),
+      network: parsed.network,
+      ip,
+      protocol,
+    };
     this.ctx.acceptWebSocket(server);
     if (pending) {
       const source = pending.state;
@@ -190,6 +207,7 @@ export class XrunRelay extends DurableObject<Env> {
         role: "source",
         peer: connection.id,
         outstanding: 0,
+        cachedSince: null,
         deadline,
       });
       this.connections.save(server, {
@@ -297,6 +315,10 @@ export class XrunRelay extends DurableObject<Env> {
     const anonymousFull =
       !member &&
       this.connections.anonymous(state.target) >= ANONYMOUS_PER_TARGET;
+    if (!anonymousFull && this.connections.sourceCount >= SESSIONS) {
+      const cached = this.connections.oldestCached();
+      if (cached) this.close(cached.socket, 1000, "Cached session reclaimed");
+    }
     if (this.connections.sourceCount >= SESSIONS || anonymousFull) {
       this.reject(ws, "SESSION_LIMIT", "Too many concurrent relay sessions");
       return;
@@ -362,6 +384,22 @@ export class XrunRelay extends DurableObject<Env> {
       if (message.length > ACK_MESSAGE_BYTES)
         throw new Error("Invalid acknowledgement");
       const value: unknown = JSON.parse(message);
+      if (object(value, ["type", "idle"]) && value.type === "cache_state") {
+        if (
+          state.role !== "source" ||
+          state.anonymous ||
+          state.protocol < 2 ||
+          typeof value.idle !== "boolean"
+        )
+          throw new Error("Invalid cache state declaration");
+        this.connections.save(ws, {
+          ...state,
+          cachedSince: value.idle ? Date.now() : null,
+          deadline: Date.now() + IDLE,
+        });
+        this.send(ws, { type: "cache_state", idle: value.idle });
+        return;
+      }
       if (
         !object(value) ||
         value.type !== "ack" ||
@@ -377,6 +415,10 @@ export class XrunRelay extends DurableObject<Env> {
         outstanding: peer.state.outstanding - value.bytes,
       });
     } else {
+      if (state.role === "source" && state.cachedSince !== null)
+        throw new Error(
+          "Reactivate a cached session before sending ciphertext",
+        );
       if (
         !message.byteLength ||
         message.byteLength > FRAME ||

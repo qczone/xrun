@@ -159,8 +159,10 @@ mod tests {
         }
         for disconnected in [false, true] {
             let (a, b) = tokio::io::duplex(4096);
-            let mut server = Ws::from_raw_socket(Box::new(a), Role::Server, None).await;
-            let mut client = Ws::from_raw_socket(Box::new(b), Role::Client, None).await;
+            let mut server =
+                Ws::from_raw_socket(net::SocketIo::new(Box::new(a)), Role::Server, None).await;
+            let mut client =
+                Ws::from_raw_socket(net::SocketIo::new(Box::new(b)), Role::Client, None).await;
             let mut audit = Some(FileAudit {
                 store: store.clone(),
                 value: serde_json::json!({"op":"screenshot"}),

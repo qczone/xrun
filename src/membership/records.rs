@@ -363,10 +363,8 @@ mod tests {
     fn fixed_signed_records_pin_bytes_and_verification_across_releases() -> Result<()> {
         let fixture = vector();
         assert_eq!(fixture["signature_format"], SIGNATURE_FORMAT);
-        assert_eq!(
-            fixture["protocol"],
-            serde_json::to_value(ProtocolRange::CURRENT)?
-        );
+        let original: ProtocolRange = serde_json::from_value(fixture["protocol"].clone())?;
+        assert_eq!(ProtocolRange::CURRENT.negotiate(original)?, 1);
         let records = &fixture["records"];
         let roster: Roster = serde_json::from_value(records["roster"]["value"][0].clone())?;
         let root_pem = fixture["root_pem"].as_str().unwrap();

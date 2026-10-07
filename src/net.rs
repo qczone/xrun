@@ -1,3 +1,4 @@
+mod connection;
 use crate::error::ErrorCode;
 use crate::{
     config::{Identity, atomic_private_write, device_dir},
@@ -5,6 +6,8 @@ use crate::{
     protocol::*,
 };
 use anyhow::{Context, Result, bail};
+pub use connection::SocketIo;
+pub(crate) use connection::{CacheControl, CacheRequest, RelayContext, cache_state};
 use futures_util::{SinkExt, StreamExt};
 use serde::{Serialize, de::DeserializeOwned};
 use sha2::{Digest, Sha256};
@@ -22,7 +25,7 @@ use tokio_tungstenite::{
 pub trait Transport: AsyncRead + AsyncWrite + Unpin + Send {}
 impl<T: AsyncRead + AsyncWrite + Unpin + Send> Transport for T {}
 pub type Io = Box<dyn Transport>;
-pub type Ws = WebSocketStream<Io>;
+pub type Ws = WebSocketStream<SocketIo>;
 pub(crate) async fn tcp(url: &url::Url) -> Result<TcpStream> {
     let host = url.host_str().context("missing host")?;
     let port = url.port_or_known_default().context("missing port")?;
@@ -96,9 +99,10 @@ pub async fn websocket_at(address: &str, path: &str, tls: Arc<rustls::ClientConf
     let tls = tokio_rustls::TlsConnector::from(tls)
         .connect(rustls::pki_types::ServerName::try_from(host)?, tcp)
         .await?;
-    let result = client_async_with_config(request, Box::new(tls) as Io, Some(config)).await;
+    let result =
+        client_async_with_config(request, SocketIo::new(Box::new(tls) as Io), Some(config)).await;
     match result {
-        Ok((ws, response)) => {
+        Ok((mut ws, response)) => {
             let selected = response
                 .headers()
                 .get("x-xrun-protocol")
@@ -106,6 +110,10 @@ pub async fn websocket_at(address: &str, path: &str, tls: Arc<rustls::ClientConf
                 .and_then(|value| value.parse::<u32>().ok())
                 .context(ErrorCode::VersionMismatch.error("relay omitted selected protocol"))?;
             ProtocolRange::require(selected, 1)?;
+            ws.get_mut().relay = Some(RelayContext {
+                protocol: selected,
+                cache: None,
+            });
             Ok(ws)
         }
         Err(tokio_tungstenite::tungstenite::Error::Http(r)) => {

@@ -1,5 +1,63 @@
 //! Session admission, generation-bound handoff and ciphertext forwarding.
 use super::*;
+
+impl Connections {
+    fn reserve_session(
+        &mut self,
+        network: &str,
+        target: &str,
+        source: std::net::IpAddr,
+        device: Option<&str>,
+    ) -> Result<()> {
+        let to_target = |session: &&Session| session.network == network && session.target == target;
+        let from_source = |session: &&Session| match device {
+            Some(device) => session.network == network && session.device.as_deref() == Some(device),
+            None => session.anonymous && session.source == source,
+        };
+        loop {
+            let target_full =
+                self.sessions.values().filter(to_target).count() >= MAX_TARGET_SESSIONS;
+            let source_full =
+                self.sessions.values().filter(from_source).count() >= MAX_SOURCE_SESSIONS;
+            let total_full = self.sessions.len() >= MAX_RELAY_SESSIONS;
+            let anonymous_full = device.is_none()
+                && self
+                    .sessions
+                    .values()
+                    .filter(to_target)
+                    .filter(|session| session.anonymous)
+                    .count()
+                    >= MAX_ANONYMOUS_TARGET_SESSIONS;
+            if anonymous_full {
+                bail!(ErrorCode::SessionLimit.error("too many anonymous relay sessions"));
+            }
+            if !target_full && !source_full && !total_full {
+                return Ok(());
+            }
+            let oldest = self
+                .sessions
+                .iter()
+                .filter(|(_, session)| {
+                    if source_full {
+                        from_source(session)
+                    } else if target_full {
+                        to_target(session)
+                    } else {
+                        true
+                    }
+                })
+                .filter_map(|(sid, session)| session.cached_at.map(|since| (sid.clone(), since)))
+                .min_by_key(|(_, since)| *since)
+                .map(|(sid, _)| sid);
+            let Some(sid) = oldest else {
+                bail!(ErrorCode::SessionLimit.error("too many active relay sessions"));
+            };
+            if let Some(session) = self.sessions.remove(&sid) {
+                let _ = session.cancel.send(true);
+            }
+        }
+    }
+}
 async fn claimed_session(
     receiver: oneshot::Receiver<std::result::Result<WebSocket, Data>>,
 ) -> Result<WebSocket> {
@@ -11,6 +69,7 @@ async fn claimed_session(
         _ => bail!(ErrorCode::InvalidMessage.error("invalid session rejection")),
     }
 }
+
 pub(super) async fn source_route(
     State(app): State<Arc<App>>,
     Path((network, target)): Path<(String, String)>,
@@ -24,7 +83,16 @@ pub(super) async fn source_route(
         ws.max_message_size(MAX_MESSAGE)
             .max_frame_size(MAX_MESSAGE)
             .on_upgrade(move |mut ws| async move {
-                let result = source(&app, &network, &target, peer.ip(), &mut ws, &permit).await;
+                let result = source(
+                    &app,
+                    &network,
+                    &target,
+                    peer.ip(),
+                    &mut ws,
+                    &permit,
+                    selected,
+                )
+                .await;
                 finish(&mut ws, result).await;
             }),
         selected,
@@ -37,34 +105,18 @@ async fn source(
     source: std::net::IpAddr,
     ws: &mut WebSocket,
     permit: &TransportPermit,
+    protocol: u32,
 ) -> Result<()> {
     let path = format!("/networks/{network}/connect/{target}");
-    let anonymous = authenticate(ws, network, &path, permit).await?.is_none();
+    let device = authenticate(ws, network, &path, permit)
+        .await?
+        .map(|(device, _)| device);
+    let anonymous = device.is_none();
     let sid = uuid::Uuid::new_v4().simple().to_string();
     let (tx, rx) = oneshot::channel();
     let (cancel, mut closed) = watch::channel(false);
     {
         let mut connections = app.connections.lock().await;
-        let to_target = |session: &&Session| session.network == network && session.target == target;
-        if connections.sessions.len() >= MAX_RELAY_SESSIONS
-            || connections.sessions.values().filter(to_target).count() >= MAX_TARGET_SESSIONS
-            || connections
-                .sessions
-                .values()
-                .filter(|session| session.source == source)
-                .count()
-                >= MAX_SOURCE_SESSIONS
-            || (anonymous
-                && connections
-                    .sessions
-                    .values()
-                    .filter(to_target)
-                    .filter(|session| session.anonymous)
-                    .count()
-                    >= MAX_ANONYMOUS_TARGET_SESSIONS)
-        {
-            bail!(ErrorCode::SessionLimit.error("too many concurrent relay sessions"))
-        }
         let control = connections
             .controls
             .get(&(network.into(), target.into()))
@@ -75,8 +127,9 @@ async fn source(
             bail!(ErrorCode::Unauthenticated.error("member proof required"))
         }
         let generation = control.generation.clone();
-        control
-            .tx
+        let target_control = control.tx.clone();
+        connections.reserve_session(network, target, source, device.as_deref())?;
+        target_control
             .try_send(RelayMessage::Incoming {
                 session_id: sid.clone(),
             })
@@ -86,6 +139,8 @@ async fn source(
             Session {
                 network: network.into(),
                 source,
+                device,
+                cached_at: None,
                 anonymous,
                 target: target.into(),
                 generation,
@@ -101,7 +156,7 @@ async fn source(
             _ = ws.next() => bail!(ErrorCode::ConnectionClosed.error("source disconnected before session establishment")),
         };
         send(ws, &RelayMessage::Connected { flow_control: false }).await?;
-        let result = bridge(ws, &mut target, &mut closed).await;
+        let result = bridge(app, &sid, ws, &mut target, &mut closed, !anonymous && protocol >= 2).await;
         let _ = tokio::time::timeout(CLOSE_TIMEOUT, target.close()).await;
         result
     }.await;
@@ -170,19 +225,75 @@ pub(super) async fn attach_route(
     ))
 }
 async fn bridge(
+    app: &App,
+    sid: &str,
     source: &mut WebSocket,
     target: &mut WebSocket,
     closed: &mut watch::Receiver<bool>,
+    cacheable: bool,
 ) -> Result<()> {
     let (source_tx, source_rx) = source.split();
     let (target_tx, target_rx) = target.split();
+    let source_tx = Mutex::new(source_tx);
+    let target_tx = Mutex::new(target_tx);
     tokio::select! {
-        result=direction(source_rx,target_tx)=>result,
-        result=direction(target_rx,source_tx)=>result,
-        _=closed.changed()=>Ok(()),
+        result = source_direction(app, sid, cacheable, source_rx, &target_tx, &source_tx) => result,
+        result = direction(target_rx, &source_tx) => result,
+        _ = closed.changed() => Ok(()),
     }
 }
-async fn direction<R, W>(mut reader: R, mut writer: W) -> Result<()>
+async fn source_direction<R, W, S>(
+    app: &App,
+    sid: &str,
+    cacheable: bool,
+    mut reader: R,
+    target: &Mutex<W>,
+    source: &Mutex<S>,
+) -> Result<()>
+where
+    R: futures_util::Stream<Item = std::result::Result<Message, axum::Error>> + Unpin,
+    W: futures_util::Sink<Message, Error = axum::Error> + Unpin,
+    S: futures_util::Sink<Message, Error = axum::Error> + Unpin,
+{
+    let mut idle = false;
+    loop {
+        let message = tokio::time::timeout(RELAY_IDLE_TIMEOUT, reader.next())
+            .await?
+            .context(ErrorCode::ConnectionClosed.error("source ciphertext stream ended"))??;
+        match &message {
+            Message::Text(text) if cacheable && text.len() <= CACHE_STATE_MESSAGE_BYTES => {
+                let RelayMessage::CacheState { idle: next } = serde_json::from_str(text)? else {
+                    bail!(ErrorCode::InvalidMessage.error("expected relay cache state"));
+                };
+                {
+                    let mut connections = app.connections.lock().await;
+                    let session = connections.sessions.get_mut(sid).context(
+                        ErrorCode::SessionUnavailable.error("cached relay session was reclaimed"),
+                    )?;
+                    session.cached_at = next.then(Instant::now);
+                }
+                idle = next;
+                forward(
+                    source,
+                    Message::Text(
+                        serde_json::to_string(&RelayMessage::CacheState { idle })?.into(),
+                    ),
+                )
+                .await?;
+                continue;
+            }
+            Message::Binary(bytes) if !idle && bytes.len() <= FILE_CHUNK => {}
+            Message::Ping(_) | Message::Pong(_) => {}
+            Message::Close(_) => return Ok(()),
+            _ => bail!(
+                ErrorCode::InvalidMessage
+                    .error("reactivate a cached tunnel before sending ciphertext")
+            ),
+        }
+        forward(target, message).await?;
+    }
+}
+async fn direction<R, W>(mut reader: R, writer: &Mutex<W>) -> Result<()>
 where
     R: futures_util::Stream<Item = std::result::Result<Message, axum::Error>> + Unpin,
     W: futures_util::Sink<Message, Error = axum::Error> + Unpin,
@@ -199,6 +310,80 @@ where
                 bail!(ErrorCode::InvalidMessage.error("relay only accepts encrypted binary frames"))
             }
         }
-        tokio::time::timeout(RELAY_IDLE_TIMEOUT, writer.send(message)).await??;
+        forward(writer, message).await?;
+    }
+}
+async fn forward<W>(writer: &Mutex<W>, message: Message) -> Result<()>
+where
+    W: futures_util::Sink<Message, Error = axum::Error> + Unpin,
+{
+    tokio::time::timeout(RELAY_IDLE_TIMEOUT, async {
+        writer.lock().await.send(message).await
+    })
+    .await??;
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn admission_reclaims_only_explicitly_cached_sessions() {
+        let source = "127.0.0.1".parse().unwrap();
+        let mut connections = Connections::default();
+        let mut cancellations = Vec::new();
+        for index in 0..MAX_SOURCE_SESSIONS {
+            let (cancel, closed) = watch::channel(false);
+            cancellations.push(closed);
+            connections.sessions.insert(
+                index.to_string(),
+                Session {
+                    network: "network".into(),
+                    source,
+                    device: Some("device".into()),
+                    anonymous: false,
+                    target: "target".into(),
+                    generation: "generation".into(),
+                    claim: None,
+                    cancel,
+                    cached_at: (index < 2)
+                        .then(|| Instant::now() + std::time::Duration::from_secs(index as u64)),
+                },
+            );
+        }
+        connections
+            .reserve_session("network", "target", source, Some("device"))
+            .unwrap();
+        assert!(*cancellations[0].borrow());
+        assert!(!*cancellations[1].borrow());
+        assert!(!*cancellations[2].borrow());
+        for session in connections.sessions.values_mut() {
+            session.cached_at = None;
+        }
+        // Returning the slot to active use consumes the source's last available slot.
+        let (cancel, _) = watch::channel(false);
+        connections.sessions.insert(
+            "replacement".into(),
+            Session {
+                network: "network".into(),
+                source,
+                device: Some("device".into()),
+                cached_at: None,
+                anonymous: false,
+                target: "target".into(),
+                generation: "generation".into(),
+                claim: None,
+                cancel,
+            },
+        );
+        let error = connections
+            .reserve_session("network", "target", source, Some("device"))
+            .unwrap_err();
+        assert!(crate::error::is(&error, ErrorCode::SessionLimit));
+        // An authenticated neighbor behind the same NAT has its own source budget.
+        connections
+            .reserve_session("network", "target", source, Some("neighbor"))
+            .unwrap();
     }
 }

@@ -104,6 +104,12 @@ impl Pool {
         };
         if let Some(mut cached) = cached {
             let probe = tokio::time::timeout(Duration::from_secs(5), async {
+                if !net::cache_state(&mut cached.ws, false).await? {
+                    bail!(
+                        ErrorCode::SessionUnavailable
+                            .error("relay does not support cached session admission")
+                    );
+                }
                 net::send(
                     &mut cached.ws,
                     &Data::SessionProbe {
@@ -317,8 +323,16 @@ async fn handle(
     };
     let (cacheable, ()) = tokio::try_join!(upload, download)?;
     // Both pumps are finished and the CLI consumed Complete before Release.
-    let remote = remote_tx.reunite(remote_rx)?;
-    if cacheable && binding(&Identity::load()?).is_ok_and(|current| current == stamp) {
+    let mut remote = remote_tx.reunite(remote_rx)?;
+    let idle = if cacheable && binding(&Identity::load()?).is_ok_and(|current| current == stamp) {
+        matches!(
+            tokio::time::timeout(Duration::from_secs(5), net::cache_state(&mut remote, true)).await,
+            Ok(Ok(true))
+        )
+    } else {
+        false
+    };
+    if idle {
         pool.put(
             target,
             Cached {
@@ -343,7 +357,7 @@ mod tests {
     async fn entry(since: Instant, expires: i64) -> Cached {
         let (io, _peer) = tokio::io::duplex(1024);
         let ws = tokio_tungstenite::WebSocketStream::from_raw_socket(
-            Box::new(io) as net::Io,
+            net::SocketIo::new(Box::new(io) as net::Io),
             tokio_tungstenite::tungstenite::protocol::Role::Client,
             None,
         )

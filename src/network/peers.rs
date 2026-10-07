@@ -16,6 +16,10 @@ use std::{collections::HashMap, time::Duration};
 use super::transport::{authenticate, open_via, peer_session, receive};
 use super::{authority, current, observe};
 
+const STATE_CONCURRENCY: usize = 2;
+const STATE_ADMISSION_ATTEMPTS: u32 = 4;
+const STATE_ADMISSION_BACKOFF: Duration = Duration::from_millis(50);
+
 #[derive(Debug, Serialize, Deserialize)]
 pub struct PeerState {
     pub device: Device,
@@ -54,7 +58,19 @@ pub(super) async fn peer_state(
         5
     });
     tokio::time::timeout(timeout, async {
-        let (mut ws, _, _) = peer_session(id, target, via, secure::Purpose::State).await?;
+        let mut attempt = 0;
+        let (mut ws, _, _) = loop {
+            match peer_session(id, target, via, secure::Purpose::State).await {
+                Err(error)
+                    if crate::error::is(&error, ErrorCode::SessionLimit)
+                        && attempt + 1 < STATE_ADMISSION_ATTEMPTS =>
+                {
+                    tokio::time::sleep(STATE_ADMISSION_BACKOFF * (1 << attempt)).await;
+                    attempt += 1;
+                }
+                result => break result?,
+            }
+        };
         let value: serde_json::Value = net::receive(&mut ws).await?;
         if let Ok(Data::Error { code, message }) = serde_json::from_value(value.clone()) {
             bail!(crate::error::CodedError::from_wire(code, message))
@@ -100,7 +116,7 @@ pub(super) async fn states_for(
                 (target, result)
             }),
     )
-    .buffer_unordered(8)
+    .buffer_unordered(STATE_CONCURRENCY)
     .collect::<Vec<_>>()
     .await;
     // Routing hints never establish membership or online identity.

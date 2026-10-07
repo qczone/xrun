@@ -490,7 +490,7 @@ mod limit_tests {
         assert!(serde_json::from_value::<Request>(serde_json::json!({"op":"forward"})).is_err());
         let ready: Data = serde_json::from_value(serde_json::json!({
             "type":"ready", "version":"future-release", "protocol":{"min":1,"max":2},
-            "selected_protocol":1, "device_id":"device", "db_id":"db", "default_cwd":"/tmp",
+            "selected_protocol":2, "device_id":"device", "db_id":"db", "default_cwd":"/tmp",
             "diagnostic":"optional metadata",
         }))
         .unwrap();

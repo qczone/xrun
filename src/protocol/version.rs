@@ -4,7 +4,7 @@ use anyhow::{Result, bail};
 use serde::{Deserialize, Serialize};
 
 /// Highest implemented protocol version. Version 1 starts the new compatibility baseline.
-pub const PROTOCOL: u32 = 1;
+pub const PROTOCOL: u32 = 2;
 /// Signature format version; changing serialized signed records requires a new format.
 pub const SIGNATURE_FORMAT: u32 = 1;
 

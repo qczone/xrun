@@ -12,7 +12,7 @@ use xrun::testing::{
     config::{Identity, ServerConfig},
     crypto,
     membership::*,
-    net::{self, Io, Ws},
+    net::{self, SocketIo, Ws},
     protocol::*,
     secure,
 };
@@ -69,8 +69,8 @@ fn identities(dir: &std::path::Path) -> Result<(Manager, Identity, Identity, Ide
 }
 async fn wire() -> (Ws, Ws) {
     let (a, b) = tokio::io::duplex(256 * 1024);
-    let a = WebSocketStream::from_raw_socket(Box::new(a) as Io, Role::Client, None).await;
-    let b = WebSocketStream::from_raw_socket(Box::new(b) as Io, Role::Server, None).await;
+    let a = WebSocketStream::from_raw_socket(SocketIo::new(Box::new(a)), Role::Client, None).await;
+    let b = WebSocketStream::from_raw_socket(SocketIo::new(Box::new(b)), Role::Server, None).await;
     (a, b)
 }
 async fn intercepted() -> (Ws, Ws, tokio::task::JoinHandle<()>, Arc<Mutex<Vec<u8>>>) {

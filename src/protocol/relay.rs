@@ -95,6 +95,12 @@ impl Proof {
 #[serde(tag = "type", rename_all = "snake_case")]
 /// Relay routing and handshake messages, outside the encrypted peer payload.
 pub enum RelayMessage {
+    /// Protocol 2: declare a completed source tunnel reclaimable, or reactivate
+    /// it before any encrypted probe/request. The relay echoes acceptance.
+    CacheState {
+        /// True only after the complete operation has been consumed.
+        idle: bool,
+    },
     /// Fresh challenge required before connection admission.
     Challenge {
         /// Fresh random relay challenge; proofs cannot be replayed with another nonce.

@@ -29,7 +29,9 @@ const MAX_CONTROL_CONNECTIONS: usize = 4096;
 const MAX_NETWORK_CONTROLS: usize = 256;
 const MAX_RELAY_SESSIONS: usize = 4096;
 const MAX_TARGET_SESSIONS: usize = 32;
+// Authenticated members have independent network/device quotas; anonymous peers use IP.
 const MAX_SOURCE_SESSIONS: usize = 16;
+const CACHE_STATE_MESSAGE_BYTES: usize = 128;
 const MAX_ANONYMOUS_TARGET_SESSIONS: usize = 4;
 
 async fn send(ws: &mut WebSocket, message: &RelayMessage) -> Result<()> {
@@ -77,8 +79,8 @@ mod protocol_tests {
         let mut headers = HeaderMap::new();
         headers.insert("x-xrun-version", "future-release".parse().unwrap());
         headers.insert("x-xrun-protocol", "1-2".parse().unwrap());
-        assert_eq!(protocol(&headers).unwrap(), 1);
-        headers.insert("x-xrun-protocol", "2-2".parse().unwrap());
+        assert_eq!(protocol(&headers).unwrap(), 2);
+        headers.insert("x-xrun-protocol", "3-3".parse().unwrap());
         assert!(crate::error::is(
             &protocol(&headers).unwrap_err(),
             ErrorCode::VersionMismatch
@@ -112,6 +114,8 @@ struct ControlConnection {
 struct Session {
     network: String,
     source: std::net::IpAddr,
+    device: Option<String>,
+    cached_at: Option<Instant>,
     anonymous: bool,
     target: String,
     generation: String,

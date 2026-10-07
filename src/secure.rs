@@ -37,6 +37,7 @@ struct Tunnel {
     pump: JoinHandle<()>,
     progress: Arc<Progress>,
     written: u64,
+    relay: Option<net::RelayContext>,
 }
 #[derive(Default)]
 struct Progress {
@@ -101,8 +102,15 @@ impl AsyncWrite for Tunnel {
 #[serde(tag = "type", rename_all = "snake_case")]
 enum FlowControl {
     Ack { bytes: usize },
+    CacheState { idle: bool },
 }
 fn tunnel(outer: Ws, flow_control: bool) -> Tunnel {
+    let mut relay = outer.get_ref().relay.clone();
+    let (cache, mut cache_requests) = net::CacheControl::channel();
+    let cache_enabled = relay.as_ref().is_some_and(|context| context.protocol >= 2);
+    if cache_enabled && let Some(context) = &mut relay {
+        context.cache = Some(cache);
+    }
     let (inner, peer) = tokio::io::duplex(TLS_BUFFER_BYTES);
     let progress = Arc::new(Progress::default());
     let sent = progress.clone();
@@ -113,6 +121,28 @@ fn tunnel(outer: Ws, flow_control: bool) -> Tunnel {
         let socket_tx = tokio::sync::Mutex::new(socket_tx);
         let credit = tokio::sync::Semaphore::new(RELAY_WINDOW);
         let outstanding = AtomicUsize::new(0);
+        let pending_cache = std::sync::Mutex::new(None::<net::CacheRequest>);
+        let cache_changes = async {
+            while let Some(request) = cache_requests.recv().await {
+                let message =
+                    serde_json::to_string(&FlowControl::CacheState { idle: request.idle })?;
+                {
+                    let mut pending = pending_cache.lock().unwrap();
+                    if pending.is_some() {
+                        bail!(
+                            ErrorCode::InvalidRelayMessage.error("overlapping relay cache changes")
+                        );
+                    }
+                    *pending = Some(request);
+                }
+                socket_tx
+                    .lock()
+                    .await
+                    .send(Message::Text(message.into()))
+                    .await?;
+            }
+            std::future::pending::<Result<()>>().await
+        };
         let send = async {
             let mut buffer = vec![0; FILE_CHUNK];
             loop {
@@ -170,22 +200,44 @@ fn tunnel(outer: Ws, flow_control: bool) -> Tunnel {
                             .await??;
                         }
                     }
-                    Message::Text(text) if flow_control => {
-                        let FlowControl::Ack { bytes } = serde_json::from_str(&text)?;
-                        if bytes == 0
-                            || bytes > RELAY_WINDOW
-                            || outstanding
-                                .try_update(Ordering::AcqRel, Ordering::Acquire, |pending| {
-                                    pending.checked_sub(bytes)
-                                })
-                                .is_err()
-                        {
-                            bail!(
+                    Message::Text(text) if flow_control || cache_enabled => {
+                        match serde_json::from_str::<FlowControl>(&text)? {
+                            FlowControl::Ack { bytes } if flow_control => {
+                                if bytes == 0
+                                    || bytes > RELAY_WINDOW
+                                    || outstanding
+                                        .try_update(
+                                            Ordering::AcqRel,
+                                            Ordering::Acquire,
+                                            |pending| pending.checked_sub(bytes),
+                                        )
+                                        .is_err()
+                                {
+                                    bail!(
+                                        ErrorCode::InvalidRelayMessage
+                                            .error("invalid ciphertext acknowledgement")
+                                    );
+                                }
+                                credit.add_permits(bytes);
+                            }
+                            FlowControl::CacheState { idle } if cache_enabled => {
+                                let pending = pending_cache.lock().unwrap().take().context(
+                                    ErrorCode::InvalidRelayMessage
+                                        .error("unsolicited relay cache acknowledgement"),
+                                )?;
+                                if pending.idle != idle {
+                                    bail!(
+                                        ErrorCode::InvalidRelayMessage
+                                            .error("relay acknowledged a different cache state")
+                                    );
+                                }
+                                let _ = pending.reply.send(Ok(()));
+                            }
+                            _ => bail!(
                                 ErrorCode::InvalidRelayMessage
-                                    .error("invalid ciphertext acknowledgement")
-                            )
+                                    .error("unsupported relay control message")
+                            ),
                         }
-                        credit.add_permits(bytes);
                     }
                     Message::Ping(_) | Message::Pong(_) => {}
                     Message::Close(_) => return Ok::<_, anyhow::Error>(()),
@@ -196,7 +248,11 @@ fn tunnel(outer: Ws, flow_control: bool) -> Tunnel {
             }
             Ok(())
         };
-        let result = tokio::select! {result=send=>result,result=receive=>result};
+        let result = tokio::select! {
+            result = send => result,
+            result = receive => result,
+            result = cache_changes => result,
+        };
         if let Err(error) = result {
             tracing::debug!(%error,"encrypted tunnel closed");
         }
@@ -206,6 +262,7 @@ fn tunnel(outer: Ws, flow_control: bool) -> Tunnel {
         pump,
         progress,
         written: 0,
+        relay,
     }
 }
 fn ws_config() -> WebSocketConfig {
@@ -229,7 +286,11 @@ pub(crate) async fn client_with_flow(
         flow_control,
     )
     .await?;
-    Ok((encrypted_websocket(tls, Role::Client).await, certificate))
+    let relay = tls.get_ref().0.relay.clone();
+    Ok((
+        encrypted_websocket(tls, Role::Client, relay).await,
+        certificate,
+    ))
 }
 
 async fn connect_tls(
@@ -261,11 +322,16 @@ fn peer_certificate(connection: &rustls::CommonState) -> Option<Vec<u8>> {
 async fn encrypted_websocket(
     io: impl AsyncRead + AsyncWrite + Unpin + Send + 'static,
     role: Role,
+    relay: Option<net::RelayContext>,
 ) -> Ws {
     // Mutual or pinned TLS has already authenticated the endpoint. The inner
     // protocol uses raw WebSocket framing without another HTTP handshake.
-    tokio_tungstenite::WebSocketStream::from_raw_socket(Box::new(io) as Io, role, Some(ws_config()))
-        .await
+    tokio_tungstenite::WebSocketStream::from_raw_socket(
+        net::SocketIo::with_relay(Box::new(io) as Io, relay),
+        role,
+        Some(ws_config()),
+    )
+    .await
 }
 // Anonymous pairing validates the pinned network root AND expected manager ID
 // before any invitation token or CSR is sent through the encrypted channel.
@@ -285,7 +351,8 @@ pub(crate) async fn pairing_client_with_flow(
         .unwrap()
         .clone()
         .context(ErrorCode::Unauthenticated.error("manager omitted the network root"))?;
-    let ws = encrypted_websocket(tls, Role::Client).await;
+    let relay = tls.get_ref().0.relay.clone();
+    let ws = encrypted_websocket(tls, Role::Client, relay).await;
     Ok((ws, root))
 }
 pub async fn server(outer: Ws, identity: &Identity) -> Result<(Ws, Option<Vec<u8>>)> {
@@ -301,7 +368,8 @@ pub(crate) async fn server_with_flow(
         .await?;
     // Anonymous inner TLS is retained exclusively for the pairing handler.
     let peer = peer_certificate(tls.get_ref().1);
-    let ws = encrypted_websocket(tls, Role::Server).await;
+    let relay = tls.get_ref().0.relay.clone();
+    let ws = encrypted_websocket(tls, Role::Server, relay).await;
     Ok((ws, peer))
 }
 #[derive(Serialize, Deserialize)]
@@ -393,8 +461,18 @@ mod flow_tests {
     async fn wire() -> (Ws, Ws) {
         let (a, b) = tokio::io::duplex(2 * RELAY_WINDOW);
         (
-            WebSocketStream::from_raw_socket(Box::new(a) as Io, Role::Client, None).await,
-            WebSocketStream::from_raw_socket(Box::new(b) as Io, Role::Server, None).await,
+            WebSocketStream::from_raw_socket(
+                net::SocketIo::new(Box::new(a) as Io),
+                Role::Client,
+                None,
+            )
+            .await,
+            WebSocketStream::from_raw_socket(
+                net::SocketIo::new(Box::new(b) as Io),
+                Role::Server,
+                None,
+            )
+            .await,
         )
     }
 

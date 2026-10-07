@@ -5,6 +5,7 @@ import {
   type Attachment,
   type ControlState,
   type PendingState,
+  type SourceState,
 } from "./state";
 
 export interface Connection<State extends Attachment = Attachment> {
@@ -71,6 +72,24 @@ export class Connections {
   }
   get controlCount(): number {
     return this.controls.size;
+  }
+  oldestCached(): Connection<SourceState> | undefined {
+    let oldest: Connection<SourceState> | undefined;
+    for (const socket of this.sources) {
+      const connection = this.get(socket);
+      if (
+        connection?.state.role !== "source" ||
+        connection.state.cachedSince === null
+      )
+        continue;
+      if (
+        !oldest ||
+        connection.state.cachedSince < (oldest.state.cachedSince ?? Infinity)
+      ) {
+        oldest = { socket, state: connection.state };
+      }
+    }
+    return oldest;
   }
   get(socket: WebSocket): Connection | undefined {
     return this.bySocket.get(socket);
@@ -143,7 +162,8 @@ export class Connections {
       !previous ||
       (previous.state.id === state.id &&
         previous.state.network === state.network &&
-        previous.state.ip === state.ip);
+        previous.state.ip === state.ip &&
+        previous.state.protocol === state.protocol);
     if (!validRole || !sameIdentity)
       throw new Error("Invalid relay state transition");
     const prior = previous?.state;

@@ -61,7 +61,7 @@ async function open(path: string): Promise<Socket> {
   });
   if (!response.webSocket)
     throw new Error(`Upgrade ${response.status}: ${await response.text()}`);
-  expect(response.headers.get("X-Xrun-Protocol")).toBe("1");
+  expect(response.headers.get("X-Xrun-Protocol")).toBe(String(PROTOCOL.max));
   return new Socket(response.webSocket);
 }
 async function authenticated(
@@ -117,6 +117,71 @@ async function pair() {
     sid: incoming.session_id,
   };
 }
+
+test("cached sessions survive restoration and yield capacity while active sessions stay protected", async () => {
+  const network = await fixture();
+  const target = await network.member(),
+    source = await network.member();
+  const path = `/networks/${network.network}/control`;
+  const control = await authenticated(path, (nonce) =>
+    target.proof(path, nonce),
+  );
+  const hello = await control.json();
+  const connect = `/networks/${network.network}/connect/${target.device}`;
+  async function session() {
+    const sender = await authenticated(connect, (nonce) =>
+      source.proof(connect, nonce),
+    );
+    const incoming = await control.json();
+    const receiver = await open(
+      `/networks/${network.network}/attach/${target.device}/${hello.generation}/${incoming.session_id}`,
+    );
+    expect((await sender.json()).type).toBe("connected");
+    expect((await receiver.json()).type).toBe("connected");
+    return { sender, receiver };
+  }
+  const cached = [];
+  for (let index = 0; index < 6; index++) {
+    const connection = await session();
+    connection.sender.send({ type: "cache_state", idle: true });
+    expect(await connection.sender.json()).toEqual({
+      type: "cache_state",
+      idle: true,
+    });
+    cached.push(connection);
+  }
+  await inspect(network.network, "restore");
+  const active = [];
+  for (let index = 0; index < 8; index++) active.push(await session());
+  for (const connection of cached) {
+    await expect(connection.sender.next()).rejects.toThrow("closed");
+    await expect(connection.receiver.next()).rejects.toThrow("closed");
+  }
+  // Restoring and reactivating a cache removes its eviction eligibility.
+  active[0].sender.send({ type: "cache_state", idle: true });
+  await active[0].sender.json();
+  await inspect(network.network, "restore");
+  active[0].sender.send({ type: "cache_state", idle: false });
+  expect(await active[0].sender.json()).toEqual({
+    type: "cache_state",
+    idle: false,
+  });
+  const rejected = await authenticated(connect, (nonce) =>
+    source.proof(connect, nonce),
+  );
+  expect((await rejected.json()).code).toBe("SESSION_LIMIT");
+  const frame = new Uint8Array([1, 2, 3]).buffer;
+  for (const connection of active) {
+    connection.sender.send(frame);
+    expect(
+      new Uint8Array((await connection.receiver.next()) as ArrayBuffer),
+    ).toEqual(new Uint8Array(frame));
+    connection.sender.close();
+    connection.receiver.close();
+  }
+  rejected.close();
+  control.close();
+}, 15000);
 
 test("restoration preserves ciphertext credit and one-time attach, and frame processing stays indexed", async () => {
   const { network, control, sender, receiver, attach } = await pair();
@@ -241,7 +306,7 @@ test("secret route, protocol and proof protect existing device routes", async ()
         headers: {
           Upgrade: "websocket",
           "X-Xrun-Version": VERSION,
-          "X-Xrun-Protocol": "2-2",
+          "X-Xrun-Protocol": `${PROTOCOL.max + 1}-${PROTOCOL.max + 1}`,
         },
       })
     ).status,

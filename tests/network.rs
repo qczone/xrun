@@ -35,7 +35,7 @@ async fn registration_permissions_migration_and_manager_offline_execution() -> R
         let (mut peer,_)=xrun::testing::secure::pairing_client(outer,&xrun::testing::crypto::ca_spki_pin(&roster.ca_pem)?,&lab.source_identity.device_id).await?;
         xrun::testing::net::send(&mut peer,&xrun::protocol::PairRequest {
             version:"incompatible".into(),token:invite["link"].as_str().unwrap().split_once('#').unwrap().1.into(),
-            protocol: xrun::protocol::ProtocolRange { min: 2, max: 2 },
+            protocol: xrun::protocol::ProtocolRange { min: xrun::protocol::PROTOCOL + 1, max: xrun::protocol::PROTOCOL + 1 },
             name:"ordinary1".into(),csr_base64:STANDARD.encode(xrun::testing::crypto::new_device_request()?.1),
         }).await?;
         assert!(matches!(xrun::testing::net::receive::<xrun::protocol::Data>(&mut peer).await?,xrun::protocol::Data::Error{code,..} if code=="VERSION_MISMATCH"));
@@ -298,7 +298,7 @@ async fn device_operations_connect_directly_while_info_still_queries_live_state(
                         &Data::Ready {
                             version: VERSION.into(),
                             protocol: xrun::protocol::ProtocolRange::CURRENT,
-                            selected_protocol: 1,
+                            selected_protocol: xrun::protocol::PROTOCOL,
                             device_id: lab.target_identity.device_id.clone(),
                             db_id: "test-database".into(),
                             default_cwd: lab.target.to_string_lossy().into(),

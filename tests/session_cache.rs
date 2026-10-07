@@ -144,7 +144,7 @@ async fn local_wire(home: &Path) -> Result<(xrun::testing::net::Ws, serde_json::
         Box::new(tokio::net::windows::named_pipe::ClientOptions::new().open(address)?);
     Ok((
         tokio_tungstenite::WebSocketStream::from_raw_socket(
-            io,
+            xrun::testing::net::SocketIo::new(io),
             tokio_tungstenite::tungstenite::protocol::Role::Client,
             None,
         )

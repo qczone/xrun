@@ -3,7 +3,12 @@ import { attachment, type SourceState } from "../src/state";
 import { WINDOW } from "../src/limits";
 
 test("restored roles require their own complete fields and reject malformed budgets", () => {
-  const common = { id: crypto.randomUUID(), network: "probe", ip: "unknown" };
+  const common = {
+    id: crypto.randomUUID(),
+    network: "probe",
+    ip: "unknown",
+    protocol: 2,
+  };
   const binding = {
     target: `dev_${"a".repeat(32)}`,
     generation: "b".repeat(32),
@@ -14,11 +19,18 @@ test("restored roles require their own complete fields and reject malformed budg
     ...binding,
     role: "source",
     anonymous: false,
+    cachedSince: null,
     peer: crypto.randomUUID(),
     outstanding: 0,
     deadline: Date.now() + 1000,
   };
   expect(attachment(live)).toEqual(live);
+  const cachedSince = Date.now();
+  expect(attachment({...live, cachedSince})).toEqual({...live, cachedSince});
+  expect(attachment({...live, cachedSince, protocol: 1})).toBeUndefined();
+  expect(attachment({...live, cachedSince, anonymous: true})).toBeUndefined();
+  const {protocol: _protocol, cachedSince: _cached, ...legacy} = live;
+  expect(attachment(legacy)).toEqual({...live, protocol: 1});
   for (const outstanding of [-1, WINDOW + 1, 1.5, NaN, Infinity, "0"]) {
     expect(attachment({ ...live, outstanding })).toBeUndefined();
   }
