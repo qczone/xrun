@@ -70,13 +70,9 @@
 
 .about-brand {
   display: flex;
-  align-items: center;
-  gap: 12px;
-}
-
-.about-brand img {
-  width: 30px;
-  height: 30px;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
 }
 
 .data-row {

@@ -77,7 +77,6 @@ export function App() {
       <aside className="sidebar">
         <div className="brand">
           <Logo />
-          <span>xrun</span>
         </div>
         <nav aria-label={t("nav.main")}>
           {pages.map((item) => (

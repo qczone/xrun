@@ -313,10 +313,7 @@ export function SettingsPage({ status, feedback }: Props) {
           <div className="setting-row">
             <div className="about-brand">
               <Logo />
-              <span>
-                <strong>xrun</strong>
-                <small>{t("settings.tagline")}</small>
-              </span>
+              <small>{t("settings.tagline")}</small>
             </div>
             <span className="mono muted">{local?.version}</span>
           </div>
