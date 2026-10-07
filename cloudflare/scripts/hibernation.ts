@@ -38,7 +38,13 @@ async function authenticated(
 }
 interface Snapshot {
   instance: string;
-  sockets: { role: string; outstanding?: number; deadline?: number }[];
+  sockets: {
+    role: string;
+    outstanding?: number;
+    deadline?: number;
+    protocol?: number;
+    cachedSince?: number | null;
+  }[];
 }
 async function inspect(): Promise<Snapshot> {
   const response = await fetch(
@@ -72,11 +78,22 @@ try {
     ((await receiver.next()) as ArrayBuffer).byteLength === frame.byteLength,
     "frame mismatch",
   );
+  sender.send({ type: "cache_state", idle: true });
+  const idle = await sender.json();
+  check(
+    idle.type === "cache_state" && idle.idle === true,
+    "cache declaration was not acknowledged",
+  );
   const before = await inspect();
   check(
     before.sockets.find((state) => state.role === "source")?.outstanding ===
       frame.byteLength,
     "initial credit missing",
+  );
+  const cached = before.sockets.find((state) => state.role === "source");
+  check(
+    cached?.protocol === 2 && typeof cached.cachedSince === "number",
+    "cache state missing before hibernation",
   );
   let after = before;
   let idleSeconds = 0;
@@ -103,10 +120,21 @@ try {
       restored.deadline === old?.deadline,
     "reconstruction changed credit or idle deadline",
   );
+  check(
+    restored.protocol === old?.protocol &&
+      restored.cachedSince === old?.cachedSince,
+    "reconstruction changed protocol or cache state",
+  );
   receiver.send({ type: "ack", bytes: frame.byteLength });
   check(
     (await sender.json()).bytes === frame.byteLength,
     "restored credit acknowledgement failed",
+  );
+  sender.send({ type: "cache_state", idle: false });
+  const active = await sender.json();
+  check(
+    active.type === "cache_state" && active.idle === false,
+    "restored cache could not reactivate",
   );
   // Exact 4 MiB window, then one byte beyond it, after object reconstruction.
   for (let index = 0; index < 64; index++) {
@@ -145,6 +173,9 @@ try {
         instance_changed: true,
         deadline_preserved: true,
         credit_preserved: true,
+        protocol_preserved: true,
+        cache_preserved: true,
+        cache_reactivated: true,
         window_enforced: true,
         peer_closed: true,
         before,

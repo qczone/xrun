@@ -88,7 +88,7 @@ CLI、Linux Rust 中转和 daemon 由同一个 Rust 二进制提供；Cloudflare
 4. 双方交换签名清单，保留已见到的最高版本；目标从客户端证书取得来源 ID，再检查本机授权。中转提供的路由 ID 只用于选连接，身份来自端到端证书。info 详情和清单回执通过设备间加密连接传递，不要求执行授权；status 只展示中转报告的连接提示。
 5. TLS 内直接传递 WebSocket 帧，省去内层 HTTP Upgrade；外层 WSS 握手保持不变。同一会话依次处理请求，每条连接同时只有一个在途操作；不同会话使用独立连接和背压。
 
-本机 daemon 通过私有 IPC 为 CLI 缓存出站会话：macOS/Linux 使用私有临时目录中的 Unix socket 并核对用户，Windows 使用只允许所有者和 SYSTEM 的本机命名管道。端点地址、随机凭证和版本保存在私有 `daemon-ipc.json`，请求还绑定本机身份。每个目标最多一条空闲连接，本机总共最多三条，空闲 75 秒或证书到期时关闭，空缓存不启用定时轮询。这覆盖三目标的 10–60 秒间隔调用；本机缓存最多占用 Cloudflare 每网络八个会话名额中的三个，其他客户端另计，不扩大中转预算。
+本机 daemon 通过私有 IPC 为 CLI 缓存出站会话：macOS/Linux 使用私有临时目录中的 Unix socket 并核对用户，Windows 使用只允许所有者和 SYSTEM 的本机命名管道。端点地址、随机凭证和版本保存在私有 `daemon-ipc.json`，请求还绑定本机身份。每个目标最多一条空闲连接，本机总共最多三条，空闲 75 秒或证书到期时关闭，空缓存不启用定时轮询。这覆盖三目标的 10–60 秒间隔调用；空闲缓存仍计入现有中转预算，但协议 2 中转在满额时回收最早声明空闲的会话，为新连接让出名额，不回收活跃会话。旧中转协商协议 1 时，新版 daemon 不保留空闲缓存。
 
 CLI 收完结果和 `Complete` 后显式归还连接；本机中断、错误、未完成读取都关闭连接。借用缓存前发送不含操作的 `SessionProbe`，目标重新检查授权、暂停代次、成员版本与证书期限，并返回当前默认目录和数据库 ID。身份、证书、中转地址或成员清单变化使缓存失效，需要重建会话、重新交换签名清单。仅此提交前探测允许换连接重试；已经提交的任务仍按原请求 ID 查询，不能自动重放。
 
@@ -731,6 +731,8 @@ wait 在任务进入最终状态后回复；默认一直等待，`--timeout` 只
 
 输出按字节处理，每块最多 32 KiB，带单调 seq、stdout/stderr 标识和 Base64 数据。同一流内有序，跨流按 daemon 观察的顺序。
 
+每个输出流先攒批，达到 32 KiB、首字节等待 50 ms 或 EOF 时提交；50 ms 从首字节计时，后续小块不会延后期限。全库写入经容量 64 的有界队列交给专用阻塞线程，事务成功后才通知订阅者；队列满时对采集端施加背压。进程结束或取消时排空已采集批次后再提交最终状态，磁盘失败按日志不完整处理，不把未持久化输出报告为成功。
+
 Linux 使用 pidfd 等待进程退出，内核或沙箱不支持时保留轮询回退；仍通过 `waitid(WNOWAIT)` 观察退出，清理进程组后再回收主进程。任务列表在 SQL 中分页，运行中数量用索引计数，不加载全部历史；已经验证且内容未变的成员清单、成功连接地址不重复写盘。
 
 daemon 先落本地日志，再通知订阅者；任务状态更新同样发出通知，订阅者无需等待固定轮询周期。订阅者按自己的速度读磁盘；慢 CLI 不阻塞任务。重连按最后 seq 补读；最终结果包含 last_seq、output_complete、incomplete_reason。
@@ -760,9 +762,9 @@ status、control 和 connect 连接建立后，中转先发送 challenge（随�
 
 控制消息有 challenge/authenticate、hello_ack、incoming/reject、connected、status、error；心跳使用 WebSocket ping/pong。每设备路由只保留最新控制连接；只有同一设备的新凭证能替换它，替换时关闭旧会话并作废待接入请求。控制代次为随机 128 位值，只发给该控制连接，用于绑定附件连接。
 
-会话 ID 为随机 128 位值，只通知目标控制连接，绑定网络、目标与控制连接代次；10 秒未接入即结束。两种中转均限制不带成员凭证的配对会话每目标最多 4 个、每网络最多 256 个控制映射。Rust 中转每来源 IP 最多 16 个会话、每目标最多 32 个，全局最多 4096 个会话和 4096 个控制映射，另受 512 条 TCP 总连接和 daemon 的 32 个会话限制。它在每方向一次读写，利用慢读反压；Cloudflare 每网络最多 512 个 WebSocket 和 8 个来源会话，用每方向 4 MiB 确认窗口限制缓冲，未确认密文总预算最多 64 MiB。两者仅接受最大 64 KiB 的密文二进制帧，转发等待上限为 5 分钟。
+会话 ID 为随机 128 位值，只通知目标控制连接，绑定网络、目标与控制连接代次；10 秒未接入即结束。两种中转均限制不带成员凭证的配对会话每目标最多 4 个、每网络最多 256 个控制映射。Rust 中转已认证来源按网络和设备 ID 计数，每个来源最多 16 个会话；匿名来源仍按 IP 限制 16 个。每目标最多 32 个，全局最多 4096 个会话和 4096 个控制映射，另受 512 条 TCP 总连接和 daemon 的 32 个会话限制；未认证连接的 IP 防滥用限制继续保留。它在每方向一次读写，利用慢读反压；Cloudflare 每网络最多 512 个 WebSocket 和 8 个来源会话，用每方向 4 MiB 确认窗口限制缓冲，未确认密文总预算最多 64 MiB。两者仅接受最大 64 KiB 的密文二进制帧，转发等待上限为 5 分钟。
 
-管理设备新增或撤销成员后立即尝试同步全部在线端点；成员同步和撤销回执查询并发联系最多 8 个已知未撤销端点，每个状态请求最多等待 5 秒；公共 HTTPS 中转包含更多握手往返，上限为 20 秒。日常设备操作从本地已验证的签名清单解析目标名称或 ID，直接新建或借用业务会话；`status` 只查询中转连接列表并过滤本地已知撤销，`info` 只查询指定端点。新建端到端会话时交换签名清单，复用前比对成员版本，发生变化时重建会话并重新交换。daemon 每次建立控制连接前同步一次：优先联系在线管理设备，管理设备离线时从随机起点选择其他在线端点。后台兜底同步每 5 分钟加最多 1 分钟随机抖动执行一次，按同样优先级选择端点，后备端点按游标轮换；管理设备联系失败时才尝试后备端点，不遍历全网。每次端点同步都需要经中转建立连接并完成一次双向 TLS 握手。端点保留最高版本，离线设备重连时可从其他在线端点获得已发布更新，不要求管理设备在线。完整成员清单、设备元数据和签名回执均在端到端 TLS 内传递。
+管理设备新增或撤销成员后立即尝试同步全部在线端点；成员同步和撤销回执查询并发联系最多 2 个已知未撤销端点，每个状态请求最多等待 5 秒；公共 HTTPS 中转包含更多握手往返，上限为 20 秒。建连遇到 `SESSION_LIMIT` 时最多尝试 4 次，间隔 50、100、200 ms，仍受上述总超时限制；其他错误不重试。日常设备操作从本地已验证的签名清单解析目标名称或 ID，直接新建或借用业务会话；`status` 只查询中转连接列表并过滤本地已知撤销，`info` 只查询指定端点。新建端到端会话时交换签名清单，复用前比对成员版本，发生变化时重建会话并重新交换。daemon 每次建立控制连接前同步一次：优先联系在线管理设备，管理设备离线时从随机起点选择其他在线端点。后台兜底同步每 5 分钟加最多 1 分钟随机抖动执行一次，按同样优先级选择端点，后备端点按游标轮换；管理设备联系失败时才尝试后备端点，不遍历全网。每次端点同步都需要经中转建立连接并完成一次双向 TLS 握手。端点保留最高版本，离线设备重连时可从其他在线端点获得已发布更新，不要求管理设备在线。完整成员清单、设备元数据和签名回执均在端到端 TLS 内传递。
 
 配对在内层验证管理设备 TLS 后传递带协议范围的 PairRequest；管理设备在消费邀请或签发前协商协议，响应包含范围与选中的协议。内层业务 TLS 后双方交换完整签名清单与协议范围，再检查成员公钥、撤销和业务权限。代码中 `/devices`、`/invites`、`/admin/revoke` 仅为客户端核心库的本地适配入口，不是中转公开 HTTP 接口。
 
@@ -798,23 +800,31 @@ CLI 的 start 入口使用 exec，并把解析后的实际超时发给 daemon；
 
 Rust 内部用 `error::ErrorCode` 和 `CodedError` 标识错误，协议边界保留现有 code 字符串。添加 anyhow 上下文或修改说明不会改变分类；未知远端错误码保留原值，不按字符串前缀推断含义。退出码同时取决于请求阶段：发送前失败、明确拒绝与送达后结果未确认分别处理，不能只按错误码直接映射退出码。
 
+可靠提交在记录“可能已发送”前完成协议检查和消息编码，本地不支持的操作返回 125，不进入恢复查询。开始写网络之前即标记可能发送，写入失败仍可能已送达，保留查询恢复及退出码 75 的语义。授权快照与显式重载保留原始错误码；Windows 文件替换通过卷标识和文件 ID 检测，显式重载直接重读，不被相同长度与时间戳挡住。
+
 ### 6.3 版本和限制
 
 发布版本、协议版本和签名格式分别维护。发布版本用于 `xrun --version`、设备信息和诊断。本机 IPC 仍要求 CLI、App helper 与本机 daemon 的发布版本一致，替换程序后需要重启 daemon。
 
-网络协议从整数 1 开始。组件交换支持范围 `{"min":1,"max":1}`，选择共同的最高版本；无交集、范围非法或 Ready 的选择不一致，返回 `VERSION_MISMATCH`，不发送业务操作、不消费配对 Token。外层 WSS 请求头 `X-Xrun-Protocol` 使用 `min-max`，升级响应返回选中的整数；`X-Xrun-Version` 仅供诊断。Cloudflare 部署写入 `XRUN_PROTOCOL_MIN` / `XRUN_PROTOCOL_MAX`，与代码实现的范围一致。端到端清单交换、配对请求与响应、Ready 也携带范围；Ready 与配对响应包含 `selected_protocol`。
+网络协议从整数 1 开始。当前组件交换支持范围 `{"min":1,"max":2}`，选择共同的最高版本；无交集、范围非法或 Ready 的选择不一致，返回 `VERSION_MISMATCH`，不发送业务操作、不消费配对 Token。外层 WSS 请求头 `X-Xrun-Protocol` 使用 `min-max`，升级响应返回选中的整数，保存在该连接的传输上下文中，并带入端到端隧道；外层选择与端到端协商分别维护。`X-Xrun-Version` 仅供诊断。Cloudflare 部署写入 `XRUN_PROTOCOL_MIN` / `XRUN_PROTOCOL_MAX`，与代码实现的范围一致。端到端清单交换、配对请求与响应、Ready 也携带范围；Ready 与配对响应包含 `selected_protocol`。
+
+协议 2 在外层隧道增加 `{"type":"cache_state","idle":true|false}`，只允许已认证来源发送，中转原样确认，不转发给目标。来源消费 `Complete` 且本机 CLI 归还后才声明空闲；复用先声明活跃并等待确认，再发端到端探测，最后发送业务。空闲来源禁止发送密文；满额时中转可关闭最早声明空闲的配对连接。静默中的长任务不因此变成空闲。CF 将协商版本与空闲时间写入 WebSocket 附件，休眠恢复后仍按相同规则判断；协议 1 不发送此消息，不启用新版缓存。
 
 普通消息忽略可以安全忽略的未知字段，必需字段和未知消息类型仍拒绝。改变执行语义的新字段或消息必须提升协议版本，并由发送端按协商结果检查后发送；接收端同样检查操作的最低协议版本。签名记录、证书证明与本机安全配置继续严格拒绝未知字段。后续协议 N 在实际实现 N−1 的行为后才可以声明范围 N−1…N；初始协议 1 没有历史兼容分支。
 
 签名有效载荷为 `xrun/sig-v1/{用途}\0` 加固定 JSON 字节，与发布版本无关。永久测试向量固定成员清单及根证书摘要、配对回执、清单回执和中转证明的字节、签名与用途隔离。改变签名记录结构或编码必须提升签名格式，并明确重签与过渡方案；普通发布号变化不会使已有签名失效。
 
-beta.4 是协议 1 / 签名格式 1 的首个发布基线，旧 beta 不兼容，这次升级需要重新组网、加入与授权；不迁移旧签名。此后只要协议、签名及数据库结构兼容，可以逐台升级，保留身份和记录。数据库 schema v1 保持不变，未来结构变化必须单独实现迁移。替换程序前按 4.2 等待任务结束并停止本机服务。当前发布版本为 `0.0.1-beta.4`，各发布入口统一维护。
+beta.4 是协议 1 / 签名格式 1 的首个发布基线，旧 beta 不兼容，这次升级需要重新组网、加入与授权；不迁移旧签名。此后只要协议、签名及数据库结构兼容，可以逐台升级，保留身份和记录。数据库 schema v1 保持不变，未来结构变化必须单独实现迁移。替换程序前按 4.2 等待任务结束并停止本机服务。当前发布版本为 `0.0.1-beta.5`，各发布入口统一维护。
+
+beta.5 实现协议 1–2，中转缓存握手仅在外层选中 2 时启用；业务操作保留协议 1 行为，签名格式和数据库结构不变。从 beta.4 升级无需清理身份或记录，旧中转仍可执行操作；消除旧缓存带来的名额占用，需要升级中转和持有缓存的 daemon。
 
 单条业务消息不超过 1 MiB，可靠执行用 stdin/脚本各不超过 1 MiB，push/pull 文件和截图 PNG 不超过 64 MiB；push 从 stdin 读取时也使用文件的 64 MiB 上限。接收时检查，超限拒绝。任务列表分页，CLI 可逐页展示。流式输入和 TCP 转发不受文件总量限制，单块最多 64 KiB，内存受有界缓冲约束。
 
 程序、参数、环境和路径不得含 NUL；输入与文件原始字节不受此限制。Windows 环境名大小写重复、负数超时、未知字段或类型错误返回 INVALID_REQUEST。
 
 ### 6.4 错误码
+
+`DB_SCHEMA_MISMATCH` 表示 schema 版本不匹配，禁止自动覆盖已有表。停止服务后优先使用匹配程序；仅任务库支持 `daemon reset`，提交记录库和成员清单库没有独立重建命令。确需放弃全部数据时按使用手册的升级章节执行 `down --purge` 并重新组网；成员清单不能按可丢弃缓存删除。
 
 | 类别 | 错误码 |
 | --- | --- |
@@ -823,7 +833,7 @@ beta.4 是协议 1 / 签名格式 1 的首个发布基线，旧 beta 不兼容�
 | 成员状态 | MEMBER_STATE_MISSING、MANAGER_STATE_MISSING、MANAGER_STATE_MISMATCH、ROSTER_ROLLBACK、ROSTER_CONFLICT、INVALID_ROSTER、INVALID_SIGNATURE、CERTIFICATE_EXPIRED、MEMBER_LIMIT、INVITATION_LIMIT |
 | 转发 | INVALID_PORT、FORWARD_LISTEN_FAILED、FORWARD_CONNECT_FAILED、FORWARD_TIMEOUT |
 | 输入 | INPUT_TOO_LARGE、INVALID_SCRIPT、INVALID_SCRIPT_ARGUMENT |
-| 任务和存储 | REQUEST_CONFLICT、DB_RESET、DB_MISSING、DB_CORRUPT、IDENTITY_CHANGED、JOB_NOT_FOUND、RESULT_LOST、LOG_TRUNCATED、LOG_UNAVAILABLE、LOG_INCOMPLETE、STORAGE_ERROR |
+| 任务和存储 | REQUEST_CONFLICT、DB_RESET、DB_MISSING、DB_CORRUPT、DB_SCHEMA_MISMATCH、IDENTITY_CHANGED、JOB_NOT_FOUND、RESULT_LOST、LOG_TRUNCATED、LOG_UNAVAILABLE、LOG_INCOMPLETE、STORAGE_ERROR |
 | 文件 | FILE_NOT_FOUND、PARENT_NOT_FOUND、PERMISSION_DENIED、IS_DIRECTORY、FILE_TOO_LARGE、FILE_BUSY、ALREADY_EXISTS、STALE |
 | 截图 | PERMISSION_DENIED、SCREEN_LOCKED、NO_DISPLAY、SCREENSHOT_UNAVAILABLE、SCREENSHOT_FAILED |
 | 协议 | INVALID_MESSAGE、INVALID_BODY、CHECKSUM_MISMATCH、MESSAGE_TOO_LARGE、INVALID_SESSION、SESSION_UNAVAILABLE、SESSION_LIMIT、SESSION_EXPIRED、MEMBERSHIP_CHANGED |
@@ -838,6 +848,8 @@ beta.4 是协议 1 / 签名格式 1 的首个发布基线，旧 beta 不兼容�
 
 Rust workspace 的核心 package 提供 CLI、daemon 和 Rust 中转；桌面 package 位于 `desktop/src-tauri`。按现有职责划分：membership 管理签名清单与权威状态，network 处理创建/加入和端点同步，relay 接通外层连接，secure 建立端到端 TLS，ipc/session/pool 处理本机通信、CLI 会话与后台连接缓存，daemon/store 管理可靠任务，process 处理原生进程，transfer/screenshot/forwarding/streaming 处理相应业务，service/control/history 提供本机服务与只读历史。Cloudflare Worker、部署脚本和 workerd 测试位于 `cloudflare/`。
 
+支持的公开边界为 `xrun::client` 的用户操作、设置和只读历史，`xrun::runtime` 的进程入口，以及 `protocol` / `error` 的协议类型和错误分类。App 通过这些边界访问核心；config、network、daemon、store、secure 等实现模块保持私有。`xrun::testing` 仅供集成测试夹具，不属于稳定应用 API；`deny(unreachable_pub)` 检查意外公开，client/runtime 边界要求文档注释。
+
 `cli.rs` 只负责命令入口，参数、本机操作、远端选择、可靠提交、任务查询、日志、文件和转发分别位于 `src/cli/`。`daemon.rs` 持有共享资源并负责启动、恢复和退出；`src/daemon/requests.rs` 统一检查会话权限并建立审计生命周期，再分发给可靠任务、文件和连接型操作模块。各操作保留接收输入后的权限复查、并发配额和进程启动门锁。`network.rs` 保留对外 API 与本机网络状态校验，连接认证、设备同步、链接校验、创建、配对和续证分别位于 `src/network/`；新增请求种类必须显式加入穷尽分发。
 
 App 使用 Tauri 2、React、TypeScript、Vite 和 Bun，生产包包含静态前端与配套 Rust helper，不包含 Bun。根目录 `bun run --cwd desktop build` 根据平台生成 macOS DMG 或 Windows 当前用户 NSIS 安装包；`--debug` 使用调试目录。macOS 本地包默认 ad-hoc 签名，正式包使用 Developer ID 签名、公证 App 与 DMG 并附票据；Windows 安装包当前未签名。服务使用固定位置的包内 helper，升级前正常停止。
@@ -845,6 +857,11 @@ App 使用 Tauri 2、React、TypeScript、Vite 和 Bun，生产包包含静态�
 Rust 与 Cloudflare 中转使用同一套连接认证和端到端会话协议，CLI 与 daemon 不依赖中转保存成员状态。
 
 ### 7.2 自动化验证
+
+- [Readability](../.github/workflows/quality.yml) 检查源码行长、文件规模、Cloudflare 判别联合及非空断言，并测试检查器自身。
+- 三平台普通核心测试验证已有会话的输出送达与授权失效，等待上限为 5 秒。受控空闲机器另单独执行 `tests/latency.rs` 的 ignored 验收，保留输出 100 ms、授权失效 200 ms 的产品预算；共享 CI 不以这些时延作硬门槛，功能通过不能代替时延通过。
+- Linux 用 `scripts/test-compatibility.ts` 按 SemVer 选择兼容旧 tag，构建历史二进制和 Worker，运行两套中转的混合版本测试；无 tag 时用固定协议 1 开发快照并明确标注，不跳过。基线缺失或损坏即失败。
+- [Measure performance](../.github/workflows/performance.yml) 手动对照选定 Git ref，在三平台测空闲 CPU、日志与同期查询，Linux 另统计文件读取和数据库同步；结果上传为报告，不设吞吐门槛。缓存测量与真实 CF 休眠验收按开发文档单独运行。
 
 - Linux、macOS、Windows 的测试工作流分别运行格式检查、clippy 和原生核心测试，覆盖配对、TLS、成员签名、授权、可靠任务、传输、流式执行、端口转发与故障恢复。测试直接调用中转库，不开放非 Linux 的中转部署命令。
 - 核心测试包含前台提交与日志共用会话，以及独立 CLI 进程之间的缓存复用、配置更新、授权变化、数据库重建、并发请求隔离、私有 IPC 认证、提前归还、缓存上限、证书过期和上传期间源文件变化。

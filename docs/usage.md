@@ -22,7 +22,7 @@
 
 ## 安装
 
-CLI 和 daemon 是同一个 Rust 二进制，运行已构建程序不需要 Rust、Node.js 或 Bun。桌面 App 管理网络、授权与服务，远程执行和文件传输使用 CLI。当前版本为 `0.0.1-beta.4`；本机 CLI 与 daemon 要求发布版本一致，设备与中转按协议范围协商互通。
+CLI 和 daemon 是同一个 Rust 二进制，运行已构建程序不需要 Rust、Node.js 或 Bun。桌面 App 管理网络、授权与服务，远程执行和文件传输使用 CLI。当前版本为 `0.0.1-beta.5`；本机 CLI 与 daemon 要求发布版本一致，设备与中转按协议范围协商互通。
 
 | 平台 | 安装方式 |
 | --- | --- |
@@ -39,13 +39,13 @@ CLI 可放在 `~/.local/bin/xrun`，Windows 可用 `%LOCALAPPDATA%\xrun\bin\xrun
 CLI 压缩包和源码中的安装脚本位于 `scripts/`。以下命令从解压目录或项目根目录执行；单独下载发布附件中的脚本时，将脚本路径替换为下载位置：
 
 ```bash
-bash scripts/install.sh --version 0.0.1-beta.4
-bash scripts/install.sh --version 0.0.1-beta.4 --component cli
+bash scripts/install.sh --version 0.0.1-beta.5
+bash scripts/install.sh --version 0.0.1-beta.5 --component cli
 ```
 
 ```powershell
-powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File .\scripts\install.ps1 -Version 0.0.1-beta.4
-powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File .\scripts\install.ps1 -Version 0.0.1-beta.4 -Component cli
+powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File .\scripts\install.ps1 -Version 0.0.1-beta.5
+powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File .\scripts\install.ps1 -Version 0.0.1-beta.5 -Component cli
 ```
 
 默认下载地址是 `https://github.com/qczone/xrun/releases/download/v<完整版本>/`。`--base-url`／`-BaseUrl` 可指定其他 HTTPS 产物目录。每个目录需包含对应的 `xrun-darwin-arm64.json` 或 `xrun-windows-x86_64.json` 清单及其引用的文件。安装时不需要 Bun；产物准备见 [开发与发布](development.md#发布与内置文档)。
@@ -53,7 +53,7 @@ powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File .\script
 离线安装或验收本地打包产物时，用 `--source-dir`／`-SourceDir` 指定产物目录。例如 macOS：
 
 ```bash
-bash scripts/install.sh --version 0.0.1-beta.4 --source-dir ./dist
+bash scripts/install.sh --version 0.0.1-beta.5 --source-dir ./dist
 ```
 
 默认 macOS App 安装到 `~/Applications/xrun.app`，CLI 安装到 `~/.local/bin/xrun`；Windows App 安装到 `%LOCALAPPDATA%\Programs\xrun`，CLI 安装到 `%LOCALAPPDATA%\xrun\bin`。`--install-dir`／`-InstallDir` 可指定父目录，AI 可直接使用 JSON 返回的 `executable` 路径调用程序。脚本只安装程序；网络加入、设备授权和后台服务的启用继续使用现有 App 或 CLI 命令。
@@ -143,7 +143,7 @@ xrun linux1 --env MODE=test --env RUST_LOG=info -C /home/user/demo -- ./demo
 
 `--` 分隔 xrun 选项和远端程序参数。目标 daemon 使用自己的 PATH 查找程序，调用设备的 PATH 不会自动传过去；必要时用完整路径。Shell 的管道、变量展开、重定向需要显式选择 Shell，否则由调用设备的 Shell 解释。
 
-前台可靠执行在提交命令的同一会话中接收日志和最终结果。本机运行 daemon 时，CLI 还会自动复用已完成请求的加密连接，连续调用同一设备可省去重复建连；每次复用仍检查授权。每台本机最多保留两条空闲连接，每个目标一条，空闲 30 秒后关闭；缓存连接占用现有中转会话名额。本机未运行 daemon 时仍可直接发起调用。
+前台可靠执行在提交命令的同一会话中接收日志和最终结果。本机运行 daemon 时，CLI 还会自动复用已完成请求的加密连接，连续调用同一设备可省去重复建连；每次复用仍检查授权。每台本机最多保留三条空闲连接，每个目标一条，空闲 75 秒后关闭。协议 2 的中转在满额时可回收最早归还的空闲缓存，正在执行的会话不受影响；复用前先确认连接仍有效，缓存失效时重新建连，不重发业务请求。连接协议 1 的旧中转时不保留空闲缓存。本机未运行 daemon 时仍可直接发起调用。
 
 执行默认超时 30 分钟，`start` 默认不限时；用 `--timeout 秒` 覆盖，0 表示不限时。`wait --timeout 秒` 只限制等待，不取消任务。`-C` 必须是远端绝对目录，省略时使用 daemon 默认目录。`--env KEY=VALUE` 可重复指定；`--stdin` 提交前读完输入，最多 1 MiB。
 
@@ -379,6 +379,7 @@ xrun win1 jobs --request-id '<request_id>'
 | INVALID_CWD | -C 使用目标存在的绝对目录 |
 | NO_DISPLAY | 目标需要可访问桌面；网页可用无头浏览器 |
 | DB_RESET | 原任务库已重建，不能重放或推断原任务 |
+| DB_SCHEMA_MISMATCH | 数据库结构与程序不匹配，停止服务并按升级章节处理；不会自动重建或清空 |
 
 确认取消或提交前 Ctrl+C 返回 130，远端被信号结束返回 128 + 信号。wait 超时 / 断线且不能确认已有任务结果时返回 75，不取消任务。业务程序也可以返回相同数值，要结合诊断、错误码与任务状态判断。
 
@@ -397,6 +398,10 @@ xrun status
 ```
 
 beta.4 开始使用协议 1 和独立签名格式 1，不兼容旧 beta；从 beta.3 或更早版本升级需要重新创建网络、加入并授权。这次切换之后，普通发布号变化不会使已保存的签名失效；未来协议、签名或数据库格式变化以对应发布说明为准。清理数据会删除身份、任务与日志，应在明确不需要这些数据后进行，不能当作普通重启。
+
+beta.5 新增中转缓存握手，支持协议 1–2，签名格式 1、数据库结构 1 不变。从 beta.4 升级可保留身份、任务和日志；连接旧中转时正常执行，但新版 daemon 不缓存空闲连接。要解决旧客户端缓存占满名额的问题，需要同时升级中转和持有缓存的 daemon。
+
+遇到 `DB_SCHEMA_MISMATCH`，先停止服务，优先使用与现有数据库匹配的程序；本次升级不要求重建。若确实放弃数据，任务库可用 `xrun daemon reset` 重建，原任务和日志丢失，身份及提交记录保留。提交记录库 `submissions.sqlite` 与成员清单库 `roster.db` 没有独立重建命令；成员清单包含最高已知撤销状态，不能当缓存删除。需要彻底重新初始化本机时，执行下面的 `xrun down --purge`，它也会删除身份、提交记录和管理设备的网络权威数据；管理设备随后重新创建网络，成员重新加入并授权。
 
 移除本机服务保留数据使用 `down`，清理本机数据使用 `down --purge`，需要交互终端确认：
 

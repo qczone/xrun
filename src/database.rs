@@ -28,7 +28,8 @@ pub(crate) fn initialize(
     )?;
     if version != 0 || tables != 0 {
         bail!(ErrorCode::DbSchemaMismatch.error(format!(
-            "{kind} schema {version} is unsupported; expected {supported}. Use a matching xrun version or see `xrun doc upgrade` for explicit recovery while stopped."
+            "{kind} schema {version} is unsupported; expected {supported}. \
+             Use a matching xrun version or see `xrun doc upgrade` for explicit recovery while stopped."
         )));
     }
     transaction.execute_batch(schema)?;

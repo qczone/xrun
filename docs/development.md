@@ -103,9 +103,18 @@ XRUN_TEST_CF_LINK_FILE=/绝对路径/私有地址文件 \
 
 只修复实现或增加可安全忽略的诊断字段，提升发布版本即可。改变操作或执行选项的语义时，提升 `PROTOCOL`，实际实现相邻旧协议后调整支持范围；发送端通过 `Request::minimum_protocol` 与 `Session::send_request` 检查协商结果，接收端也检查。改变签名结构或编码时，提升 `SIGNATURE_FORMAT` 并明确重签 / 过渡方案，禁止因修改字段顺序而无意改变签名字节。固定测试向量位于 `tests/fixtures/signatures.json`，Rust 与 Cloudflare 的测试共同约束它。
 
-Linux CI 的 `bun scripts/test-compatibility.ts` 选择最近的兼容发布 tag，构建真实历史 CLI 与 Worker，在两种来源 / 目标组合和两套中转上验证加入、执行、文件传输、清单同步和撤销。协议 1 的首版没有兼容历史 tag，只报告初始化基线；beta.3 及更早版本不属于兼容测试范围。也可以显式传入兼容的 Git ref 做开发验收；这不等于已发布版本兼容证据。首次签名 / 协议切换不迁移历史网络。
+Linux CI 的 `bun scripts/test-compatibility.ts` 按 SemVer 选择早于当前版本的最近兼容 tag，正式版优先于同版本预发布版。脚本构建真实历史 CLI 与 Worker，在两种来源 / 目标组合和两套中转上验证加入、执行、文件传输、清单同步和撤销。没有兼容 tag 时，固定使用 `bc97f764b4c96e07fab2736ee029349389eb0c03` 的协议 1 开发快照，并在日志中明确标为未发布快照，仍完整执行测试；缺失基线或损坏的协议定义会失败，不能跳过后报成功。beta.3 及更早版本不属于兼容范围。也可以显式传入兼容的 Git ref 做开发验收；开发快照验证不等于已发布版本兼容证据。
 
 ## 性能测量
+
+共享 CI 运行已有会话的输出与授权失效功能测试，采用 5 秒等待上限，避免把机器调度抖动当作产品回归。100 ms 输出可见、200 ms 授权失效仍是受控空闲机器的验收预算，单独运行并保存实测报告：
+
+```bash
+XRUN_LATENCY_OUTPUT=target/latency.json \
+  cargo test --locked --test latency -- --ignored --nocapture --test-threads=1
+```
+
+报告包含验收模式、预算和各项时延；功能 CI 的 5 秒结果不能作为上述时延预算通过的证据。[Readability](../.github/workflows/quality.yml) 单独检查源码长度、稠密代码与 Cloudflare 状态类型约束。
 
 手动运行 [Measure performance](../.github/workflows/performance.yml)，选择基线 Git ref，获取 Linux、macOS、Windows 的空闲 CPU、日志写入和同期查询数据。两版分别构建测试入口和 CLI，使用隔离目录；发布号不同也能对照。原始优化前基线 `21a60c5` 尚无测量文件，脚本将最早的测量夹具编译到该基线的库上，并在报告中记录夹具来源；生产代码保持该 ref 的实现。时延是测量结果，不设 CI 吞吐阈值。
 
