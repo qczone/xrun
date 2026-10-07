@@ -7,6 +7,7 @@ export function useDevices(
   status: Status | null,
   visible: boolean,
   paused: boolean,
+  windowVisible: boolean,
 ) {
   const scope = status?.local.joined
     ? status.network?.network_id || status.local.device_id || "joined"
@@ -51,11 +52,14 @@ export function useDevices(
     setError(null);
     setLoading(false);
     setMessage(scope ? "devices.reading" : "devices.joinFirst");
-    void refresh();
     return () => {
       request.current++;
     };
   }, [scope, refresh]);
+  useEffect(() => {
+    if (!windowVisible || paused || !scope) return;
+    void refresh();
+  }, [windowVisible, paused, scope, refresh]);
   useEffect(() => {
     if (!visible || paused || !scope) return;
     const timer = setInterval(() => {

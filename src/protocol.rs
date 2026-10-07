@@ -150,13 +150,13 @@ pub enum JobState {
     Running,
     /// Process has exited; exit_code or signal describe its outcome.
     Exited,
-    /// Launch or execution setup failed.
+    /// Execution was confirmed not to have started.
     Failed,
     /// Cancellation or daemon shutdown ended the task.
     Canceled,
     /// Requested task deadline ended execution.
     TimedOut,
-    /// Crash recovery cannot produce the final outcome; the intent is not replayed.
+    /// Execution may have started but its final outcome is unavailable; the intent is not replayed.
     Lost,
 }
 impl JobState {
@@ -264,6 +264,10 @@ pub enum Request {
         after: u64,
         /// Whether to stream future changes after the initial result.
         follow: bool,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        /// Ask the endpoint to return only the final lines of the snapshot.
+        /// Older endpoints may ignore this optimization; callers still trim locally.
+        tail: Option<usize>,
     },
     /// Wait for a task to become terminal.
     Wait {
@@ -371,6 +375,9 @@ pub enum Data {
     Jobs {
         /// Source-scoped task snapshots.
         jobs: Vec<Job>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        /// Continue the requested page here when its byte budget was reached.
+        next_offset: Option<usize>,
     },
     /// Read sequenced output, optionally following updates.
     Logs {
@@ -426,6 +433,16 @@ impl Data {
         let (code, message) = crate::error::wire(error);
         Self::Error { code, message }
     }
+}
+
+pub(crate) fn validate_job_size(job: &Job) -> anyhow::Result<()> {
+    // Leave room for process identity, final state and one encoded log chunk.
+    if serde_json::to_vec(&Data::Job { job: job.clone() })?.len() > MAX_MESSAGE - 64 * 1024 {
+        anyhow::bail!(
+            crate::error::ErrorCode::InvalidCommand.error("task metadata exceeds response budget")
+        );
+    }
+    Ok(())
 }
 /// Compute lowercase SHA-256 hex for arbitrary bytes.
 pub fn sha256(bytes: &[u8]) -> String {

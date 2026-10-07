@@ -236,10 +236,23 @@ async fn bridge(
     let (target_tx, target_rx) = target.split();
     let source_tx = Mutex::new(source_tx);
     let target_tx = Mutex::new(target_tx);
+    let activity = Activity::new(tokio::time::Instant::now());
     tokio::select! {
-        result = source_direction(app, sid, cacheable, source_rx, &target_tx, &source_tx) => result,
-        result = direction(target_rx, &source_tx) => result,
+        result = source_direction(app, sid, cacheable, source_rx, &target_tx, &source_tx, &activity) => result,
+        result = direction(target_rx, &source_tx, &activity) => result,
+        result = idle_session(&activity) => result,
         _ = closed.changed() => Ok(()),
+    }
+}
+type Activity = std::sync::Mutex<tokio::time::Instant>;
+async fn idle_session(activity: &Activity) -> Result<()> {
+    loop {
+        let deadline = *activity.lock().unwrap() + RELAY_IDLE_TIMEOUT;
+        tokio::time::sleep_until(deadline).await;
+        // Traffic moves the deadline without waking another task for every frame.
+        if activity.lock().unwrap().elapsed() >= RELAY_IDLE_TIMEOUT {
+            bail!(ErrorCode::ConnectTimeout.error("relay session was idle too long"));
+        }
     }
 }
 async fn source_direction<R, W, S>(
@@ -249,6 +262,7 @@ async fn source_direction<R, W, S>(
     mut reader: R,
     target: &Mutex<W>,
     source: &Mutex<S>,
+    activity: &Activity,
 ) -> Result<()>
 where
     R: futures_util::Stream<Item = std::result::Result<Message, axum::Error>> + Unpin,
@@ -257,9 +271,11 @@ where
 {
     let mut idle = false;
     loop {
-        let message = tokio::time::timeout(RELAY_IDLE_TIMEOUT, reader.next())
-            .await?
+        let message = reader
+            .next()
+            .await
             .context(ErrorCode::ConnectionClosed.error("source ciphertext stream ended"))??;
+        *activity.lock().unwrap() = tokio::time::Instant::now();
         match &message {
             Message::Text(text) if cacheable && text.len() <= CACHE_STATE_MESSAGE_BYTES => {
                 let RelayMessage::CacheState { idle: next } = serde_json::from_str(text)? else {
@@ -293,15 +309,17 @@ where
         forward(target, message).await?;
     }
 }
-async fn direction<R, W>(mut reader: R, writer: &Mutex<W>) -> Result<()>
+async fn direction<R, W>(mut reader: R, writer: &Mutex<W>, activity: &Activity) -> Result<()>
 where
     R: futures_util::Stream<Item = std::result::Result<Message, axum::Error>> + Unpin,
     W: futures_util::Sink<Message, Error = axum::Error> + Unpin,
 {
     loop {
-        let message = tokio::time::timeout(RELAY_IDLE_TIMEOUT, reader.next())
-            .await?
+        let message = reader
+            .next()
+            .await
             .context(ErrorCode::ConnectionClosed.error("ciphertext stream ended"))??;
+        *activity.lock().unwrap() = tokio::time::Instant::now();
         match &message {
             Message::Binary(bytes) if bytes.len() <= FILE_CHUNK => {}
             Message::Ping(_) | Message::Pong(_) => {}
@@ -327,6 +345,59 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test(start_paused = true)]
+    async fn one_way_activity_keeps_the_session_alive_but_silence_expires_it() {
+        let (source, mut from_source) = mpsc::unbounded_channel();
+        let (target, mut from_target) = mpsc::unbounded_channel();
+        let idle = tokio::spawn(async move {
+            let app = App {
+                connections: Mutex::new(Connections::default()),
+            };
+            let activity = Activity::new(tokio::time::Instant::now());
+            let source = futures_util::stream::poll_fn(move |cx| from_source.poll_recv(cx));
+            let target = futures_util::stream::poll_fn(move |cx| from_target.poll_recv(cx));
+            let sink = || {
+                Mutex::new(Box::pin(futures_util::sink::unfold(
+                    (),
+                    |(), _: Message| async { Ok::<_, axum::Error>(()) },
+                )))
+            };
+            let source_tx = sink();
+            let target_tx = sink();
+            tokio::select! {
+                result = source_direction(&app, "session", false, source, &target_tx, &source_tx, &activity) => result,
+                result = direction(target, &source_tx, &activity) => result,
+                result = idle_session(&activity) => result,
+            }
+        });
+        tokio::task::yield_now().await;
+        for sending in [&source, &target] {
+            for _ in 0..10 {
+                tokio::time::advance(RELAY_IDLE_TIMEOUT / 2).await;
+                sending.send(Ok(Message::Binary(vec![1].into()))).unwrap();
+                tokio::task::yield_now().await;
+                assert!(!idle.is_finished());
+            }
+        }
+        tokio::time::advance(RELAY_IDLE_TIMEOUT).await;
+        let error = idle.await.unwrap().unwrap_err();
+        assert!(crate::error::is(&error, ErrorCode::ConnectTimeout));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_blocked_writer_has_a_separate_deadline() {
+        let writer = Mutex::new(Box::pin(futures_util::sink::unfold(
+            (),
+            |(), _: Message| async { std::future::pending::<Result<(), axum::Error>>().await },
+        )));
+        let writing = forward(&writer, Message::Binary(vec![1].into()));
+        tokio::pin!(writing);
+        tokio::select! {
+            result = &mut writing => assert!(result.is_err()),
+            _ = tokio::time::sleep(RELAY_IDLE_TIMEOUT * 2) => panic!("blocked relay writer did not time out"),
+        }
+    }
 
     #[test]
     fn admission_reclaims_only_explicitly_cached_sessions() {

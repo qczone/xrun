@@ -22,7 +22,7 @@
 
 ## 安装
 
-CLI 和 daemon 是同一个 Rust 二进制，运行已构建程序不需要 Rust、Node.js 或 Bun。桌面 App 管理网络、授权与服务，远程执行和文件传输使用 CLI。当前版本为 `0.0.1-beta.5`；本机 CLI 与 daemon 要求发布版本一致，设备与中转按协议范围协商互通。
+CLI 和 daemon 是同一个 Rust 二进制，运行已构建程序不需要 Rust、Node.js 或 Bun。桌面 App 管理网络、授权与服务，远程执行和文件传输使用 CLI。当前版本为 `0.0.1-beta.6`；本机 CLI 与 daemon 要求发布版本一致，设备与中转按协议范围协商互通。
 
 | 平台 | 安装方式 |
 | --- | --- |
@@ -39,13 +39,13 @@ CLI 可放在 `~/.local/bin/xrun`，Windows 可用 `%LOCALAPPDATA%\xrun\bin\xrun
 CLI 压缩包和源码中的安装脚本位于 `scripts/`。以下命令从解压目录或项目根目录执行；单独下载发布附件中的脚本时，将脚本路径替换为下载位置：
 
 ```bash
-bash scripts/install.sh --version 0.0.1-beta.5
-bash scripts/install.sh --version 0.0.1-beta.5 --component cli
+bash scripts/install.sh --version 0.0.1-beta.6
+bash scripts/install.sh --version 0.0.1-beta.6 --component cli
 ```
 
 ```powershell
-powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File .\scripts\install.ps1 -Version 0.0.1-beta.5
-powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File .\scripts\install.ps1 -Version 0.0.1-beta.5 -Component cli
+powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File .\scripts\install.ps1 -Version 0.0.1-beta.6
+powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File .\scripts\install.ps1 -Version 0.0.1-beta.6 -Component cli
 ```
 
 默认下载地址是 `https://github.com/qczone/xrun/releases/download/v<完整版本>/`。`--base-url`／`-BaseUrl` 可指定其他 HTTPS 产物目录。每个目录需包含对应的 `xrun-darwin-arm64.json` 或 `xrun-windows-x86_64.json` 清单及其引用的文件。安装时不需要 Bun；产物准备见 [开发与发布](development.md#发布与内置文档)。
@@ -53,7 +53,7 @@ powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File .\script
 离线安装或验收本地打包产物时，用 `--source-dir`／`-SourceDir` 指定产物目录。例如 macOS：
 
 ```bash
-bash scripts/install.sh --version 0.0.1-beta.5 --source-dir ./dist
+bash scripts/install.sh --version 0.0.1-beta.6 --source-dir ./dist
 ```
 
 默认 macOS App 安装到 `~/Applications/xrun.app`，CLI 安装到 `~/.local/bin/xrun`；Windows App 安装到 `%LOCALAPPDATA%\Programs\xrun`，CLI 安装到 `%LOCALAPPDATA%\xrun\bin`。`--install-dir`／`-InstallDir` 可指定父目录，AI 可直接使用 JSON 返回的 `executable` 路径调用程序。脚本只安装程序；网络加入、设备授权和后台服务的启用继续使用现有 App 或 CLI 命令。
@@ -183,9 +183,9 @@ xrun linux1 kill ABC123
 
 `jobs` 查询目标设备上由本机身份提交的可靠任务，默认每页 50 条，可用 `--limit`、`--offset` 分页；`recent` 只列本机最近 24 小时的提交记录，不代表远端任务当前状态。App 的「活动记录」读取本机作为目标执行的记录。
 
-`jobs` 指定 ID 时不能同时用 `--running` 或 `--request-id` 列表过滤条件。`logs` 默认读快照，`--follow` 补读后跟随，`--after N` 从日志序号之后读，`--tail N` 取末尾行；`--after` 与 `--tail` 互斥。缺失、截断、过期或不完整日志会提示。
+`jobs` 指定 ID 时不能同时用 `--running` 或 `--request-id` 列表过滤条件。`logs` 默认读快照，`--follow` 补读后跟随，`--after N` 从日志序号之后读，`--tail N` 由目标端截取末尾行，避免下载整份日志；`--after` 与 `--tail` 互斥。缺失、截断、过期或不完整日志会提示。
 
-`wait` 默认不限等待时间，显示最后 40 行；`--timeout` 只结束等待，不取消任务，未确认结果返回 75。`kill` 请求取消并等待确认。可靠任务不随 CLI / 中转断线结束；daemon 正常停止会取消本机任务，崩溃重启后未完成任务标记 lost，不自动重跑。
+`wait` 默认不限等待时间，显示最后 40 行；`--timeout` 同时限制任务等待和尾部日志读取，不取消任务。任务结果未确认时返回 75；任务结果已经确认、只有日志读取失败或超时时，保留任务退出码，并在 `logs_error` 或 stderr 说明。`kill` 请求取消并等待确认。可靠任务不随 CLI / 中转断线结束；daemon 正常停止会取消本机任务，崩溃重启后未完成任务，以及启动后无法保存最终结果的任务标记 lost，不自动重跑。
 
 任务查询、日志和取消只操作当前来源提交的任务，不授予其他来源的任务控制权。结果恢复见状态与排错章节。
 
@@ -253,7 +253,7 @@ xrun linux1 forward 0:3000 --json
 
 macOS 13 及以上打开 DMG，将 `xrun.app` 拖入“应用程序”，再从 `/Applications` 启动；Windows 运行安装程序，安装到当前用户的目录。打开 App 后可以用中转地址创建网络，或粘贴成员邀请加入网络，也可以查看连接状态、控制后台服务，以及允许其他设备访问本机。已有 CLI 身份和配置会直接复用。
 
-App 分为本机、设备、活动、设置四个页面。本机概览分别显示后台服务、中转连接和远程访问状态；设备页管理其他设备对本机的访问，管理设备可通过页头入口生成邀请。「活动」展示在本机执行的任务，可以按状态筛选，查看来源设备、命令、工作目录、耗时、退出结果和 stdout/stderr；宽窗口并排显示列表与详情。运行中的输出每 3 秒刷新，向上滚动会暂停自动滚动，可点击“回到最新输出”继续跟随。其中「文件与截图」标签展示 push、pull 和 screenshot 的已有操作记录。App 只读本机 daemon 数据库，服务停止或网络断开后仍可查询，不会查询其他设备上执行的任务。
+App 分为本机、设备、活动、设置四个页面。本机概览分别显示后台服务、中转连接和远程访问状态；设备页管理其他设备对本机的访问，管理设备可通过页头入口生成邀请。「活动」展示在本机执行的任务，可以按状态筛选，查看来源设备、命令、工作目录、耗时、退出结果和 stdout/stderr；宽窗口并排显示列表与详情。窗口可见时，运行中的输出每 3 秒刷新；隐藏或最小化窗口会暂停页面查询，重新显示时刷新。向上滚动会暂停自动滚动，可点击“回到最新输出”继续跟随。其中「文件与截图」标签展示 push、pull 和 screenshot 的已有操作记录。App 只读本机 daemon 数据库，服务停止或网络断开后仍可查询，不会查询其他设备上执行的任务。
 
 设置中可以选择默认工作目录、修改同时运行的任务数和工具搜索路径 PATH；保存后对新任务生效，无需重启。其他环境变量和已有权限保留。
 
@@ -322,7 +322,7 @@ xrun daemon uninstall
 xrun daemon
 ```
 
-`daemon install` 需要已准备好的设备身份；`daemon start` 启动已有服务；`daemon stop` 正常停止并取消本机运行中的任务；`daemon uninstall` 移除注册并保留数据。`daemon` 前台运行，关闭终端是否结束取决于外部管理方式。
+`daemon install` 需要已准备好的设备身份；`daemon start` 启动已有服务；`daemon stop` 正常停止并取消本机运行中的任务；`daemon uninstall` 移除注册并保留数据。`daemon` 前台运行，关闭终端是否结束取决于外部管理方式。正常停止等待任务结果保存及文件操作清理，超时会明确报错；macOS CLI 服务已加载但停止时，重新 install 会启动它，运行中更换程序路径需要先停止。
 
 配置、身份和数据库在 `~/.xrun`（Windows 为 `%USERPROFILE%\.xrun`）。工具链 PATH、默认目录和来源白名单写入 `daemon.toml`：
 
@@ -356,6 +356,8 @@ xrun recent --json
 多数查询 / 操作的 `--json` 数据写到 stdout，错误诊断写到 stderr；普通前台执行仍传递远端 stdout / stderr。帮助、文档和参数解析错误保持文本。
 
 前台执行原样输出远端 stdout/stderr，并保留远端退出码。超时为 124，本地参数错误为 2，连接、身份或执行层错误为 125；已确认的文件或截图操作失败为 1。日志不完整会注明原因。
+
+本地提交记录补写失败时，已确认的远端任务引用仍会输出；不要因为这个本地记录错误重新执行任务。
 
 返回 **75 表示结果未确认**。已知任务 ID 就查询 `jobs` 或 `wait`；只有请求 ID 时：
 

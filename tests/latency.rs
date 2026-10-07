@@ -34,6 +34,7 @@ async fn subscription(lab: &Lab, id: &str) -> Result<Ws> {
                 id: id.into(),
                 after: 0,
                 follow: true,
+                tail: None,
             },
         },
     )

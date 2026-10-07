@@ -2,6 +2,52 @@
 use super::{tasks::Database, *};
 
 impl Database {
+    pub(super) fn tail(
+        &self,
+        id: &str,
+        after: u64,
+        through: u64,
+        lines: usize,
+    ) -> Result<Vec<LogEvent>> {
+        if lines == 0 || after >= through {
+            return Ok(vec![]);
+        }
+        let mut statement = self.db.prepare(
+            "SELECT seq,stream,bytes FROM logs WHERE job=?1 AND seq>?2 AND seq<=?3 ORDER BY seq DESC",
+        )?;
+        let mut rows =
+            statement.query(params![id, i64::try_from(after)?, i64::try_from(through)?])?;
+        let mut remaining = lines;
+        let mut first = true;
+        let mut result = vec![];
+        while let Some(row) = rows.next()? {
+            let bytes: Vec<u8> = row.get(2)?;
+            let mut start = 0;
+            let mut done = false;
+            for i in (0..bytes.len()).rev() {
+                let skip = first && bytes[i] == b'\n';
+                first = false;
+                if bytes[i] == b'\n' && !skip {
+                    if remaining <= 1 {
+                        start = i + 1;
+                        done = true;
+                        break;
+                    }
+                    remaining -= 1;
+                }
+            }
+            result.push(LogEvent {
+                seq: row.get::<_, i64>(0)? as u64,
+                stream: row.get(1)?,
+                data_base64: STANDARD.encode(&bytes[start..]),
+            });
+            if done {
+                break;
+            }
+        }
+        result.reverse();
+        Ok(result)
+    }
     pub(super) fn logs(&self, id: &str, after: u64) -> Result<Vec<LogEvent>> {
         let Ok(after) = i64::try_from(after) else {
             return Ok(vec![]);
@@ -154,7 +200,10 @@ impl LogState {
         .optional()?
         .context(ErrorCode::JobNotFound.error("unknown log task"))
     }
-    fn save(&self, db: &Connection, id: &str) -> Result<()> {
+    fn save(&mut self, db: &Connection, id: &str) -> Result<()> {
+        if let Some(reason) = self.incomplete_reason.as_mut() {
+            super::tasks::bound_diagnostic(reason);
+        }
         db.execute(
             "UPDATE jobs SET last_seq=?2,output_complete=?3,incomplete_reason=?4 WHERE id=?1",
             params![

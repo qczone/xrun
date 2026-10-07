@@ -64,6 +64,7 @@ pub(super) async fn check(suite: &mut Suite) -> Result<()> {
                 id: paused_job_id.into(),
                 after: 0,
                 follow: true,
+                tail: None,
             },
         },
     )

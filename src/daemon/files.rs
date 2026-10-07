@@ -27,7 +27,7 @@ pub(super) async fn serve(
             no_overwrite,
             expect,
         } => {
-            let _permit = rt
+            let permit = rt
                 .files
                 .clone()
                 .try_acquire_owned()
@@ -41,11 +41,26 @@ pub(super) async fn serve(
                 a.value["size"] = serde_json::json!(size);
             }
             let path = crate::transfer::remote_path(&path, &operation_cwd(&rt, cwd)?)?;
-            let path = crate::transfer::push(path, contents, mkdir, no_overwrite, expect).await?;
-            if let Some(a) = audit.as_mut() {
-                a.completed = true;
-                a.value["path"] = serde_json::json!(path);
-            }
+            let mut owned_audit = audit.take();
+            let path = crate::transfer::push(
+                path,
+                contents,
+                mkdir,
+                no_overwrite,
+                expect,
+                move |path, published| {
+                    let _permit = permit;
+                    if let Some(mut a) = owned_audit.take() {
+                        a.completed = published;
+                        a.value["path"] = serde_json::json!(path);
+                        let value = a.snapshot();
+                        a.store.audit(value)?;
+                        a.persisted = true;
+                    }
+                    Ok(())
+                },
+            )
+            .await?;
             net::send(
                 ws,
                 &Data::File {
@@ -60,13 +75,14 @@ pub(super) async fn serve(
             .await?;
         }
         Request::Pull { path, cwd } => {
-            let _permit = rt
+            let permit = rt
                 .files
                 .clone()
                 .try_acquire_owned()
                 .context(ErrorCode::DeviceBusy.error("too many file operations"))?;
             let path = crate::transfer::remote_path(&path, &operation_cwd(&rt, cwd)?)?;
-            let (contents, size, hash) = crate::transfer::snapshot(path.clone()).await?;
+            let (contents, size, hash, _permit) =
+                crate::transfer::snapshot(path.clone(), permit).await?;
             if let Some(a) = audit.as_mut() {
                 a.value["size"] = serde_json::json!(size);
                 a.value["path"] = serde_json::json!(path);
@@ -89,12 +105,12 @@ pub(super) async fn serve(
             }
         }
         Request::Screenshot => {
-            let _permit = rt
+            let permit = rt
                 .files
                 .clone()
                 .try_acquire_owned()
                 .context(ErrorCode::DeviceBusy.error("too many file operations"))?;
-            let capture = crate::screenshot::capture().await?;
+            let (capture, _permit) = crate::screenshot::capture_with_permit(permit).await?;
             send_capture(ws, capture, audit).await?;
         }
         _ => bail!(ErrorCode::InvalidRequest.error("operation dispatched to the wrong handler")),

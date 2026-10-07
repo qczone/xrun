@@ -33,27 +33,53 @@ pub(super) async fn run(
                 },
                 None => None,
             };
-            let value = request(
-                id,
-                target,
-                Request::Jobs {
-                    id: job,
-                    running,
-                    request_id,
-                    limit,
-                    offset,
-                },
-            )
-            .await?;
-            match value {
-                Data::Job { job } => show_job(json, &job),
-                Data::Jobs { jobs } => print(json, &jobs, || {
-                    for j in &jobs {
-                        show_job(false, j)
-                    }
-                }),
-                _ => bail!(ErrorCode::InvalidMessage.error("expected jobs")),
+            let mut query = Request::Jobs {
+                id: job,
+                running,
+                request_id,
+                limit: limit.min(1000),
+                offset,
             };
+            let mut all = vec![];
+            loop {
+                match request(id, target, query.clone()).await? {
+                    Data::Job { job } => {
+                        show_job(json, &job);
+                        break;
+                    }
+                    Data::Jobs { jobs, next_offset } => {
+                        let Request::Jobs { limit, offset, .. } = &mut query else {
+                            unreachable!()
+                        };
+                        if jobs.len() > *limit {
+                            bail!(
+                                ErrorCode::InvalidMessage
+                                    .error("task page exceeds requested limit")
+                            );
+                        }
+                        if let Some(next) = next_offset {
+                            if jobs.is_empty() || offset.checked_add(jobs.len()) != Some(next) {
+                                bail!(
+                                    ErrorCode::InvalidMessage
+                                        .error("invalid task page continuation")
+                                );
+                            }
+                            *offset = next;
+                        }
+                        *limit -= jobs.len();
+                        all.extend(jobs);
+                        if next_offset.is_none() || *limit == 0 {
+                            print(json, &all, || {
+                                for job in &all {
+                                    show_job(false, job)
+                                }
+                            });
+                            break;
+                        }
+                    }
+                    _ => bail!(ErrorCode::InvalidMessage.error("expected jobs")),
+                }
+            }
             Ok(0)
         }
         Remote::Wait {
@@ -68,35 +94,46 @@ pub(super) async fn run(
                     return Ok(2);
                 }
             };
-            let result = if timeout == 0 {
-                wait(id, target, &job).await
-            } else {
-                match tokio::time::timeout(Duration::from_secs(timeout), wait(id, target, &job))
-                    .await
-                {
+            let deadline =
+                (timeout != 0).then(|| tokio::time::Instant::now() + Duration::from_secs(timeout));
+            let result = if let Some(deadline) = deadline {
+                match tokio::time::timeout_at(deadline, wait(id, target, &job)).await {
                     Ok(r) => r,
                     Err(_) => {
                         diagnostic(
                             json,
-                            &anyhow::anyhow!(
-                                ErrorCode::WaitTimeout.error("task continues running")
-                            ),
+                            &anyhow::anyhow!(ErrorCode::WaitTimeout.error(
+                                "waiting for task timed out; query jobs/logs for its result"
+                            )),
                         );
                         return Ok(75);
                     }
                 }
+            } else {
+                wait(id, target, &job).await
             };
             match result {
                 Ok(job) => {
                     let (logs, logs_error) = if tail == 0 {
                         (vec![], None)
                     } else {
-                        match collect_logs(id, target, &job.job_id, 0).await {
-                            Ok((logs, state)) => (logs, log_error(&state)),
+                        let read = collect_logs(id, target, &job.job_id, 0, tail);
+                        let result = if let Some(deadline) = deadline {
+                            match tokio::time::timeout_at(deadline, read).await {
+                                Ok(result) => result,
+                                Err(_) => Err(anyhow::anyhow!(
+                                    ErrorCode::WaitTimeout
+                                        .error("task finished; reading its output timed out")
+                                )),
+                            }
+                        } else {
+                            read.await
+                        };
+                        match result {
+                            Ok((logs, state)) => (tail_events(logs, tail), log_error(&state)),
                             Err(e) => (vec![], Some(e.to_string())),
                         }
                     };
-                    let logs = tail_events(logs, tail);
                     if json {
                         println!(
                             "{}",
@@ -139,8 +176,33 @@ pub(super) async fn run(
                 }
             };
             if let Some(tail) = tail {
-                let (all, state) = collect_logs(id, target, &job, after).await?;
-                let latest = all.last().map(|e| e.seq).unwrap_or(after);
+                let (all, state, latest) = if tail == 0 {
+                    // A task snapshot gives an exact starting cursor without
+                    // downloading output, including on older endpoints.
+                    let value = request(
+                        id,
+                        target,
+                        Request::Jobs {
+                            id: Some(job.clone()),
+                            running: false,
+                            request_id: None,
+                            limit: 1,
+                            offset: 0,
+                        },
+                    )
+                    .await?;
+                    let Data::Job { job: state } = value else {
+                        bail!(ErrorCode::InvalidMessage.error("expected job snapshot"));
+                    };
+                    let latest = state.last_seq.max(after);
+                    (vec![], state, latest)
+                } else {
+                    let (all, state) = collect_logs(id, target, &job, after, tail).await?;
+                    // Older endpoints can attach a newer task state than their
+                    // log snapshot. Only advance past output actually returned.
+                    let latest = all.last().map(|event| event.seq).unwrap_or(after);
+                    (all, state, latest)
+                };
                 let logs = tail_events(all, tail);
                 if json {
                     println!("{}", serde_json::to_string(&logs)?)

@@ -80,6 +80,16 @@ fn status<R: tauri::Runtime>(app: tauri::AppHandle<R>) -> Result<Status, Command
 }
 
 #[tauri::command]
+fn window_visible<R: tauri::Runtime>(app: tauri::AppHandle<R>) -> Result<bool, CommandError> {
+    app.get_webview_window("main")
+        .map(|window| -> tauri::Result<bool> {
+            Ok(window.is_visible()? && !window.is_minimized()?)
+        })
+        .unwrap_or(Ok(false))
+        .map_err(CommandError::from_error)
+}
+
+#[tauri::command]
 async fn devices() -> Result<xrun::client::Status, CommandError> {
     xrun::client::status()
         .await
@@ -269,6 +279,7 @@ pub(super) fn register<R: tauri::Runtime>(builder: tauri::Builder<R>) -> tauri::
         .manage(LanguageState::default())
         .manage(Desktop::default())
         .invoke_handler(tauri::generate_handler![
+            window_visible,
             language_settings,
             set_language,
             status,

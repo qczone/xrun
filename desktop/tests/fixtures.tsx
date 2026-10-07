@@ -35,7 +35,7 @@ export async function fixture(
       joined,
       device_id: "self",
       name: "mac1",
-      version: "0.0.1-beta.5",
+      version: "0.0.1-beta.6",
       daemon_running: true,
       daemon_connected: true,
       remote_access_paused: false,
@@ -102,55 +102,60 @@ export async function fixture(
   spyOn(globalThis, "clearInterval").mockImplementation((id) => {
     if (!timers.delete(Number(id))) realClearInterval(Number(id));
   });
-  mockIPC((command, payload) => {
-    const args = (payload || {}) as Args;
-    calls.push({ command, args });
-    if (handlers[command]) return handlers[command](args);
-    switch (command) {
-      case "language_settings":
-        return structuredClone(languageSettings);
-      case "set_language": {
-        const preference = args.preference as LanguagePreference;
-        languageSettings = {
-          preference,
-          language:
-            preference === "system" ? resolveLanguage(locale) : preference,
-        };
-        return structuredClone(languageSettings);
+  mockIPC(
+    (command, payload) => {
+      const args = (payload || {}) as Args;
+      calls.push({ command, args });
+      if (handlers[command]) return handlers[command](args);
+      switch (command) {
+        case "window_visible":
+          return true;
+        case "language_settings":
+          return structuredClone(languageSettings);
+        case "set_language": {
+          const preference = args.preference as LanguagePreference;
+          languageSettings = {
+            preference,
+            language:
+              preference === "system" ? resolveLanguage(locale) : preference,
+          };
+          return structuredClone(languageSettings);
+        }
+        case "status":
+          return structuredClone(status);
+        case "settings":
+          return structuredClone(settings);
+        case "devices":
+          return { devices, server_error: null };
+        case "save_settings":
+          settings.execution = args.execution as Settings["execution"];
+          return null;
+        case "join":
+          status.local.joined = true;
+          return null;
+        case "permission":
+          status.allow_from = args.allow ? [args.device as string] : [];
+          status.deny_from = args.allow ? [] : [args.device as string];
+          return null;
+        case "all_permissions":
+          status.local.allow_all = args.allow as boolean;
+          return null;
+        case "pause_access":
+          status.local.remote_access_paused = args.paused as boolean;
+          return null;
+        case "autostart":
+          status.service.app_at_login = args.enabled as boolean;
+          return null;
+        case "task_history":
+          return { db_id: null, jobs: [], next_cursor: null };
+        case "file_history":
+          return { entries: [], next_cursor: null };
+        default:
+          return null;
       }
-      case "status":
-        return structuredClone(status);
-      case "settings":
-        return structuredClone(settings);
-      case "devices":
-        return { devices, server_error: null };
-      case "save_settings":
-        settings.execution = args.execution as Settings["execution"];
-        return null;
-      case "join":
-        status.local.joined = true;
-        return null;
-      case "permission":
-        status.allow_from = args.allow ? [args.device as string] : [];
-        status.deny_from = args.allow ? [] : [args.device as string];
-        return null;
-      case "all_permissions":
-        status.local.allow_all = args.allow as boolean;
-        return null;
-      case "pause_access":
-        status.local.remote_access_paused = args.paused as boolean;
-        return null;
-      case "autostart":
-        status.service.app_at_login = args.enabled as boolean;
-        return null;
-      case "task_history":
-        return { db_id: null, jobs: [], next_cursor: null };
-      case "file_history":
-        return { entries: [], next_cursor: null };
-      default:
-        return null;
-    }
-  });
+    },
+    { shouldMockEvents: true },
+  );
   Object.defineProperty(globalThis, "isTauri", {
     configurable: true,
     value: true,

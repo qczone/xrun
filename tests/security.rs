@@ -199,7 +199,7 @@ async fn accept_errors_do_not_stop_server() -> Result<()> {
         temp.path().join(".xrun/config.toml"),
         toml::to_string(&cfg)?,
     )?;
-    let mut cmd = tokio::process::Command::new(env!("CARGO_BIN_EXE_xrun"));
+    let mut cmd = tokio::process::Command::new(common::binary());
     cmd.env("HOME", temp.path())
         .env("RUST_LOG", "warn")
         .arg("server")

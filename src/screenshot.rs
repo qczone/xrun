@@ -1,6 +1,7 @@
 use crate::error::ErrorCode;
 use crate::protocol::MAX_FILE;
 use anyhow::{Context, Result, bail};
+use tokio::sync::OwnedSemaphorePermit;
 pub struct Capture {
     pub bytes: Vec<u8>,
     pub width: u32,
@@ -8,7 +9,48 @@ pub struct Capture {
     pub at: String,
 }
 pub async fn capture() -> Result<Capture> {
-    decode(platform().await?)
+    decode(platform(None).await?.0)
+}
+pub(crate) async fn capture_with_permit(
+    permit: OwnedSemaphorePermit,
+) -> Result<(Capture, OwnedSemaphorePermit)> {
+    let (bytes, permit) = platform(Some(permit)).await?;
+    Ok((decode(bytes)?, permit.expect("capture retains admission")))
+}
+
+// Keep the output path and admission alive until the external writer has exited.
+// Dropping a Tokio Child alone does not kill it; deleting its PNG first lets it
+// recreate an orphan file after a canceled request has already released admission.
+#[cfg(any(target_os = "macos", windows))]
+struct CaptureProcess {
+    child: Option<tokio::process::Child>,
+    path: Option<tempfile::TempPath>,
+    permit: Option<OwnedSemaphorePermit>,
+}
+#[cfg(any(target_os = "macos", windows))]
+impl CaptureProcess {
+    async fn wait(&mut self) -> Result<std::process::ExitStatus> {
+        let status = self.child.as_mut().unwrap().wait().await?;
+        self.child.take();
+        Ok(status)
+    }
+}
+#[cfg(any(target_os = "macos", windows))]
+impl Drop for CaptureProcess {
+    fn drop(&mut self) {
+        if let Some(mut child) = self.child.take() {
+            let path = self.path.take();
+            let permit = self.permit.take();
+            let _ = child.start_kill();
+            // The runtime still drives canceled session cleanup. kill_on_drop is
+            // also set on the child for shutdown before this cleanup can be polled.
+            tokio::spawn(async move {
+                let _ = child.wait().await;
+                drop(path);
+                drop(permit);
+            });
+        }
+    }
 }
 fn decode(bytes: Vec<u8>) -> Result<Capture> {
     if bytes.len() as u64 > MAX_FILE {
@@ -29,7 +71,9 @@ fn decode(bytes: Vec<u8>) -> Result<Capture> {
     })
 }
 #[cfg(target_os = "macos")]
-async fn platform() -> Result<Vec<u8>> {
+async fn platform(
+    permit: Option<OwnedSemaphorePermit>,
+) -> Result<(Vec<u8>, Option<OwnedSemaphorePermit>)> {
     #[link(name = "CoreGraphics", kind = "framework")]
     unsafe extern "C" {
         fn CGPreflightScreenCaptureAccess() -> bool;
@@ -37,11 +81,16 @@ async fn platform() -> Result<Vec<u8>> {
     mac_capture(
         unsafe { CGPreflightScreenCaptureAccess() },
         std::path::Path::new("/usr/sbin/screencapture"),
+        permit,
     )
     .await
 }
 #[cfg(target_os = "macos")]
-async fn mac_capture(allowed: bool, program: &std::path::Path) -> Result<Vec<u8>> {
+async fn mac_capture(
+    allowed: bool,
+    program: &std::path::Path,
+    permit: Option<OwnedSemaphorePermit>,
+) -> Result<(Vec<u8>, Option<OwnedSemaphorePermit>)> {
     if !allowed {
         bail!(
             ErrorCode::PermissionDenied
@@ -52,20 +101,29 @@ async fn mac_capture(allowed: bool, program: &std::path::Path) -> Result<Vec<u8>
     let temp = tempfile::Builder::new()
         .prefix("xrun-capture-")
         .suffix(".png")
-        .tempfile()?;
-    let status = tokio::process::Command::new(program)
+        .tempfile()?
+        .into_temp_path();
+    let child = tokio::process::Command::new(program)
         .args(["-x", "-m"])
-        .arg(temp.path())
+        .arg(&temp)
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
-        .status()
-        .await?;
+        .kill_on_drop(true)
+        .spawn()?;
+    let mut capture = CaptureProcess {
+        child: Some(child),
+        path: Some(temp),
+        permit,
+    };
+    let status = capture.wait().await?;
     if !status.success() {
         bail!(ErrorCode::NoDisplay.error("screenshot requires a logged-in graphical session"))
     }
-    crate::transfer::read_file(temp.path())
-        .context(ErrorCode::ScreenshotFailed.error("screencapture did not create a readable PNG"))
+    let bytes = crate::transfer::read_file(capture.path.as_ref().unwrap()).context(
+        ErrorCode::ScreenshotFailed.error("screencapture did not create a readable PNG"),
+    )?;
+    Ok((bytes, capture.permit.take()))
 }
 #[cfg(windows)]
 fn windows_capture_path() -> Result<tempfile::TempPath> {
@@ -77,7 +135,9 @@ fn windows_capture_path() -> Result<tempfile::TempPath> {
         .into_temp_path())
 }
 #[cfg(windows)]
-async fn platform() -> Result<Vec<u8>> {
+async fn platform(
+    permit: Option<OwnedSemaphorePermit>,
+) -> Result<(Vec<u8>, Option<OwnedSemaphorePermit>)> {
     let script = r#"$ErrorActionPreference='Stop'
 Add-Type -AssemblyName System.Windows.Forms; Add-Type -AssemblyName System.Drawing
 Add-Type -TypeDefinition @'
@@ -103,31 +163,43 @@ try {
     $graphics.Dispose()
     $bitmap.Dispose()
 }"#;
-    windows_capture(script).await
+    windows_capture(script, permit).await
 }
 #[cfg(windows)]
-async fn windows_capture(script: &str) -> Result<Vec<u8>> {
+async fn windows_capture(
+    script: &str,
+    permit: Option<OwnedSemaphorePermit>,
+) -> Result<(Vec<u8>, Option<OwnedSemaphorePermit>)> {
     let temp = windows_capture_path()?;
-    let status = tokio::process::Command::new("powershell.exe")
+    let child = tokio::process::Command::new("powershell.exe")
         .args(["-NoProfile", "-NonInteractive", "-Command", script])
         .env("XRUN_CAPTURE_PATH", &temp)
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
-        .status()
-        .await?;
+        .kill_on_drop(true)
+        .spawn()?;
+    let mut capture = CaptureProcess {
+        child: Some(child),
+        path: Some(temp),
+        permit,
+    };
+    let status = capture.wait().await?;
     if status.code() == Some(77) {
         bail!(ErrorCode::ScreenLocked.error("interactive desktop is inaccessible"))
     }
     if !status.success() {
         bail!(ErrorCode::ScreenshotFailed.error("PowerShell could not capture or save the display"))
     }
-    crate::transfer::read_file(&temp)
-        .context(ErrorCode::ScreenshotFailed.error("cannot read captured PNG"))
+    let bytes = crate::transfer::read_file(capture.path.as_ref().unwrap())
+        .context(ErrorCode::ScreenshotFailed.error("cannot read captured PNG"))?;
+    Ok((bytes, capture.permit.take()))
 }
 
 #[cfg(target_os = "linux")]
-async fn platform() -> Result<Vec<u8>> {
+async fn platform(
+    permit: Option<OwnedSemaphorePermit>,
+) -> Result<(Vec<u8>, Option<OwnedSemaphorePermit>)> {
     if std::env::var_os("WAYLAND_DISPLAY").is_some()
         || std::env::var("XDG_SESSION_TYPE").is_ok_and(|s| s == "wayland")
     {
@@ -136,7 +208,7 @@ async fn platform() -> Result<Vec<u8>> {
     if std::env::var_os("DISPLAY").is_none() {
         bail!(ErrorCode::NoDisplay.error("DISPLAY is unset"))
     }
-    tokio::task::spawn_blocking(x11_capture).await?
+    tokio::task::spawn_blocking(move || Ok((x11_capture()?, permit))).await?
 }
 #[cfg(target_os = "linux")]
 fn x11_capture() -> Result<Vec<u8>> {
@@ -269,11 +341,62 @@ mod tests {
 
     #[cfg(target_os = "macos")]
     #[tokio::test]
+    async fn canceling_capture_reaps_writer_before_releasing_admission_and_removing_png()
+    -> Result<()> {
+        use std::{os::unix::fs::PermissionsExt, sync::Arc, time::Duration};
+        let dir = tempfile::tempdir()?;
+        let program = dir.path().join("capture");
+        let started = dir.path().join("started");
+        let gate = dir.path().join("gate");
+        let marker = dir.path().join("marker");
+        std::fs::write(
+            &program,
+            format!(
+                concat!(
+                    "#!/bin/sh\nprintf '%s\\n%s' \"$$\" \"$3\" > '{}'\n",
+                    "while test ! -e '{}'; do /bin/sleep 0.02; done\n",
+                    "printf orphan > \"$3\"\nprintf survived > '{}'\n",
+                ),
+                started.display(),
+                gate.display(),
+                marker.display(),
+            ),
+        )?;
+        std::fs::set_permissions(&program, std::fs::Permissions::from_mode(0o700))?;
+        let admission = Arc::new(tokio::sync::Semaphore::new(1));
+        let permit = admission.clone().acquire_owned().await?;
+        let task = tokio::spawn(async move { mac_capture(true, &program, Some(permit)).await });
+        tokio::time::timeout(Duration::from_secs(5), async {
+            while !started.exists() {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await?;
+        let started = std::fs::read_to_string(started)?;
+        let (pid, path) = started.split_once('\n').unwrap();
+        let pid: i32 = pid.parse()?;
+        let path = std::path::PathBuf::from(path);
+        task.abort();
+        assert!(task.await.unwrap_err().is_cancelled());
+        let _permit = tokio::time::timeout(Duration::from_secs(5), admission.acquire()).await??;
+        assert_eq!(
+            unsafe { libc::kill(pid, 0) },
+            -1,
+            "capture writer survived cancellation"
+        );
+        assert!(!path.exists(), "capture output was not cleaned up");
+        std::fs::write(gate, b"continue")?;
+        assert!(!marker.exists());
+        Ok(())
+    }
+
+    #[cfg(target_os = "macos")]
+    #[tokio::test]
     async fn mac_permission_and_capture_failures_have_distinct_codes() -> Result<()> {
         use std::os::unix::fs::PermissionsExt;
         // Permission denial must return before attempting to execute anything.
         error(
-            mac_capture(false, std::path::Path::new("/does-not-exist")).await,
+            mac_capture(false, std::path::Path::new("/does-not-exist"), None).await,
             ErrorCode::PermissionDenied,
         );
         let dir = tempfile::tempdir()?;
@@ -288,7 +411,12 @@ mod tests {
         ] {
             std::fs::write(&program, script)?;
             std::fs::set_permissions(&program, std::fs::Permissions::from_mode(0o700))?;
-            error(mac_capture(true, &program).await.and_then(decode), expected);
+            error(
+                mac_capture(true, &program, None)
+                    .await
+                    .and_then(|(bytes, _)| decode(bytes)),
+                expected,
+            );
         }
         Ok(())
     }
@@ -296,10 +424,18 @@ mod tests {
     #[cfg(windows)]
     #[tokio::test]
     async fn windows_locked_desktop_and_failed_capture_have_distinct_codes() {
-        error(windows_capture("exit 77").await, ErrorCode::ScreenLocked);
-        error(windows_capture("exit 1").await, ErrorCode::ScreenshotFailed);
         error(
-            windows_capture("exit 0").await.and_then(decode),
+            windows_capture("exit 77", None).await,
+            ErrorCode::ScreenLocked,
+        );
+        error(
+            windows_capture("exit 1", None).await,
+            ErrorCode::ScreenshotFailed,
+        );
+        error(
+            windows_capture("exit 0", None)
+                .await
+                .and_then(|(bytes, _)| decode(bytes)),
             ErrorCode::ScreenshotFailed,
         );
     }

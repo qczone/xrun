@@ -147,6 +147,7 @@ export interface Revocation {
 }
 
 export const api = {
+  windowVisible: () => invoke<boolean>("window_visible"),
   status: () => invoke<Status>("status"),
   settings: () => invoke<Settings>("settings"),
   invite: (allow: boolean) => invoke<Invitation>("invite", { allow }),

@@ -4,6 +4,9 @@ export const WINDOW = 64 * FRAME;
 export const IDLE = 300_000;
 // This deployment caps ciphertext buffering at 64 MiB across eight sessions.
 export const SESSIONS = 8;
+// CF-specific admission fairness; framing limits above remain shared with Rust.
+export const SESSIONS_PER_SOURCE = 4;
+export const MANAGER_RESERVED_SESSIONS = 1;
 export const AUTH_TIMEOUT_MS = 5_000;
 export const CONNECT_TIMEOUT_MS = 10_000;
 export const CONNECTION_LIMIT = 512;

@@ -213,7 +213,17 @@ pub(super) async fn run(
     };
     submission.job_id = Some(job_ref(&job));
     submission.status = "confirmed".into();
-    store.save(&submission)?;
+    if let Err(error) = store.save(&submission) {
+        // The request ID was persisted before sending. A failed local update
+        // cannot invalidate the target's acknowledgement or hide its task ID.
+        diagnostic(
+            json,
+            &anyhow::anyhow!(ErrorCode::StorageError.error(format!(
+                "task {} was accepted; local confirmation could not be saved: {error:#}",
+                job_ref(&job)
+            ))),
+        );
+    }
     if background {
         if acknowledged {
             s.finish().await;
@@ -302,7 +312,7 @@ async fn recover(
                         offset: 0,
                     })
                     .await?;
-                    if let Data::Jobs { jobs } = response(&mut s.ws).await? {
+                    if let Data::Jobs { jobs, .. } = response(&mut s.ws).await? {
                         s.finish().await;
                         if let Some(job) = jobs.into_iter().next() {
                             return Ok(job);

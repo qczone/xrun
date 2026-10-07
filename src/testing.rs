@@ -28,6 +28,10 @@ pub mod crypto {
 /// Launch real daemon fixtures or hold their instance lock while injecting failures.
 pub mod daemon {
     pub use crate::daemon::{instance_lock, run};
+    /// Run one actual background maintenance pass in an isolated identity home.
+    pub async fn maintain_membership() -> anyhow::Result<()> {
+        crate::daemon::maintain_membership(&mut 0).await
+    }
 }
 /// Exercise authority transactions, signature validation and monotonic cache rules.
 pub mod membership {

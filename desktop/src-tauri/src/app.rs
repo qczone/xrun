@@ -2,7 +2,7 @@
 use super::{commands, error::CommandError, language::LanguageState, platform, tray};
 use serde::Serialize;
 use std::sync::Mutex;
-use tauri::Manager;
+use tauri::{Emitter, Manager};
 #[derive(Default)]
 pub(super) struct Desktop {
     pub(super) action: tokio::sync::Mutex<()>,
@@ -68,10 +68,8 @@ pub(super) fn app_builder<R: tauri::Runtime>(
             let handle = app.handle().clone();
             tauri::async_runtime::spawn(async move {
                 loop {
-                    let text = tray::text(
-                        handle.state::<LanguageState>().settings().language,
-                        local_status(&handle),
-                    );
+                    let text =
+                        tray::current_text(handle.state::<LanguageState>().settings().language);
                     let _ = item.set_text(text);
                     if let Some(icon) = handle.tray_by_id("xrun") {
                         let _ = icon.set_tooltip(Some(text));
@@ -88,6 +86,14 @@ pub(super) fn app_builder<R: tauri::Runtime>(
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
                 api.prevent_close();
                 let _ = window.hide();
+                let _ = window.emit("xrun-window-visible", false);
+            } else if matches!(
+                event,
+                tauri::WindowEvent::Focused(_) | tauri::WindowEvent::Resized(_)
+            ) && let (Ok(visible), Ok(minimized)) =
+                (window.is_visible(), window.is_minimized())
+            {
+                let _ = window.emit("xrun-window-visible", visible && !minimized);
             }
         })
 }

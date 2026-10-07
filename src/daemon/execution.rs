@@ -6,7 +6,10 @@ use anyhow::{Context, Result, bail};
 use std::collections::HashSet;
 use std::{
     path::{Path, PathBuf},
-    sync::{Arc, Mutex, atomic::Ordering},
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicBool, Ordering},
+    },
     time::Duration,
 };
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWriteExt};
@@ -131,11 +134,27 @@ pub(super) fn submit(
         leftover_possible: false,
         process: None,
     };
+    validate_job_size(&job)?;
     rt.store.insert(&job)?;
     let background = rt.clone();
     let saved = job.clone();
-    tokio::spawn(async move {
-        if let Err(e) = execute(background.clone(), saved.clone(), request, input).await {
+    let mut jobs = rt.jobs.lock().unwrap();
+    while let Some(result) = jobs.try_join_next() {
+        if let Err(error) = result {
+            tracing::error!(%error, "task execution panicked");
+        }
+    }
+    jobs.spawn(async move {
+        let started = Arc::new(AtomicBool::new(false));
+        if let Err(e) = execute(
+            background.clone(),
+            saved.clone(),
+            request,
+            input,
+            started.clone(),
+        )
+        .await
+        {
             crate::process::force_kill(
                 background
                     .running
@@ -144,10 +163,20 @@ pub(super) fn submit(
                     .remove(&saved.job_id)
                     .unwrap_or(0),
             );
-            let recorded = background
-                .store
-                .mark_failed(&saved.job_id, format!("EXECUTION_ERROR: {e:#}"))
-                .await;
+            let recorded = if started.load(Ordering::SeqCst) {
+                let mut lost = outcome(JobState::Lost);
+                lost.error = Some(format!(
+                    "RESULT_LOST: execution started but its result could not be recorded: {e:#}"
+                ));
+                lost.incomplete_reason = Some("CAPTURE_ERROR: execution interrupted".into());
+                lost.leftover_possible = cfg!(unix);
+                background.store.finish(&saved.job_id, lost).await
+            } else {
+                background
+                    .store
+                    .mark_failed(&saved.job_id, format!("EXECUTION_ERROR: {e:#}"))
+                    .await
+            };
             if let Err(error) = recorded {
                 tracing::error!(%error, "task result could not be saved; stopping daemon");
                 *background.fatal.lock().unwrap() = Some(error.to_string());
@@ -160,7 +189,13 @@ pub(super) fn submit(
     Ok(job)
 }
 
-async fn execute(rt: Arc<Runtime>, job: Job, request: Execution, input: Vec<u8>) -> Result<()> {
+async fn execute(
+    rt: Arc<Runtime>,
+    job: Job,
+    request: Execution,
+    input: Vec<u8>,
+    started: Arc<AtomicBool>,
+) -> Result<()> {
     let cfg = rt.config()?;
     let cwd = PathBuf::from(&request.cwd);
     let mut env = cfg.env;
@@ -230,6 +265,8 @@ async fn execute(rt: Arc<Runtime>, job: Job, request: Execution, input: Vec<u8>)
             return Ok(None);
         }
         let child = crate::process::spawn(&resolved, &args, &cwd, &env, &launching, cmd_script)?;
+        // Even recording the PID can fail after the process has made changes.
+        started.store(true, Ordering::SeqCst);
         let process = ProcessIdentity {
             pid: child.pid,
             boot_id: boot_id(),
@@ -596,6 +633,7 @@ mod tests {
                     network_id: roster.roster.network_id,
                     store: Arc::new(TaskStore::open(&dir.join("tasks.db"), true)?),
                     running: Mutex::new(Default::default()),
+                    jobs: Mutex::new(tokio::task::JoinSet::new()),
                     canceled: Mutex::new(Default::default()),
                     gate: Mutex::new(()),
                     sessions: Arc::new(Semaphore::new(32)),
@@ -628,6 +666,10 @@ mod tests {
                     );
                     if stopping {
                         rt.stopping.store(true, Ordering::SeqCst);
+                        assert!(crate::error::is(
+                            &rt.check_session(&rt.id.device_id, 0).unwrap_err(),
+                            ErrorCode::DaemonStopping
+                        ));
                         let rejected =
                             submit(rt.clone(), &rt.id.device_id, request, vec![]).unwrap_err();
                         assert!(crate::error::is(&rejected, ErrorCode::DaemonStopping));

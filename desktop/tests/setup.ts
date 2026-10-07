@@ -5,6 +5,7 @@ import { setLanguage } from "../src/i18n";
 
 const dom = new JSDOM("<!doctype html><html><body></body></html>", {
   url: "http://localhost/",
+  pretendToBeVisual: true,
 });
 for (const name of [
   "window",

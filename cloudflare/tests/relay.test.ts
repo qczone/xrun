@@ -152,7 +152,7 @@ test("cached sessions survive restoration and yield capacity while active sessio
   }
   await inspect(network.network, "restore");
   const active = [];
-  for (let index = 0; index < 8; index++) active.push(await session());
+  for (let index = 0; index < 4; index++) active.push(await session());
   for (const connection of cached) {
     await expect(connection.sender.next()).rejects.toThrow("closed");
     await expect(connection.receiver.next()).rejects.toThrow("closed");
@@ -215,6 +215,52 @@ test("restoration preserves ciphertext credit and one-time attach, and frame pro
   expect((await sender.json()).code).toBe("MESSAGE_TOO_LARGE");
   await expect(receiver.next()).rejects.toThrow("closed");
   control.close();
+});
+
+test("source fairness survives restoration and the manager retains the final network slot", async () => {
+  const f = await fixture();
+  const manager = await f.member();
+  const first = await f.member();
+  const neighbor = await f.member();
+  const controlPath = `/networks/${f.network}/control`;
+  const control = await authenticated(controlPath, (nonce) =>
+    manager.proof(controlPath, nonce, true));
+  const generation = (await control.json()).generation;
+  const connect = `/networks/${f.network}/connect/${manager.device}`;
+  const sockets: Socket[] = [control];
+  async function session(member: typeof first) {
+    const source = await authenticated(connect, (nonce) => member.proof(connect, nonce));
+    sockets.push(source);
+    const incoming = await control.json();
+    const target = await open(`/networks/${f.network}/attach/${manager.device}/${generation}/${incoming.session_id}`);
+    sockets.push(target);
+    expect((await source.json()).type).toBe("connected");
+    expect((await target.json()).type).toBe("connected");
+    return source;
+  }
+  try {
+    for (let i = 0; i < 4; i++) await session(first);
+    await inspect(f.network, "restore");
+    const fifth = await authenticated(connect, (nonce) => first.proof(connect, nonce));
+    sockets.push(fifth);
+    expect((await fifth.json()).code).toBe("SESSION_LIMIT");
+    // A different authenticated device behind the same IP has its own budget.
+    for (let i = 0; i < 3; i++) await session(neighbor);
+    const ordinary = await authenticated(connect, (nonce) => neighbor.proof(connect, nonce));
+    sockets.push(ordinary);
+    expect((await ordinary.json()).code).toBe("SESSION_LIMIT");
+    const anonymous = await authenticated(connect, async () => null);
+    sockets.push(anonymous);
+    expect((await anonymous.json()).code).toBe("SESSION_LIMIT");
+    // Source proofs need no new wire fields: the manager's control proved the root key.
+    await session(manager);
+    await inspect(f.network, "restore");
+    const ninth = await authenticated(connect, (nonce) => manager.proof(connect, nonce));
+    sockets.push(ninth);
+    expect((await ninth.json()).code).toBe("SESSION_LIMIT");
+  } finally {
+    for (const socket of sockets) socket.close();
+  }
 });
 
 test("invalid restored role fields fail closed and simultaneous peer expiry clears the shared alarm", async () => {
@@ -444,6 +490,7 @@ test("unacknowledged ciphertext is bounded and forged credit closes both peers",
 test("pending and active sessions share the network buffer budget and release their slots", async () => {
   const f = await fixture(),
     source = await f.member();
+  const other = await f.member();
   const targets = await Promise.all([f.member(), f.member()]);
   const controlPath = `/networks/${f.network}/control`;
   const controls: Socket[] = [],
@@ -457,12 +504,12 @@ test("pending and active sessions share the network buffer budget and release th
     generations.push((await control.json()).generation);
     controls.push(control);
   }
-  for (let i = 0; i < 8; i++) {
+  for (let i = 0; i < 7; i++) {
     const index = i % 2,
       target = targets[index];
     const connect = `/networks/${f.network}/connect/${target.device}`;
     const sender = await authenticated(connect, (nonce) =>
-      source.proof(connect, nonce),
+      (i % 2 ? other : source).proof(connect, nonce),
     );
     sources.push(sender);
     const incoming = await controls[index].json();
@@ -594,6 +641,7 @@ test("idle expiry closes both tunnel peers, preserves live traffic and restores 
   const f = await fixture(),
     target = await f.member(),
     source = await f.member();
+  const other = await f.member();
   const path = `/networks/${f.network}/control`;
   const control = await authenticated(path, (nonce) =>
     target.proof(path, nonce),
@@ -603,9 +651,9 @@ test("idle expiry closes both tunnel peers, preserves live traffic and restores 
   const sources: Socket[] = [],
     targets: Socket[] = [],
     sessions: string[] = [];
-  for (let i = 0; i < 8; i++) {
+  for (let i = 0; i < 7; i++) {
     const sender = await authenticated(connect, (nonce) =>
-      source.proof(connect, nonce),
+      (i % 2 ? other : source).proof(connect, nonce),
     );
     const incoming = await control.json();
     const receiver = await open(
@@ -631,7 +679,7 @@ test("idle expiry closes both tunnel peers, preserves live traffic and restores 
   await expect(sources[0].next()).rejects.toThrow("closed");
   await expect(targets[0].next()).rejects.toThrow("closed");
   const bytes = new Uint8Array([1, 2, 3]).buffer;
-  for (let i = 1; i < 8; i++) {
+  for (let i = 1; i < 7; i++) {
     sources[i].send(bytes);
     expect(new Uint8Array((await targets[i].next()) as ArrayBuffer)).toEqual(
       new Uint8Array(bytes),

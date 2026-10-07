@@ -221,6 +221,7 @@ impl ErrorCode {
                 | Self::FileNotFound
                 | Self::FileBusy
                 | Self::InvalidPath
+                | Self::InvalidCommand
                 | Self::InvalidRequest
                 | Self::InvalidCwd
                 | Self::InvalidScript
@@ -339,6 +340,17 @@ mod tests {
         assert!(!code.is_explicit());
         assert_eq!(ErrorCode::DbReset.as_str(), "DB_RESET");
         assert_eq!(ErrorCode::from_wire("DB_RESET".into()), ErrorCode::DbReset);
+    }
+
+    #[test]
+    fn oversized_task_metadata_is_a_definitive_pre_acceptance_rejection() {
+        let error: anyhow::Error = ErrorCode::InvalidCommand
+            .error("task metadata exceeds response budget")
+            .into();
+        let (code, message) = wire(&error);
+        let received: anyhow::Error = CodedError::from_wire(code, message).into();
+        assert!(is(&received, ErrorCode::InvalidCommand));
+        assert!(super::code(&received).unwrap().rejects_submission());
     }
 
     #[test]

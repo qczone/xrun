@@ -165,9 +165,18 @@ pub(super) async fn membership_sync() -> Result<()> {
     loop {
         let jitter = u64::from(uuid::Uuid::new_v4().as_bytes()[0]) * 60_000 / 256;
         tokio::time::sleep(MEMBERSHIP_SYNC + Duration::from_millis(jitter)).await;
-        let id = Identity::load()?;
-        if let Err(error) = network::refresh_one(&id, &mut cursor).await {
-            tracing::debug!(%error, "peer membership synchronization unavailable");
-        }
+        maintain_membership(&mut cursor).await?;
     }
+}
+pub(crate) async fn maintain_membership(cursor: &mut usize) -> Result<()> {
+    let mut id = Identity::load()?;
+    // Healthy control sockets can outlive a certificate. Retry renewal here
+    // as well, including when the manager was unavailable on the last pass.
+    if let Err(error) = net::renew_identity(&mut id).await {
+        tracing::warn!(%error, "background certificate renewal unavailable");
+    }
+    if let Err(error) = network::refresh_one(&id, cursor).await {
+        tracing::debug!(%error, "peer membership synchronization unavailable");
+    }
+    Ok(())
 }

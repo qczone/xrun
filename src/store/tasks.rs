@@ -100,6 +100,21 @@ pub(super) fn write_job(db: &Connection, job: &Job) -> Result<()> {
     Ok(())
 }
 
+const MAX_DIAGNOSTIC_BYTES: usize = 1024;
+
+pub(super) fn bound_diagnostic(text: &mut String) {
+    if text.len() <= MAX_DIAGNOSTIC_BYTES {
+        return;
+    }
+    const SUFFIX: &str = " [diagnostic truncated]";
+    let mut end = MAX_DIAGNOSTIC_BYTES - SUFFIX.len();
+    while !text.is_char_boundary(end) {
+        end -= 1;
+    }
+    text.truncate(end);
+    text.push_str(SUFFIX);
+}
+
 /// Known loss is cumulative: expiry outranks truncation, then capture/pipe loss.
 pub(crate) fn merge_incomplete(previous: &mut Option<String>, next: Option<String>) {
     fn priority(reason: &str) -> u8 {
@@ -113,11 +128,15 @@ pub(crate) fn merge_incomplete(previous: &mut Option<String>, next: Option<Strin
             1
         }
     }
-    if let Some(next) = next
+    if let Some(previous) = previous.as_mut() {
+        bound_diagnostic(previous);
+    }
+    if let Some(mut next) = next
         && previous
             .as_ref()
             .is_none_or(|old| priority(&next) > priority(old))
     {
+        bound_diagnostic(&mut next);
         *previous = Some(next);
     }
 }
@@ -238,6 +257,52 @@ impl Database {
             )?
             .collect::<rusqlite::Result<_>>()?)
     }
+    pub(super) fn page_bounded(
+        &self,
+        source: &str,
+        running: bool,
+        request: Option<&str>,
+        limit: usize,
+        offset: usize,
+    ) -> Result<(Vec<Job>, Option<usize>)> {
+        let active = if running {
+            "AND state IN ('starting','running')"
+        } else {
+            ""
+        };
+        let mut statement = self.db.prepare(&format!(
+            "SELECT {JOB_COLUMNS} FROM jobs WHERE source=?1 {active}
+             AND (?2 IS NULL OR request_id=?2) ORDER BY rowid DESC LIMIT ?3 OFFSET ?4"
+        ))?;
+        let rows = statement.query_map(
+            params![
+                source,
+                request,
+                limit.min(1000) as i64,
+                i64::try_from(offset).unwrap_or(i64::MAX)
+            ],
+            |row| read_job(row, 0),
+        )?;
+        // Account for the JSON envelope, commas and the continuation offset.
+        let mut bytes = 128;
+        let mut jobs = vec![];
+        for row in rows {
+            let job = row?;
+            let size = serde_json::to_vec(&job)?.len() + 1;
+            if bytes + size > MAX_MESSAGE {
+                if jobs.is_empty() {
+                    bail!(ErrorCode::MessageTooLarge.error("single task exceeds response budget"));
+                }
+                let next = offset
+                    .checked_add(jobs.len())
+                    .context("task offset overflow")?;
+                return Ok((jobs, Some(next)));
+            }
+            bytes += size;
+            jobs.push(job);
+        }
+        Ok((jobs, None))
+    }
     pub(super) fn insert(&self, job: &Job) -> Result<()> {
         self.db.execute(
             "INSERT INTO jobs VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11)",
@@ -308,6 +373,9 @@ impl Database {
             job.signal = outcome.signal;
             job.duration_ms = outcome.duration_ms;
             job.error = outcome.error;
+            if let Some(error) = job.error.as_mut() {
+                bound_diagnostic(error);
+            }
             job.leftover_possible = outcome.leftover_possible;
             merge_incomplete(&mut job.incomplete_reason, outcome.incomplete_reason);
             job.output_complete &= job.incomplete_reason.is_none();
@@ -324,6 +392,45 @@ impl Database {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn diagnostic_limits_preserve_utf8_and_loss_precedence() -> Result<()> {
+        let dir = tempfile::tempdir()?;
+        let store = TaskStore::open(&dir.path().join("tasks.db"), true)?;
+        let mut initial = job(&store);
+        initial.incomplete_reason = Some(format!("CAPTURE_ERROR: {}", "\u{1}".repeat(4096)));
+        initial.output_complete = false;
+        store.insert(&initial)?;
+        store.append("TEST01", "stdout", b"retained output")?;
+        assert!(
+            store
+                .get("TEST01")?
+                .unwrap()
+                .incomplete_reason
+                .unwrap()
+                .len()
+                <= MAX_DIAGNOSTIC_BYTES
+        );
+        let mut finished = outcome(JobState::Failed, None);
+        finished.error = Some(format!("EXECUTION_ERROR: {}", "界".repeat(2048)));
+        let job = store.finish("TEST01", finished).await?;
+        for text in [job.error.as_ref(), job.incomplete_reason.as_ref()] {
+            let text = text.unwrap();
+            assert!(text.len() <= MAX_DIAGNOSTIC_BYTES);
+            assert!(text.ends_with(" [diagnostic truncated]"));
+        }
+        assert!(job.error.unwrap().starts_with("EXECUTION_ERROR:"));
+        let mut reason = job.incomplete_reason;
+        assert!(reason.as_ref().unwrap().starts_with("CAPTURE_ERROR:"));
+        merge_incomplete(&mut reason, Some("DETACHED_OUTPUT".into()));
+        assert!(reason.as_ref().unwrap().starts_with("CAPTURE_ERROR:"));
+        merge_incomplete(&mut reason, Some("TRUNCATED".into()));
+        assert_eq!(reason.as_deref(), Some("TRUNCATED"));
+        merge_incomplete(&mut reason, Some("LOG_EXPIRED".into()));
+        assert_eq!(reason.as_deref(), Some("LOG_EXPIRED"));
+        Ok(())
+    }
+
     fn job(store: &TaskStore) -> Job {
         Job {
             job_id: "TEST01".into(),

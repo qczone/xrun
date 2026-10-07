@@ -380,9 +380,7 @@ pub(crate) async fn serve_pair(id: &Identity, ws: &mut Ws) -> Result<()> {
             Ok(())
         })?;
     }
-    if let Err(error) = synchronize(&pair.roster).await {
-        tracing::warn!(%error,"membership committed but peer synchronization failed");
-    }
+    let roster = pair.roster.clone();
     net::send(
         ws,
         &PairResponse {
@@ -393,5 +391,11 @@ pub(crate) async fn serve_pair(id: &Identity, ws: &mut Ws) -> Result<()> {
         },
     )
     .await?;
+    // The durable pairing and grants above define success. Unrelated offline or
+    // slow peers must not delay delivery of the certificate to its new owner.
+    // This remains scoped to the manager's session; daemon shutdown cancels it.
+    if let Err(error) = synchronize(&roster).await {
+        tracing::warn!(%error,"membership committed but peer synchronization failed");
+    }
     Ok(())
 }

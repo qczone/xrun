@@ -65,6 +65,7 @@ pub(super) async fn stream_logs(
         id: job.into(),
         after: cursor.after,
         follow,
+        tail: None,
     })
     .await?;
     let job = receive_logs(&mut s.ws, json, cursor).await?;
@@ -102,12 +103,14 @@ pub(super) async fn collect_logs(
     target: &str,
     job: &str,
     after: u64,
+    tail: usize,
 ) -> Result<(Vec<LogEvent>, Job)> {
     let mut s = session(id, target).await?;
     s.send_request(Request::Logs {
         id: job.into(),
         after,
         follow: false,
+        tail: Some(tail),
     })
     .await?;
     let mut events = vec![];

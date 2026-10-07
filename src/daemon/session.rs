@@ -75,10 +75,33 @@ pub(super) async fn data_session(
                     bail!(ErrorCode::InvalidMessage.error("expected operation"));
                 };
                 ProtocolRange::require(protocol, request.minimum_protocol())?;
+                let changes_remote_state = matches!(
+                    &request,
+                    Request::Exec { .. } | Request::Push { .. } | Request::Kill { .. }
+                );
                 tokio::select! {
                     result = serve(rt.clone(), &source, generation, &mut ws, request) => result?,
-                    _ = stop.changed() => bail!(ErrorCode::DaemonStopping.error("daemon shutting down")),
-                    result = access_ended(&rt, &lease) => return result,
+                    _ = stop.changed() => {
+                        if changes_remote_state {
+                            bail!(ErrorCode::Unconfirmed.error(
+                                "daemon stopped while processing the operation; its outcome requires confirmation"
+                            ));
+                        }
+                        bail!(ErrorCode::DaemonStopping.error("daemon shutting down"));
+                    },
+                    result = access_ended(&rt, &lease) => {
+                        // Dropping a handler cannot cancel a database worker or
+                        // undo an operation that already crossed its commit point.
+                        // Only the handler's own pre-operation checks prove refusal.
+                        if changes_remote_state {
+                            return result.map_err(|error| anyhow::anyhow!(
+                                ErrorCode::Unconfirmed.error(format!(
+                                    "operation interrupted; its outcome requires confirmation: {error:#}"
+                                ))
+                            ));
+                        }
+                        return result;
+                    },
                 }
                 net::send(&mut ws, &Data::Complete).await?;
             }

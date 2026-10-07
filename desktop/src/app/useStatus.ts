@@ -9,7 +9,7 @@ import { api, type Status } from "../api";
 import { errorText } from "../errors";
 import type { Activity } from "./useOperations";
 
-export function useStatus(activity: RefObject<Activity>) {
+export function useStatus(activity: RefObject<Activity>, visible: boolean) {
   const [status, setStatus] = useState<Status | null>(null);
   const [error, setError] = useState<string | null>(null);
   const request = useRef(0);
@@ -36,6 +36,7 @@ export function useStatus(activity: RefObject<Activity>) {
     }
   }, []);
   useEffect(() => {
+    if (!visible) return;
     void refresh();
     const timer = setInterval(() => {
       if (
@@ -50,7 +51,7 @@ export function useStatus(activity: RefObject<Activity>) {
       loading.current = false;
       clearInterval(timer);
     };
-  }, [activity, refresh]);
+  }, [activity, refresh, visible]);
   const dismiss = useCallback((detail: string) => {
     dismissed.current = detail;
     setError(null);

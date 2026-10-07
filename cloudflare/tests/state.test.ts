@@ -19,6 +19,8 @@ test("restored roles require their own complete fields and reject malformed budg
     ...binding,
     role: "source",
     anonymous: false,
+    source: `dev_${"d".repeat(32)}`,
+    management: false,
     cachedSince: null,
     peer: crypto.randomUUID(),
     outstanding: 0,
@@ -31,6 +33,11 @@ test("restored roles require their own complete fields and reject malformed budg
   expect(attachment({...live, cachedSince, anonymous: true})).toBeUndefined();
   const {protocol: _protocol, cachedSince: _cached, ...legacy} = live;
   expect(attachment(legacy)).toEqual({...live, protocol: 1});
+  const {source: _source, management: _management, ...oldAdmission} = live;
+  expect(attachment(oldAdmission)).toEqual({...live, source: null});
+  expect(attachment({...live, source: "invalid"})).toBeUndefined();
+  expect(attachment({...live, source: null, management: true})).toBeUndefined();
+  expect(attachment({...live, anonymous: true})).toBeUndefined();
   for (const outstanding of [-1, WINDOW + 1, 1.5, NaN, Infinity, "0"]) {
     expect(attachment({ ...live, outstanding })).toBeUndefined();
   }

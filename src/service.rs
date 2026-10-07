@@ -137,27 +137,42 @@ pub(crate) async fn install_with_executable(kind: &str, exe: &Path) -> Result<()
 <key>StandardErrorPath</key><string>{log}</string></dict></plist>"#,
         xml(&exe.to_string_lossy())
     );
-    config::atomic_private_write(&path, text.as_bytes())?;
+    let previous = match std::fs::read(&path) {
+        Ok(bytes) => Some(bytes),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+        Err(error) => return Err(error.into()),
+    };
+    let changed = previous.as_deref() != Some(text.as_bytes());
     let domain = format!("gui/{}", unsafe { libc::getuid() });
-    if tokio::process::Command::new("launchctl")
+    let loaded = tokio::process::Command::new("launchctl")
         .args(["print", &format!("{domain}/com.xrun.daemon")])
         .output()
         .await?
         .status
-        .success()
-    {
-        return Ok(());
+        .success();
+    if loaded && changed && config::instance_running(&dir.join("daemon.lock"))? {
+        bail!(
+            ErrorCode::ServiceFailed
+                .error("stop the daemon before registering a different executable")
+        );
     }
-    let _ = command(
-        "launchctl",
-        &["bootout", &format!("{domain}/com.xrun.daemon")],
-    )
-    .await;
-    command(
-        "launchctl",
-        &["bootstrap", &domain, &path.to_string_lossy()],
-    )
-    .await?;
+    config::atomic_private_write(&path, text.as_bytes())?;
+    if loaded && changed {
+        command(
+            "launchctl",
+            &["bootout", &format!("{domain}/com.xrun.daemon")],
+        )
+        .await?;
+    }
+    if !loaded || changed {
+        command(
+            "launchctl",
+            &["bootstrap", &domain, &path.to_string_lossy()],
+        )
+        .await?;
+    }
+    // A loaded registration can be intentionally stopped. kickstart without -k
+    // starts that service while leaving an already-running daemon undisturbed.
     command(
         "launchctl",
         &["kickstart", &format!("{domain}/com.xrun.daemon")],
@@ -413,6 +428,54 @@ esac
         Ok(tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()?)
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn stopped_registration_restarts_and_changed_executable_reloads_without_interrupting_running_daemon()
+    -> Result<()> {
+        isolated(
+            "stopped_registration_restarts_and_changed_executable_reloads_without_interrupting_running_daemon",
+            || {
+                runtime()?.block_on(async {
+                    let home = config::home_dir()?;
+                    std::fs::create_dir_all(device_dir()?)?;
+                    let old = home.join("old/xrun");
+                    let new = home.join("new/xrun");
+                    install_with_executable("daemon", &old).await?;
+                    let before = calls()?;
+                    install_with_executable("daemon", &old).await?;
+                    let added = calls()?.strip_prefix(&before).unwrap().to_owned();
+                    assert!(
+                        added.contains("\tkickstart\t"),
+                        "loaded but stopped service was not started"
+                    );
+                    assert!(!added.contains("\tbootstrap\t"));
+                    let before = calls()?;
+                    install_with_executable("daemon", &new).await?;
+                    let added = calls()?.strip_prefix(&before).unwrap().to_owned();
+                    assert!(added.contains("\tbootout\t"));
+                    assert!(added.contains("\tbootstrap\t"));
+                    assert!(added.contains("\tkickstart\t"));
+                    let current = std::fs::read(unit_path("daemon")?)?;
+                    assert!(
+                        String::from_utf8_lossy(&current).contains(&xml(new.to_str().unwrap()))
+                    );
+
+                    let lock = std::fs::File::create(device_dir()?.join("daemon.lock"))?;
+                    lock.lock()?;
+                    let before = calls()?;
+                    assert!(install_with_executable("daemon", &old).await.is_err());
+                    assert_eq!(std::fs::read(unit_path("daemon")?)?, current);
+                    let added = calls()?.strip_prefix(&before).unwrap().to_owned();
+                    assert!(
+                        !added.contains("\tbootout\t"),
+                        "active daemon was interrupted"
+                    );
+                    Ok(())
+                })
+            },
+        )
     }
 
     #[test]

@@ -9,6 +9,7 @@ import { Devices } from "./pages/Devices";
 import { SettingsPage } from "./pages/Settings";
 import { History } from "./pages/History";
 import { useStatus } from "./app/useStatus";
+import { useWindowVisible } from "./app/useWindowVisible";
 import { useDevices } from "./app/useDevices";
 import { ConfirmationDialog, useConfirmation } from "./app/useConfirmation";
 import {
@@ -28,7 +29,8 @@ export function App() {
   const [page, setPage] = useState<Page>("overview");
   const main = useRef<HTMLElement>(null);
   const activity = useRef<Activity>({ busy: false, confirming: false });
-  const statusController = useStatus(activity);
+  const visible = useWindowVisible();
+  const statusController = useStatus(activity, visible);
   const confirmation = useConfirmation(activity);
   const operations = useOperationController(
     page,
@@ -41,8 +43,9 @@ export function App() {
   const { busy, pending, error, toast } = operations;
   const members = useDevices(
     status,
-    page === "devices",
+    visible && page === "devices",
     busy || confirmation.active,
+    visible,
   );
   const { devices } = members;
   const navigate = (next: Page) => {
@@ -158,7 +161,7 @@ export function App() {
             hidden={page !== "history"}
           >
             <History
-              active={page === "history"}
+              active={visible && page === "history"}
               paused={confirmation.active}
               status={status}
               devices={devices}

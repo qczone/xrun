@@ -73,13 +73,16 @@ export class Connections {
   get controlCount(): number {
     return this.controls.size;
   }
-  oldestCached(): Connection<SourceState> | undefined {
+  oldestCached(
+    eligible: (state: SourceState) => boolean = () => true,
+  ): Connection<SourceState> | undefined {
     let oldest: Connection<SourceState> | undefined;
     for (const socket of this.sources) {
       const connection = this.get(socket);
       if (
         connection?.state.role !== "source" ||
-        connection.state.cachedSince === null
+        connection.state.cachedSince === null ||
+        !eligible(connection.state)
       )
         continue;
       if (
@@ -150,6 +153,31 @@ export class Connections {
     }
     return count;
   }
+  source(source: string | null, ip: string): number {
+    let count = 0;
+    for (const socket of this.sources) {
+      const state = this.get(socket)?.state;
+      if (
+        state &&
+        (state.role === "pending" || state.role === "source") &&
+        state.source === source &&
+        (source !== null || state.ip === ip)
+      ) count++;
+    }
+    return count;
+  }
+  get ordinarySessions(): number {
+    let count = 0;
+    for (const socket of this.sources) {
+      const state = this.get(socket)?.state;
+      if (
+        state &&
+        (state.role === "pending" || state.role === "source") &&
+        !state.management
+      ) count++;
+    }
+    return count;
+  }
   devices(): string[] {
     return [...this.controls.keys()].sort();
   }
@@ -181,9 +209,12 @@ export class Connections {
       throw new Error("Tunnel peer is immutable");
     }
     if (
-      prior?.role === "pending" &&
-      state.role === "source" &&
-      prior.anonymous !== state.anonymous
+      prior &&
+      (prior.role === "pending" || prior.role === "source") &&
+      (state.role === "pending" || state.role === "source") &&
+      (prior.anonymous !== state.anonymous ||
+        prior.source !== state.source ||
+        prior.management !== state.management)
     ) {
       throw new Error("Session admission is immutable");
     }

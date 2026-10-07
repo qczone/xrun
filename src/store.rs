@@ -102,23 +102,23 @@ impl TaskStore {
         self.worker
             .call(move |db| db.page(&source, running, request.as_deref(), limit, offset))
     }
-    pub(crate) async fn page_async(
+    pub fn insert(&self, job: &Job) -> Result<()> {
+        let job = job.clone();
+        self.worker.call(move |db| db.insert(&job))
+    }
+    pub(crate) async fn page_bounded_async(
         &self,
         source: &str,
         running: bool,
         request: Option<&str>,
         limit: usize,
         offset: usize,
-    ) -> Result<Vec<Job>> {
+    ) -> Result<(Vec<Job>, Option<usize>)> {
         let source = source.to_owned();
         let request = request.map(str::to_owned);
         self.worker
-            .query(move |db| db.page(&source, running, request.as_deref(), limit, offset))
+            .query(move |db| db.page_bounded(&source, running, request.as_deref(), limit, offset))
             .await
-    }
-    pub fn insert(&self, job: &Job) -> Result<()> {
-        let job = job.clone();
-        self.worker.call(move |db| db.insert(&job))
     }
     pub(crate) fn replace_fixture(&self, job: &Job) -> Result<()> {
         let job = job.clone();
@@ -131,6 +131,18 @@ impl TaskStore {
     pub(crate) async fn logs_async(&self, id: &str, after: u64) -> Result<Vec<LogEvent>> {
         let id = id.to_owned();
         self.worker.query(move |db| db.logs(&id, after)).await
+    }
+    pub(crate) async fn tail_async(
+        &self,
+        id: &str,
+        after: u64,
+        through: u64,
+        lines: usize,
+    ) -> Result<Vec<LogEvent>> {
+        let id = id.to_owned();
+        self.worker
+            .query(move |db| db.tail(&id, after, through, lines))
+            .await
     }
     pub fn append(&self, id: &str, stream: &str, bytes: &[u8]) -> Result<Option<u64>> {
         let id = id.to_owned();

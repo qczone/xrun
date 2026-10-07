@@ -2,6 +2,51 @@ import { expect, spyOn, test } from "bun:test";
 import { act, fireEvent, screen, waitFor } from "@testing-library/react";
 import { fixture, openMemberActions } from "./fixtures";
 import type { Device } from "../src/api";
+import { emit } from "@tauri-apps/api/event";
+
+test("native window hiding stops status and device polling and showing refreshes immediately", async () => {
+  const { page, calls, poll } = await fixture();
+  page("设备");
+  await poll();
+  const counts = () =>
+    ["devices", "status"].map(
+      (name) => calls.filter((call) => call.command === name).length,
+    );
+  await act(async () => {
+    await emit("xrun-window-visible", false);
+  });
+  const hidden = counts();
+  await poll();
+  await poll();
+  expect(counts()).toEqual(hidden);
+  await act(async () => {
+    await emit("xrun-window-visible", true);
+  });
+  expect(counts()[0]).toBeGreaterThan(hidden[0]);
+  expect(counts()[1]).toBeGreaterThan(hidden[1]);
+  const shown = counts();
+  try {
+    Object.defineProperty(document, "hidden", {
+      configurable: true,
+      value: true,
+    });
+    await act(async () => {
+      document.dispatchEvent(new Event("visibilitychange"));
+    });
+    await poll();
+    expect(counts()).toEqual(shown);
+    Object.defineProperty(document, "hidden", {
+      configurable: true,
+      value: false,
+    });
+    await act(async () => {
+      document.dispatchEvent(new Event("visibilitychange"));
+    });
+    expect(counts()[0]).toBeGreaterThan(shown[0]);
+  } finally {
+    Reflect.deleteProperty(document, "hidden");
+  }
+});
 
 test("menus have one owner and close on outside clicks, focus, escape and navigation", async () => {
   const { page } = await fixture();

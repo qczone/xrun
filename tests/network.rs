@@ -83,7 +83,7 @@ async fn registration_permissions_migration_and_manager_offline_execution() -> R
         for (home, target) in [(&lab.source, "ordinary1"), (&ordinary, "source1")] {
             let output = cli(
                 home,
-                &[target, "--", env!("CARGO_BIN_EXE_xrun"), "--version"],
+                &[target, "--", &binary().to_string_lossy(), "--version"],
             )
             .await;
             assert_eq!(output.status.code(), Some(125));
@@ -179,13 +179,13 @@ async fn registration_permissions_migration_and_manager_offline_execution() -> R
         // the manager. Enrollment/renewal require its private signing authority.
         let version = ok(cli(
             &ordinary,
-            &["target1", "--", env!("CARGO_BIN_EXE_xrun"), "--version"],
+            &["target1", "--", &binary().to_string_lossy(), "--version"],
         )
         .await);
         assert!(version.contains(xrun::protocol::VERSION));
         let version = ok(cli(
             &lab.target,
-            &["ordinary1", "--", env!("CARGO_BIN_EXE_xrun"), "--version"],
+            &["ordinary1", "--", &binary().to_string_lossy(), "--version"],
         )
         .await);
         assert!(version.contains(xrun::protocol::VERSION));
@@ -311,7 +311,14 @@ async fn device_operations_connect_directly_while_info_still_queries_live_state(
                             request: Request::Jobs { .. }
                         }
                     ));
-                    net::send(&mut ws, &Data::Jobs { jobs: vec![] }).await?;
+                    net::send(
+                        &mut ws,
+                        &Data::Jobs {
+                            jobs: vec![],
+                            next_offset: None,
+                        },
+                    )
+                    .await?;
                 }
                 net::close(&mut ws).await;
             }

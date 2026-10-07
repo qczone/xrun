@@ -14,6 +14,8 @@ import {
   IDLE,
   PROOF_MESSAGE_BYTES,
   SESSIONS,
+  SESSIONS_PER_SOURCE,
+  MANAGER_RESERVED_SESSIONS,
   WINDOW,
 } from "./limits";
 import { route, type AttachRoute } from "./routes";
@@ -276,7 +278,7 @@ export class XrunRelay extends DurableObject<Env> {
       if (!proof) throw new Error("Member proof required");
       this.registerControl(ws, state, proof);
     } else {
-      this.startSession(ws, state, proof !== undefined);
+      this.startSession(ws, state, proof);
     }
   }
   private registerControl(
@@ -303,25 +305,48 @@ export class XrunRelay extends DurableObject<Env> {
   private startSession(
     ws: WebSocket,
     state: ChallengeState & { action: "connect"; target: string },
-    member: boolean,
+    proof: { device: string; manager: boolean } | undefined,
   ): void {
     const target = this.connections.control(state.target);
     if (!target) {
       this.reject(ws, "DEVICE_OFFLINE", "Target is offline");
       return;
     }
-    if (!member && !target.state.manager)
+    if (!proof && !target.state.manager)
       throw new Error("Member proof required");
+    const source = proof?.device ?? null;
+    // The manager's authenticated live control already carries its root proof.
+    // Anonymous pairing cannot consume this last protected network slot.
+    const management = proof !== undefined && (
+      proof.manager ||
+      this.connections.control(proof.device)?.state.manager === true
+    );
     const anonymousFull =
-      !member &&
+      !proof &&
       this.connections.anonymous(state.target) >= ANONYMOUS_PER_TARGET;
-    if (!anonymousFull && this.connections.sourceCount >= SESSIONS) {
-      const cached = this.connections.oldestCached();
-      if (cached) this.close(cached.socket, 1000, "Cached session reclaimed");
-    }
-    if (this.connections.sourceCount >= SESSIONS || anonymousFull) {
+    if (anonymousFull) {
       this.reject(ws, "SESSION_LIMIT", "Too many concurrent relay sessions");
       return;
+    }
+    for (;;) {
+      const sourceFull =
+        this.connections.source(source, state.ip) >= SESSIONS_PER_SOURCE;
+      const ordinaryFull = !management &&
+        this.connections.ordinarySessions >= SESSIONS - MANAGER_RESERVED_SESSIONS;
+      const totalFull = this.connections.sourceCount >= SESSIONS;
+      if (!sourceFull && !ordinaryFull && !totalFull) break;
+      const cached = this.connections.oldestCached((candidate) => {
+        if (sourceFull) {
+          return candidate.source === source &&
+            (source !== null || candidate.ip === state.ip);
+        }
+        return !ordinaryFull || !candidate.management;
+      });
+      if (!cached) {
+        this.reject(ws, "SESSION_LIMIT", "Too many concurrent relay sessions");
+        return;
+      }
+      this.close(cached.socket, 1000, "Cached session reclaimed");
     }
     const sid = crypto.randomUUID().replaceAll("-", "");
     this.connections.save(ws, {
@@ -330,7 +355,9 @@ export class XrunRelay extends DurableObject<Env> {
       target: state.target,
       generation: target.state.generation,
       sid,
-      anonymous: !member,
+      anonymous: !proof,
+      source,
+      management,
       deadline: Date.now() + CONNECT_TIMEOUT_MS,
     });
     this.send(target.socket, { type: "incoming", session_id: sid });

@@ -34,6 +34,8 @@ export interface SessionBinding {
 export interface PendingState extends ConnectionBase, SessionBinding {
   role: "pending";
   anonymous: boolean;
+  source: string | null;
+  management: boolean;
   deadline: number;
 }
 interface TunnelFields extends ConnectionBase, SessionBinding {
@@ -44,6 +46,8 @@ interface TunnelFields extends ConnectionBase, SessionBinding {
 export interface SourceState extends TunnelFields {
   role: "source";
   anonymous: boolean;
+  source: string | null;
+  management: boolean;
   cachedSince: number | null;
 }
 export interface TargetState extends TunnelFields {
@@ -98,6 +102,8 @@ export function attachment(value: unknown): Attachment | undefined {
       "manager",
       "anonymous",
       "cachedSince",
+      "source",
+      "management",
     ])
   )
     return;
@@ -187,11 +193,14 @@ export function attachment(value: unknown): Attachment | undefined {
           ...BASE_KEYS,
           ...BINDING_KEYS,
           "anonymous",
+          "source",
+          "management",
           "deadline",
         ]) ||
         !session ||
         typeof value.anonymous !== "boolean" ||
-        !deadline(value.deadline)
+        !deadline(value.deadline) ||
+        !admission(value)
       )
         return;
       return {
@@ -199,6 +208,8 @@ export function attachment(value: unknown): Attachment | undefined {
         ...session,
         role: "pending",
         anonymous: value.anonymous,
+        source: (value.source as string | null | undefined) ?? null,
+        management: value.management === true,
         deadline: value.deadline,
       };
     }
@@ -207,7 +218,9 @@ export function attachment(value: unknown): Attachment | undefined {
       const session = binding(value);
       const keys =
         value.role === "source"
-          ? [...TUNNEL_KEYS, "anonymous", "cachedSince"]
+          ? [
+            ...TUNNEL_KEYS, "anonymous", "cachedSince", "source", "management",
+          ]
           : TUNNEL_KEYS;
       if (
         !object(value, keys) ||
@@ -228,7 +241,7 @@ export function attachment(value: unknown): Attachment | undefined {
         outstanding: value.outstanding,
       };
       if (value.role === "target") return { ...tunnel, role: "target" };
-      if (typeof value.anonymous !== "boolean") return;
+      if (typeof value.anonymous !== "boolean" || !admission(value)) return;
       const cachedSince = value.cachedSince ?? null;
       if (
         cachedSince !== null &&
@@ -239,12 +252,24 @@ export function attachment(value: unknown): Attachment | undefined {
         ...tunnel,
         role: "source",
         anonymous: value.anonymous,
+        source: (value.source as string | null | undefined) ?? null,
+        management: value.management === true,
         cachedSince,
       };
     }
     case "closed":
       if (object(value, BASE_KEYS)) return { ...base, role: "closed" };
   }
+}
+
+function admission(value: Record<string, unknown>): boolean {
+  return (
+    (value.source == null ||
+      (typeof value.source === "string" && DEVICE.test(value.source))) &&
+    (value.management === undefined || typeof value.management === "boolean") &&
+    !(value.anonymous && (value.source != null || value.management === true)) &&
+    !(value.management === true && value.source == null)
+  );
 }
 
 export function base(state: ConnectionBase): ConnectionBase {

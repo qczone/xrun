@@ -256,6 +256,30 @@ async fn daemon_rejects_invalid_execution_without_cli_checks_or_accepting_a_job(
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn long_program_lookup_failure_keeps_task_responses_within_the_message_limit() -> Result<()> {
+    let lab = Lab::new().await?;
+    let program = format!("missing-program-{}", "界".repeat(260 * 1024));
+    let request = execution(&lab, Path::new(&program), &[])?;
+    let job = accepted(submit(&lab, &request, &[]).await?);
+    let finished = terminal(&lab, &job.job_id).await?;
+    assert_eq!(finished.state, JobState::Failed);
+    let error = finished.error.as_ref().context("program lookup failure")?;
+    assert!(error.contains("PROGRAM_NOT_FOUND"));
+    assert!(error.ends_with(" [diagnostic truncated]"));
+    assert!(error.len() <= 1024);
+    let queried: Job = serde_json::from_str(&ok(cli(
+        &lab.source,
+        &["target1", "jobs", &job.job_id, "--json"],
+    )
+    .await))?;
+    assert_eq!(queried.program, program);
+    assert_eq!(queried.error, finished.error);
+    // Logs also carry the complete Job object even when no output was produced.
+    ok(cli(&lab.source, &["target1", "logs", &job.job_id, "--json"]).await);
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn daemon_deduplicates_before_capacity_and_refuses_changed_execution_fields() -> Result<()> {
     let lab = Lab::new().await?;
     let program = fixture(&lab).await?;
@@ -327,10 +351,12 @@ async fn failed_process_recording_kills_the_spawned_process_and_releases_capacit
         let request = execution(&lab, &program, &["wait", dir.to_str().unwrap()])?;
         let job = accepted(submit(&lab, &request, &[]).await?);
         let failed = terminal(&lab, &job.job_id).await?;
-        assert_eq!(failed.state, JobState::Failed);
+        assert_eq!(failed.state, JobState::Lost);
+        assert!(!failed.output_complete);
         // The failed lifecycle transaction rolls back every write, including
         // trigger writes. Carry the PID in the injected error to prove cleanup.
         let failure = failed.error.context("missing process recording failure")?;
+        assert!(failure.starts_with("RESULT_LOST:"));
         let pid: u32 = failure
             .split_once("test process record failure pid=")
             .context("missing spawned PID in recording failure")?
@@ -346,6 +372,254 @@ async fn failed_process_recording_kills_the_spawned_process_and_releases_capacit
     }
     let job = accepted(submit(&lab, &execution(&lab, &binary(), &["--version"])?, &[]).await?);
     assert_eq!(terminal(&lab, &job.job_id).await?.exit_code, Some(0));
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn authorization_changes_during_acceptance_never_claim_the_request_was_rejected() -> Result<()>
+{
+    use xrun::testing::{config, control};
+    tokio::time::timeout(Duration::from_secs(45), async {
+        let lab = Lab::new().await?;
+        let program = binary().to_string_lossy().into_owned();
+        ok(cli(&lab.source, &["target1", "--", &program, "--version"]).await);
+        let cfg_path = lab.target.join(".xrun/daemon.toml");
+        let db = database(&lab)?;
+        let records = rusqlite::Connection::open(lab.source.join(".xrun/submissions.sqlite"))?;
+        for pause in [false, true] {
+            let request = format!("authorization-during-acceptance-{pause}");
+            db.execute_batch("BEGIN IMMEDIATE")?;
+            let source = lab.source.clone();
+            let program = program.clone();
+            let request_id = request.clone();
+            let submitted = tokio::spawn(async move {
+                cli(
+                    &source,
+                    &[
+                        "target1",
+                        "start",
+                        "--request-id",
+                        &request_id,
+                        "--",
+                        &program,
+                        "--version",
+                    ],
+                )
+                .await
+            });
+            // The authenticated, warm session reaches the acceptance write,
+            // which stays blocked until this test releases its transaction.
+            tokio::time::sleep(Duration::from_secs(1)).await;
+            let mut cfg: config::DaemonConfig = config::read(&cfg_path)?;
+            if pause {
+                cfg.remote_access_paused = true;
+                cfg.pause_generation += 1;
+            } else {
+                cfg.deny_from.push(lab.source_identity.device_id.clone());
+            }
+            config::write(&cfg_path, &cfg)?;
+            control::refresh_access(&lab.target.join(".xrun")).await?;
+            let output = tokio::time::timeout(Duration::from_secs(3), submitted).await??;
+            assert_eq!(
+                output.status.code(),
+                Some(75),
+                "{}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+            let recorded: String = records.query_row(
+                "SELECT json_extract(data, '$.status') FROM submissions WHERE id=?1",
+                [&request],
+                |row| row.get(0),
+            )?;
+            assert_eq!(recorded, "unconfirmed");
+            db.execute_batch("COMMIT")?;
+            let tasks = store(&lab)?;
+            let job = tokio::time::timeout(Duration::from_secs(5), async {
+                loop {
+                    if let Some(job) = tasks.by_request(&lab.source_identity.device_id, &request)? {
+                        break Ok::<_, anyhow::Error>(job);
+                    }
+                    tokio::time::sleep(Duration::from_millis(10)).await;
+                }
+            })
+            .await??;
+            assert_eq!(terminal(&lab, &job.job_id).await?.exit_code, Some(0));
+            cfg.remote_access_paused = false;
+            cfg.deny_from.clear();
+            config::write(&cfg_path, &cfg)?;
+            control::refresh_access(&lab.target.join(".xrun")).await?;
+        }
+        Ok::<_, anyhow::Error>(())
+    })
+    .await?
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn normal_shutdown_waits_for_final_task_persistence() -> Result<()> {
+    let mut lab = Lab::new().await?;
+    let program = fixture(&lab).await?;
+    let directory = lab.root.path().join("shutdown");
+    std::fs::create_dir(&directory)?;
+    let request = execution(&lab, &program, &["wait", directory.to_str().unwrap()])?;
+    let job = accepted(submit(&lab, &request, &[]).await?);
+    pid_file(&directory.join("pid")).await?;
+    let tasks = store(&lab)?;
+    tokio::time::timeout(Duration::from_secs(5), async {
+        while tasks.get(&job.job_id)?.unwrap().state != JobState::Running {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        Ok::<_, anyhow::Error>(())
+    })
+    .await??;
+    let db = database(&lab)?;
+    db.execute_batch("BEGIN IMMEDIATE")?;
+    xrun::testing::control::request_shutdown(&lab.target.join(".xrun")).await?;
+    tokio::time::sleep(Duration::from_millis(350)).await;
+    assert!(
+        lab.daemon.try_wait()?.is_none(),
+        "shutdown returned before saving the result"
+    );
+    db.execute_batch("COMMIT")?;
+    let status = tokio::time::timeout(Duration::from_secs(10), lab.daemon.wait()).await??;
+    assert!(status.success());
+    assert_eq!(tasks.get(&job.job_id)?.unwrap().state, JobState::Canceled);
+    lab.daemon = logged(&lab.target, &["daemon"], "persisted-target")?.spawn()?;
+    online(&lab.source, "target1").await?;
+    assert_eq!(tasks.get(&job.job_id)?.unwrap().state, JobState::Canceled);
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn normal_shutdown_finishes_a_submission_waiting_to_be_persisted() -> Result<()> {
+    let mut lab = Lab::new().await?;
+    let request = execution(&lab, &binary(), &["--version"])?;
+    let mut ws = peer_session(
+        &lab.source,
+        &lab.source_identity,
+        &lab.target_identity.device_id,
+    )
+    .await?;
+    assert!(matches!(net::receive(&mut ws).await?, Data::Ready { .. }));
+    let db = database(&lab)?;
+    db.execute_batch("BEGIN IMMEDIATE")?;
+    net::send(
+        &mut ws,
+        &Data::Request {
+            request: Request::Exec {
+                execution: request.clone(),
+                follow: false,
+            },
+        },
+    )
+    .await?;
+    net::send_bytes(&mut ws, &[]).await?;
+    tokio::time::sleep(Duration::from_secs(1)).await;
+    xrun::testing::control::request_shutdown(&lab.target.join(".xrun")).await?;
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    assert!(lab.daemon.try_wait()?.is_none());
+    db.execute_batch("COMMIT")?;
+    assert!(
+        tokio::time::timeout(Duration::from_secs(10), lab.daemon.wait())
+            .await??
+            .success()
+    );
+    let job = store(&lab)?
+        .by_request(&lab.source_identity.device_id, &request.request_id)?
+        .context("in-flight submission disappeared during shutdown")?;
+    assert_eq!(job.state, JobState::Canceled);
+    assert!(job.process.is_none());
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn cli_recovers_shutdown_during_acceptance_without_marking_the_request_rejected() -> Result<()>
+{
+    tokio::time::timeout(Duration::from_secs(45), async {
+        let mut lab = Lab::new().await?;
+        let program = binary().to_string_lossy().into_owned();
+        ok(cli(&lab.source, &["target1", "--", &program, "--version"]).await);
+        let db = database(&lab)?;
+        db.execute_batch("BEGIN IMMEDIATE")?;
+        let source = lab.source.clone();
+        let submitted = tokio::spawn(async move {
+            cli(&source, &["target1", "start", "--json", "--request-id", "shutdown-during-acceptance", "--", &program, "--version"]).await
+        });
+        tokio::time::sleep(Duration::from_secs(1)).await;
+        xrun::testing::control::request_shutdown(&lab.target.join(".xrun")).await?;
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        assert!(lab.daemon.try_wait()?.is_none());
+        db.execute_batch("COMMIT")?;
+        assert!(tokio::time::timeout(Duration::from_secs(10), lab.daemon.wait()).await??.success());
+        let records = rusqlite::Connection::open(lab.source.join(".xrun/submissions.sqlite"))?;
+        let recorded: String = records.query_row(
+            "SELECT json_extract(data, '$.status') FROM submissions WHERE id='shutdown-during-acceptance'", [], |row| row.get(0)
+        )?;
+        assert_eq!(recorded, "unconfirmed");
+        let saved = store(&lab)?.by_request(&lab.source_identity.device_id, "shutdown-during-acceptance")?.context("accepted task")?;
+        assert_eq!(saved.state, JobState::Canceled);
+        assert!(saved.process.is_none());
+        lab.daemon = logged(&lab.target, &["daemon"], "shutdown-recovery-target")?.spawn()?;
+        online(&lab.source, "target1").await?;
+        let recovered: Job = serde_json::from_str(&ok(submitted.await?))?;
+        assert_eq!(recovered.job_id, saved.job_id);
+        assert_eq!(recovered.state, JobState::Canceled);
+        let recorded: String = records.query_row(
+            "SELECT json_extract(data, '$.status') FROM submissions WHERE id='shutdown-during-acceptance'", [], |row| row.get(0)
+        )?;
+        assert_eq!(recorded, "confirmed");
+        Ok::<_, anyhow::Error>(())
+    }).await?
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn local_confirmation_failure_preserves_the_remote_acknowledgement() -> Result<()> {
+    let lab = Lab::new().await?;
+    let program = binary().to_string_lossy().into_owned();
+    ok(cli(&lab.source, &["target1", "--", &program, "--version"]).await);
+    let local = rusqlite::Connection::open(lab.source.join(".xrun/submissions.sqlite"))?;
+    local.execute_batch(
+        "CREATE TRIGGER fail_confirmation BEFORE UPDATE ON submissions
+        WHEN json_extract(NEW.data, '$.status')='confirmed'
+        BEGIN SELECT RAISE(FAIL, 'test confirmation write failure'); END",
+    )?;
+    let output = cli(
+        &lab.source,
+        &[
+            "target1",
+            "start",
+            "--json",
+            "--request-id",
+            "confirmed-remotely",
+            "--",
+            &program,
+            "--version",
+        ],
+    )
+    .await;
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let accepted: Job = serde_json::from_slice(&output.stdout)?;
+    let warning: serde_json::Value = serde_json::from_slice(&output.stderr)?;
+    assert_eq!(warning["code"], "STORAGE_ERROR");
+    assert!(
+        warning["message"]
+            .as_str()
+            .unwrap()
+            .contains(&accepted.job_id)
+    );
+    assert_eq!(terminal(&lab, &accepted.job_id).await?.exit_code, Some(0));
+    let record: String = local.query_row(
+        "SELECT json_extract(data, '$.status') FROM submissions WHERE id='confirmed-remotely'",
+        [],
+        |row| row.get(0),
+    )?;
+    assert_eq!(
+        record, "unconfirmed",
+        "the pre-send durable recovery record must survive"
+    );
     Ok(())
 }
 

@@ -1,6 +1,6 @@
 [package]
 name = "xrun"
-version = "0.0.1-beta.5"
+version = "0.0.1-beta.6"
 edition = "2024"
 
 [workspace]
@@ -58,3 +58,6 @@ windows-sys = { version = "0.61.2", features = ["Win32_Foundation", "Win32_Secur
 
 [target.'cfg(target_os = "linux")'.dependencies]
 x11-dl = "2.21"
+
+[dev-dependencies]
+tokio = { version = "1.53.1", features = ["test-util"] }

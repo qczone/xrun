@@ -208,13 +208,19 @@ async fn foreground_uses_one_session_and_recovers_without_resubmitting() -> Resu
                                 &mut ws,
                                 &Data::Jobs {
                                     jobs: vec![accepted.clone().unwrap()],
+                                    next_offset: None,
                                 },
                             )
                             .await?;
                             net::close(&mut ws).await;
                             continue;
                         }
-                        (&"logs", Request::Logs { id, after, follow }) => {
+                        (
+                            &"logs",
+                            Request::Logs {
+                                id, after, follow, ..
+                            },
+                        ) => {
                             assert_eq!(id, "ABC123");
                             assert!(follow);
                             assert_eq!(after, if failure == "logs" { 1 } else { 0 });
@@ -402,7 +408,14 @@ async fn differing_release_and_optional_metadata_do_not_prevent_a_negotiated_ope
                     request: Request::Jobs { .. }
                 }
             ));
-            net::send(&mut socket, &Data::Jobs { jobs: Vec::new() }).await?;
+            net::send(
+                &mut socket,
+                &Data::Jobs {
+                    jobs: Vec::new(),
+                    next_offset: None,
+                },
+            )
+            .await?;
             net::send(&mut socket, &Data::Complete).await?;
             net::close(&mut socket).await;
             Ok::<_, anyhow::Error>(())

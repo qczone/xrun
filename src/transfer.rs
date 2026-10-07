@@ -6,7 +6,10 @@ use std::{
     collections::HashMap,
     io::{Read, Seek, SeekFrom},
     path::{Path, PathBuf},
-    sync::{Arc, Mutex, OnceLock, Weak},
+    sync::{
+        Arc, Mutex, OnceLock, Weak,
+        atomic::{AtomicBool, Ordering},
+    },
 };
 use tokio::sync::Mutex as AsyncMutex;
 
@@ -62,12 +65,19 @@ pub(crate) fn read_file(path: &Path) -> Result<Vec<u8>> {
     }
     Ok(bytes)
 }
-fn copy_hashed(file: impl Read, output: &mut impl std::io::Write) -> Result<(u64, String)> {
+fn copy_hashed(
+    file: impl Read,
+    output: &mut impl std::io::Write,
+    canceled: Option<&AtomicBool>,
+) -> Result<(u64, String)> {
     let mut input = file.take(MAX_FILE + 1);
     let mut chunk = [0u8; 64 * 1024];
     let mut size = 0;
     let mut digest = Sha256::new();
     loop {
+        if let Some(canceled) = canceled {
+            check_canceled(canceled)?;
+        }
         let n = input.read(&mut chunk)?;
         if n == 0 {
             break;
@@ -81,14 +91,27 @@ fn copy_hashed(file: impl Read, output: &mut impl std::io::Write) -> Result<(u64
     }
     Ok((size, hex::encode(digest.finalize())))
 }
-pub(crate) async fn snapshot(path: PathBuf) -> Result<(tempfile::NamedTempFile, u64, String)> {
+/// Canceling the async waiter must not release admission while disk IO is running.
+pub(crate) async fn snapshot(
+    path: PathBuf,
+    permit: tokio::sync::OwnedSemaphorePermit,
+) -> Result<(
+    tempfile::NamedTempFile,
+    u64,
+    String,
+    tokio::sync::OwnedSemaphorePermit,
+)> {
+    let cancel = CancelOnDrop::default();
+    let canceled = cancel.0.clone();
     tokio::task::spawn_blocking(move || {
+        let permit = permit;
+        check_canceled(&canceled)?;
         let mut temp = tempfile::Builder::new()
             .prefix("xrun-download-")
             .tempfile()?;
-        let (size, hash) = copy_hashed(open_file(&path)?, temp.as_file_mut())?;
+        let (size, hash) = copy_hashed(open_file(&path)?, temp.as_file_mut(), Some(&canceled))?;
         temp.as_file_mut().seek(SeekFrom::Start(0))?;
-        Ok((temp, size, hash))
+        Ok((temp, size, hash, permit))
     })
     .await?
 }
@@ -142,6 +165,20 @@ fn destination_inner(path: &Path, mkdir: bool, depth: usize) -> Result<PathBuf> 
             .context(ErrorCode::InvalidPath.error("no filename"))?,
     ))
 }
+#[derive(Default)]
+struct CancelOnDrop(Arc<AtomicBool>);
+impl Drop for CancelOnDrop {
+    fn drop(&mut self) {
+        self.0.store(true, Ordering::SeqCst);
+    }
+}
+fn check_canceled(canceled: &AtomicBool) -> Result<()> {
+    if canceled.load(Ordering::SeqCst) {
+        bail!(ErrorCode::ConnectionClosed.error("file operation canceled before publication"));
+    }
+    Ok(())
+}
+
 static LOCKS: OnceLock<Mutex<HashMap<PathBuf, Weak<AsyncMutex<()>>>>> = OnceLock::new();
 pub(crate) async fn push(
     path: PathBuf,
@@ -149,6 +186,7 @@ pub(crate) async fn push(
     mkdir: bool,
     no_overwrite: bool,
     expect: Option<String>,
+    finished: impl FnOnce(&Path, bool) -> Result<()> + Send + 'static,
 ) -> Result<PathBuf> {
     if contents.as_file().metadata()?.len() > MAX_FILE {
         bail!(ErrorCode::FileTooLarge.error(format!("maximum {MAX_FILE} bytes")))
@@ -172,23 +210,37 @@ pub(crate) async fn push(
             }
         }
     };
-    let _guard = lock.lock().await;
+    let guard = lock.lock_owned().await;
+    let cancel = CancelOnDrop::default();
+    let canceled = cancel.0.clone();
     let work = path.clone();
     tokio::task::spawn_blocking(move || {
-        contents.as_file_mut().seek(SeekFrom::Start(0))?;
-        save(
-            &work,
-            contents.as_file_mut(),
-            no_overwrite,
-            expect.as_deref(),
-        )
+        // The worker owns admission (inside finished), path serialization and audit
+        // through actual completion, even when its async waiter has been dropped.
+        let _guard = guard;
+        let mut published = false;
+        let result = (|| {
+            check_canceled(&canceled)?;
+            contents.as_file_mut().seek(SeekFrom::Start(0))?;
+            save(
+                &work,
+                contents.as_file_mut(),
+                no_overwrite,
+                expect.as_deref(),
+                &canceled,
+                &mut published,
+            )
+        })();
+        let audit_result = finished(&work, published);
+        result?;
+        audit_result
     })
     .await??;
     Ok(path)
 }
 fn check_expect(path: &Path, expect: Option<&str>) -> Result<()> {
     if let Some(hash) = expect {
-        match open_file(path).and_then(|file| copy_hashed(file, &mut std::io::sink())) {
+        match open_file(path).and_then(|file| copy_hashed(file, &mut std::io::sink(), None)) {
             Ok((_, actual)) if actual.eq_ignore_ascii_case(hash) => {}
             _ => bail!(ErrorCode::Stale.error("destination no longer matches expected SHA-256")),
         }
@@ -200,7 +252,10 @@ fn save(
     contents: &mut impl Read,
     no_overwrite: bool,
     expect: Option<&str>,
+    canceled: &AtomicBool,
+    published: &mut bool,
 ) -> Result<()> {
+    check_canceled(canceled)?;
     check_expect(path, expect)?;
     let metadata = std::fs::metadata(path).ok();
     if let Some(m) = &metadata {
@@ -233,17 +288,29 @@ fn save(
     if metadata.is_some() {
         crate::config::private_acl(temp.path(), false)?;
     }
-    std::io::copy(contents, temp.as_file_mut())?;
+    let mut chunk = [0u8; 64 * 1024];
+    loop {
+        check_canceled(canceled)?;
+        let count = contents.read(&mut chunk)?;
+        if count == 0 {
+            break;
+        }
+        std::io::Write::write_all(temp.as_file_mut(), &chunk[..count])?;
+    }
     temp.as_file()
         .set_permissions(metadata.map(|m| m.permissions()).unwrap_or(defaults))?;
     temp.as_file().sync_all()?;
     check_expect(path, expect)?;
+    // Cancellation before this point preserves the old destination. Once the
+    // atomic replacement starts, callers must treat an interrupted reply as unknown.
+    check_canceled(canceled)?;
     if no_overwrite {
         temp.persist_noclobber(path)
             .map_err(|e| anyhow::anyhow!(ErrorCode::AlreadyExists.error(format!("{}", e.error))))?;
     } else {
         replace(temp, path)?;
     }
+    *published = true;
     sync_parent(path)
         .context(ErrorCode::Unconfirmed.error("destination replaced but directory sync failed"))?;
     Ok(())
@@ -283,13 +350,13 @@ fn replace(temp: tempfile::NamedTempFile, path: &Path) -> Result<()> {
 }
 pub fn prepare_upload(path: &Path) -> Result<(std::fs::File, u64, String)> {
     let mut file = open_file(path)?;
-    let (size, hash) = copy_hashed(file.try_clone()?, &mut std::io::sink())?;
+    let (size, hash) = copy_hashed(file.try_clone()?, &mut std::io::sink(), None)?;
     file.seek(SeekFrom::Start(0))?;
     Ok((file, size, hash))
 }
 pub(crate) fn snapshot_input(input: impl Read) -> Result<(tempfile::NamedTempFile, u64, String)> {
     let mut temp = tempfile::Builder::new().prefix("xrun-input-").tempfile()?;
-    let (size, hash) = copy_hashed(input, temp.as_file_mut())?;
+    let (size, hash) = copy_hashed(input, temp.as_file_mut(), None)?;
     temp.as_file_mut().seek(SeekFrom::Start(0))?;
     Ok((temp, size, hash))
 }
@@ -346,6 +413,113 @@ fn local_metadata(path: &Path) -> Result<Option<std::fs::Metadata>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn canceled_queued_push_keeps_admission_and_path_lock_until_worker_finishes() -> Result<()> {
+        use std::io::Write;
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .max_blocking_threads(1)
+            .build()?;
+        runtime.block_on(async {
+            let dir = tempfile::tempdir()?;
+            let path = dir.path().canonicalize()?.join("destination");
+            std::fs::write(&path, b"original")?;
+            let mut input = tempfile::NamedTempFile::new()?;
+            input.write_all(b"replacement")?;
+            let admission = Arc::new(tokio::sync::Semaphore::new(1));
+            let permit = admission.clone().acquire_owned().await?;
+            let (started_tx, started_rx) = tokio::sync::oneshot::channel();
+            let (release_tx, release_rx) = std::sync::mpsc::channel();
+            let blocker = tokio::task::spawn_blocking(move || {
+                let _ = started_tx.send(());
+                release_rx.recv().unwrap();
+            });
+            started_rx.await?;
+            let (done_tx, done_rx) = tokio::sync::oneshot::channel();
+            let target = path.clone();
+            let task = tokio::spawn(async move {
+                push(target, input, false, false, None, move |_, published| {
+                    let _permit = permit;
+                    let _ = done_tx.send(published);
+                    Ok(())
+                })
+                .await
+            });
+            let lock = tokio::time::timeout(std::time::Duration::from_secs(5), async {
+                loop {
+                    let lock = LOCKS
+                        .get_or_init(Default::default)
+                        .lock()
+                        .unwrap()
+                        .get(&path)
+                        .and_then(Weak::upgrade);
+                    if let Some(lock) = lock {
+                        break lock;
+                    }
+                    tokio::task::yield_now().await;
+                }
+            })
+            .await?;
+            task.abort();
+            assert!(task.await.unwrap_err().is_cancelled());
+            let retained_admission = admission.available_permits() == 0;
+            let retained_lock = lock.try_lock().is_err();
+            // Always unblock the worker before assertions so a regression cannot
+            // leave Runtime::drop waiting for this fixture forever.
+            release_tx.send(())?;
+            blocker.await?;
+            assert!(!tokio::time::timeout(std::time::Duration::from_secs(5), done_rx).await??);
+            assert!(
+                retained_admission,
+                "canceled waiter released running disk IO admission"
+            );
+            assert!(retained_lock, "canceled waiter released path serialization");
+            let _permit = admission.acquire().await?;
+            assert_eq!(std::fs::read(&path)?, b"original");
+            assert!(lock.try_lock().is_ok());
+            Ok(())
+        })
+    }
+
+    #[test]
+    fn cancellation_while_copying_never_publishes_partial_destination() -> Result<()> {
+        struct CancelDuringRead<'a> {
+            input: std::io::Cursor<&'static [u8]>,
+            canceled: &'a AtomicBool,
+            at_eof: bool,
+        }
+        impl Read for CancelDuringRead<'_> {
+            fn read(&mut self, bytes: &mut [u8]) -> std::io::Result<usize> {
+                let count = self.input.read(bytes)?;
+                if !self.at_eof || count == 0 {
+                    self.canceled.store(true, Ordering::SeqCst);
+                }
+                Ok(count)
+            }
+        }
+        for at_eof in [false, true] {
+            let dir = tempfile::tempdir()?;
+            let path = dir.path().join("destination");
+            std::fs::write(&path, b"original")?;
+            let canceled = AtomicBool::new(false);
+            let mut input = CancelDuringRead {
+                input: std::io::Cursor::new(b"replacement"),
+                canceled: &canceled,
+                at_eof,
+            };
+            let mut published = false;
+            assert!(save(&path, &mut input, false, None, &canceled, &mut published).is_err());
+            assert!(!published);
+            assert_eq!(std::fs::read(path)?, b"original");
+            assert_eq!(
+                std::fs::read_dir(dir.path())?.count(),
+                1,
+                "temporary upload survived cancellation"
+            );
+        }
+        Ok(())
+    }
+
     #[test]
     fn user_paths_have_explicit_file_error_codes() -> Result<()> {
         let dir = tempfile::tempdir()?;

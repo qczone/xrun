@@ -1,11 +1,11 @@
 //! Tray visibility, actions and user-visible service status.
 use super::{
-    app::{Desktop, Status, local_status, record},
+    app::{Desktop, record},
     language::{Language, LanguageState},
     platform,
 };
 use tauri::{
-    Manager,
+    Emitter, Manager,
     menu::{Menu, MenuItem, PredefinedMenuItem},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
 };
@@ -37,7 +37,7 @@ fn labels(language: Language) -> [(&'static str, &'static str); 5] {
 pub(super) fn refresh_language<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> tauri::Result<()> {
     let language = app.state::<LanguageState>().settings().language;
     if let Some(menu) = app.try_state::<TrayMenu<R>>() {
-        let status = text(language, local_status(app));
+        let status = current_text(language);
         for (id, label) in labels(language).into_iter().chain([("state", status)]) {
             if let Some(item) = menu.0.get(id).and_then(|item| item.as_menuitem().cloned()) {
                 item.set_text(label)?;
@@ -55,6 +55,7 @@ pub(super) fn hide<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> tauri::Resul
     }
     if let Some(window) = app.get_webview_window("main") {
         window.hide()?;
+        window.emit("xrun-window-visible", false)?;
     }
     Ok(())
 }
@@ -63,8 +64,9 @@ pub(super) fn present<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
         let _ = tray.set_visible(true);
     }
     if let Some(window) = app.get_webview_window("main") {
-        let _ = window.show();
-        let _ = window.unminimize();
+        if window.show().is_ok() && window.unminimize().is_ok() {
+            let _ = window.emit("xrun-window-visible", true);
+        }
         let _ = window.set_focus();
     }
 }
@@ -145,7 +147,24 @@ pub(super) fn build<R: tauri::Runtime>(app: &tauri::App<R>) -> tauri::Result<Men
     Ok(state)
 }
 
-pub(super) fn text(language: Language, status: anyhow::Result<Status>) -> &'static str {
+struct TrayStatus {
+    local: xrun::client::LocalStatus,
+    service: platform::ServiceStatus,
+}
+
+pub(super) fn current_text(language: Language) -> &'static str {
+    // The tray needs only local service state. Do not reopen and verify the full
+    // signed member roster on every background status tick.
+    let status = (|| {
+        Ok(TrayStatus {
+            local: xrun::client::local_status()?,
+            service: platform::status()?,
+        })
+    })();
+    text(language, status)
+}
+
+fn text(language: Language, status: anyhow::Result<TrayStatus>) -> &'static str {
     match status {
         Ok(s) if !s.local.joined => language.text("xrun · Not joined", "xrun · 尚未加入"),
         Ok(s) if s.service.approval_required => {
@@ -206,6 +225,7 @@ pub(crate) mod tests {
             "tray_text_prioritizes_setup_approval_stop_and_pause_over_connectivity",
             || {
                 let (app, _window) = build_app();
+                assert_eq!(current_text(Language::En), "xrun · Not joined");
                 for (joined, approval, running, paused, connected, expected) in [
                     (false, true, true, true, Some(true), "xrun · 尚未加入"),
                     (true, true, false, false, Some(true), "xrun · 需要系统授权"),
@@ -221,7 +241,16 @@ pub(crate) mod tests {
                     status.local.daemon_running = running;
                     status.local.remote_access_paused = paused;
                     status.local.daemon_connected = connected;
-                    assert_eq!(text(Language::Zh, Ok(status)), expected);
+                    assert_eq!(
+                        text(
+                            Language::Zh,
+                            Ok(TrayStatus {
+                                local: status.local,
+                                service: status.service
+                            })
+                        ),
+                        expected
+                    );
                 }
                 assert_eq!(
                     text(Language::Zh, Err(anyhow::anyhow!("unreadable config"))),
@@ -232,7 +261,16 @@ pub(crate) mod tests {
                 status.local.daemon_running = true;
                 status.local.daemon_connected = Some(true);
                 status.service.approval_required = false;
-                assert_eq!(text(Language::En, Ok(status)), "xrun · Connected");
+                assert_eq!(
+                    text(
+                        Language::En,
+                        Ok(TrayStatus {
+                            local: status.local,
+                            service: status.service
+                        })
+                    ),
+                    "xrun · Connected"
+                );
                 Ok(())
             },
         )

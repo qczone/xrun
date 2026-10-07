@@ -55,11 +55,11 @@ pub(super) async fn serve(
                 let job = rt.owned_job(source, &id).await?;
                 net::send(ws, &Data::Job { job }).await?
             } else {
-                let jobs = rt
+                let (jobs, next_offset) = rt
                     .store
-                    .page_async(source, running, request_id.as_deref(), limit, offset)
+                    .page_bounded_async(source, running, request_id.as_deref(), limit, offset)
                     .await?;
-                net::send(ws, &Data::Jobs { jobs }).await?
+                net::send(ws, &Data::Jobs { jobs, next_offset }).await?
             }
         }
         Request::Kill { id } => {
@@ -70,14 +70,40 @@ pub(super) async fn serve(
                     rt.canceled.lock().unwrap().insert(id.clone());
                 }
             }
-            follow(&rt, source, ws, &id, 0, false, true).await?
+            follow(&rt, source, ws, &id, 0, false, true)
+                .await
+                .map_err(|error| {
+                    // Cancellation was already requested. A later denial cannot
+                    // prove that this operation was never accepted.
+                    if crate::error::code(&error).is_some_and(|code| code.rejects_submission()) {
+                        anyhow::anyhow!(ErrorCode::Unconfirmed.error(format!(
+                            "cancellation outcome requires confirmation: {error:#}"
+                        )))
+                    } else {
+                        error
+                    }
+                })?
         }
         Request::Wait { id } => follow(&rt, source, ws, &id, 0, false, true).await?,
         Request::Logs {
             id,
             after,
             follow: following,
-        } => follow(&rt, source, ws, &id, after, true, following).await?,
+            tail,
+        } => {
+            if let Some(lines) = tail {
+                let job = rt.owned_job(source, &id).await?;
+                let events = rt.store.tail_async(&id, after, job.last_seq, lines).await?;
+                send_logs(ws, events, &job).await?;
+                if following {
+                    follow(&rt, source, ws, &id, after.max(job.last_seq), true, true).await?;
+                } else {
+                    net::send(ws, &Data::End).await?;
+                }
+            } else {
+                follow(&rt, source, ws, &id, after, true, following).await?;
+            }
+        }
         _ => bail!(ErrorCode::InvalidRequest.error("operation dispatched to the wrong handler")),
     }
     Ok(())
@@ -123,14 +149,7 @@ async fn follow(
             job.incomplete_reason.clone(),
         );
         if logs && (count > 0 || previous.as_ref() != Some(&state)) {
-            net::send(
-                ws,
-                &Data::Logs {
-                    events,
-                    job: job.clone(),
-                },
-            )
-            .await?;
+            send_logs(ws, events, &job).await?;
         } else if job.state.terminal() && !logs {
             net::send(ws, &Data::Job { job: job.clone() }).await?;
         }
@@ -158,4 +177,38 @@ async fn follow(
             }
         }
     }
+}
+
+async fn send_logs(ws: &mut Ws, events: Vec<LogEvent>, job: &Job) -> Result<()> {
+    let overhead = serde_json::to_vec(&Data::Logs {
+        events: vec![],
+        job: job.clone(),
+    })?
+    .len();
+    let mut bytes = overhead;
+    let mut batch = vec![];
+    for event in events {
+        let size = serde_json::to_vec(&event)?.len() + 1;
+        if !batch.is_empty() && (bytes + size > MAX_MESSAGE || batch.len() == 16) {
+            net::send(
+                ws,
+                &Data::Logs {
+                    events: std::mem::take(&mut batch),
+                    job: job.clone(),
+                },
+            )
+            .await?;
+            bytes = overhead;
+        }
+        bytes += size;
+        batch.push(event);
+    }
+    net::send(
+        ws,
+        &Data::Logs {
+            events: batch,
+            job: job.clone(),
+        },
+    )
+    .await
 }

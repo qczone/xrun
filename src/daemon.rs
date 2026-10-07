@@ -31,8 +31,11 @@ use std::{
 };
 use tokio::sync::{Semaphore, watch};
 
+pub(crate) use self::control::maintain_membership;
 use self::control::{control_reconnect, membership_sync};
 use self::process_identity::{boot_id, process_start};
+
+const FILE_OPERATION_LIMIT: usize = 8;
 
 pub(crate) fn init() -> Result<()> {
     let id = Identity::load()?;
@@ -92,6 +95,7 @@ struct Runtime {
     network_id: String,
     store: Arc<TaskStore>,
     running: Mutex<HashMap<String, u32>>,
+    jobs: Mutex<tokio::task::JoinSet<()>>,
     canceled: Mutex<HashSet<String>>,
     gate: Mutex<()>,
     sessions: Arc<Semaphore>,
@@ -187,6 +191,9 @@ impl Runtime {
         self.config()?.check_access(source)
     }
     fn check_session(&self, source: &str, generation: u64) -> Result<()> {
+        if self.stopping.load(Ordering::SeqCst) {
+            bail!(ErrorCode::DaemonStopping.error("daemon shutting down"));
+        }
         self.membership(source)?;
         let cfg = self.config()?;
         cfg.check_access(source)?;
@@ -290,10 +297,11 @@ pub async fn run() -> Result<()> {
         network_id,
         store,
         running: Mutex::new(HashMap::new()),
+        jobs: Mutex::new(tokio::task::JoinSet::new()),
         canceled: Mutex::new(HashSet::new()),
         gate: Mutex::new(()),
         sessions: Arc::new(Semaphore::new(32)),
-        files: Arc::new(Semaphore::new(8)),
+        files: Arc::new(Semaphore::new(FILE_OPERATION_LIMIT)),
         forwards: Arc::new(Semaphore::new(32)),
         streams: AtomicUsize::new(0),
         stopping: AtomicBool::new(false),
@@ -317,17 +325,49 @@ pub async fn run() -> Result<()> {
         _=stop.changed()=>Err(rt.storage_failure()),
     };
     rt.stopping.store(true, Ordering::SeqCst);
+    rt.files.close();
     let _ = control.connected(false);
     let _ = rt.stop.send(true);
+    let cleanup = tokio::time::timeout(Duration::from_secs(8), finish_tasks(rt.clone())).await;
+    if !matches!(cleanup, Ok(Ok(()))) {
+        for pid in rt.running.lock().unwrap().values() {
+            crate::process::force_kill(*pid)
+        }
+    }
+    cleanup.context(ErrorCode::DaemonStopTimeout.error("task cleanup did not finish"))??;
+    if rt.fatal.lock().unwrap().is_some() {
+        return Err(rt.storage_failure());
+    }
+    outcome
+}
+
+async fn finish_tasks(rt: Arc<Runtime>) -> Result<()> {
+    // A submission already holding the gate may still be saving acceptance.
+    // Collect its task only after it has registered the complete execution future.
+    let runtime = rt.clone();
+    let mut jobs = tokio::task::spawn_blocking(move || {
+        let _gate = runtime.gate.lock().unwrap();
+        std::mem::take(&mut *runtime.jobs.lock().unwrap())
+    })
+    .await?;
     if let Ok(ids) = rt.store.unfinished_ids().await {
         rt.canceled.lock().unwrap().extend(ids);
     }
-    let deadline = tokio::time::Instant::now() + Duration::from_secs(8);
-    while !rt.running.lock().unwrap().is_empty() && tokio::time::Instant::now() < deadline {
-        tokio::time::sleep(Duration::from_millis(50)).await;
+    while let Some(result) = jobs.join_next().await {
+        result?;
     }
-    for pid in rt.running.lock().unwrap().values() {
-        crate::process::force_kill(*pid)
+    // Connection-bound execution has separate ownership, but must stop too.
+    while !rt.running.lock().unwrap().is_empty() {
+        tokio::time::sleep(Duration::from_millis(20)).await;
     }
-    outcome
+    // Canceled file requests retain their permits until their worker/capture
+    // process has stopped and the operation's audit has been saved.
+    while rt.files.available_permits() != FILE_OPERATION_LIMIT {
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    rt.store.flush().await?;
+    if !rt.store.unfinished_ids().await?.is_empty() {
+        bail!(ErrorCode::StorageError.error("accepted tasks have no persisted final result"));
+    }
+    Ok(())
 }
