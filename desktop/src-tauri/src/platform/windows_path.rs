@@ -134,8 +134,11 @@ mod registry {
         );
         let words: Vec<u16> = raw
             .bytes
-            .chunks_exact(2)
-            .map(|pair| u16::from_le_bytes([pair[0], pair[1]]))
+            .as_chunks::<2>()
+            .0
+            .iter()
+            .copied()
+            .map(u16::from_le_bytes)
             .collect();
         let words = words.strip_suffix(&[0]).unwrap_or(&words);
         let path = String::from_utf16(words).context("user PATH has invalid UTF-16 text")?;

@@ -50,6 +50,8 @@ function Invoke-Process([string]$File, [string]$Arguments, [int]$Timeout = 12000
     $info.CreateNoWindow = $true
     $info.RedirectStandardOutput = $true
     $info.RedirectStandardError = $true
+    $info.StandardOutputEncoding = New-Object System.Text.UTF8Encoding($false)
+    $info.StandardErrorEncoding = New-Object System.Text.UTF8Encoding($false)
     $info.EnvironmentVariables['HOME'] = $sandboxHome
     if ($SearchPath) { $info.EnvironmentVariables['PATH'] = $SearchPath }
     # Process.Start bypasses PowerShell 7's Windows PowerShell module-path handling.
@@ -83,11 +85,14 @@ function Assert-TerminalCommand([string]$Directory) {
     # its environment from the persisted values, as a newly opened terminal does.
     $userPath = $userEnvironment.GetValue('Path', '', $rawValue)
     $searchPath = [Environment]::ExpandEnvironmentVariables("$machinePath;$userPath")
-    $command = '-NoProfile -NonInteractive -Command "$ErrorActionPreference=''Stop''; (Get-Command xrun -CommandType Application).Source; xrun --version; exit $LASTEXITCODE"'
+    # Windows PowerShell's legacy console encoding cannot round-trip this test's
+    # Unicode installation path through the UTF-8 process-output reader.
+    $command = '-NoProfile -NonInteractive -Command "[Console]::OutputEncoding = New-Object System.Text.UTF8Encoding($false); $ErrorActionPreference=''Stop''; (Get-Command xrun -CommandType Application).Source; xrun --version; exit $LASTEXITCODE"'
     $result = Invoke-Process 'powershell.exe' $command 30000 $searchPath
     $lines = $result.Stdout -split '\r?\n'
     Assert-That ($result.ExitCode -eq 0) "PowerShell could not run xrun: $($result.Stderr)"
-    Assert-That ($lines[0] -ieq (Join-Path $Directory 'xrun.exe')) 'PowerShell resolved the wrong CLI.'
+    $expected = Join-Path $Directory 'xrun.exe'
+    Assert-That ($lines[0] -ieq $expected) "PowerShell resolved the wrong CLI. Expected '$expected', got '$($lines[0])'."
     Assert-That ($lines[-1] -ceq "xrun $version") 'PowerShell CLI version output is missing or incorrect.'
     $result = Invoke-Process 'cmd.exe' '/d /c "xrun --version"' 30000 $searchPath
     Assert-That ($result.ExitCode -eq 0 -and $result.Stdout -ceq "xrun $version") 'CMD could not run xrun and receive its version output.'
