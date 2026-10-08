@@ -12,7 +12,7 @@ cargo build --locked --release
 
 将 `target/release/xrun`（Windows 为 `xrun.exe`）放到固定目录并加入 PATH，再安装服务。CLI、daemon 和 Linux Rust 中转使用同一个二进制；Cloudflare 中转单独部署。网络组件按支持的协议范围协商，本机 CLI / App helper 与 daemon 要求发布版本一致。发布要求见 [design.md 的版本说明](design.md#63-版本和限制)。
 
-GitHub Actions 的 [Package](../.github/workflows/package.yml) 工作流可手动构建 Linux、macOS、Windows 的 x86_64 与 arm64，共六组产物。Linux 提供只含 `xrun` 的 CLI 压缩包，macOS 提供 App ZIP，Windows 提供当前用户 NSIS 安装 EXE；桌面包自带终端 CLI，不再单独分发 Mac／Windows CLI 包。macOS App 的签名、公证需要配置工作流列出的凭据。每组产物还包含版本和 SHA-256 清单，以及对应的自动安装脚本。手动运行时可启用 `publish`，在六组构建和检查均通过后发布 Release。
+GitHub Actions 的 [Package](../.github/workflows/package.yml) 工作流可手动构建 Linux、macOS、Windows 的 x86_64 与 arm64，共六组产物。Linux 提供只含 `xrun` 的 CLI 压缩包，macOS 提供 App ZIP，Windows 提供当前用户 NSIS 安装 EXE；桌面包自带终端 CLI，不再单独分发 Mac／Windows CLI 包。macOS App 的签名、公证需要配置工作流列出的凭据。每组产物还包含版本和 SHA-256 清单，以及对应的自动安装脚本。Package 只构建和检查产物；发布由独立的 [Release](../.github/workflows/release.yml) 工作流手动触发。
 
 Linux 与 Windows 的两种架构分别使用对应的原生 runner；macOS 两组均使用 ARM runner，Intel 版交叉编译并通过 Rosetta 执行 smoke 和安装检查，不代表 Intel 实机验收。构建缓存和产物按目标架构分开。
 
@@ -104,7 +104,7 @@ Ubuntu 26.04 x86_64 云主机与 macOS ARM64 本机已通过公网 TCP 8080 实�
 
 ## 发布与内置文档
 
-Package 工作流默认只生成 Actions 附件。对外发布时，在 main 上手动运行并启用 `publish`，也可使用 `gh workflow run package.yml --ref main -f publish=true`。六组构建和安装检查通过后，发布任务下载本次运行的产物，[release-assets.ts](../desktop/scripts/release-assets.ts) 再次检查六组清单、SHA-256、安装脚本和源码版本一致性，创建 `v<完整版本>` Release，上传全部文件后公开。含预发布标识的版本标记为 prerelease。已有同名标签会报错，不覆盖已发布版本；上传失败遗留的草稿需处理后再发布。构建任务只读仓库，只有发布任务具有 Release 写入权限。
+Package 工作流只生成 Actions 附件，使用 `gh workflow run package.yml --ref main` 触发。对外发布时，在 main 上单独手动运行 Release，填写已经成功完成的 Package 运行 ID；例如 `gh workflow run release.yml --ref main -f package_run_id=<运行ID>`。Release 校验该运行来自本仓库 main 上的 Package 工作流并已全部成功，再检出其对应提交、下载其六组产物，不重新构建。[release-assets.ts](../desktop/scripts/release-assets.ts) 再次检查六组清单、SHA-256、安装脚本和源码版本一致性，创建指向 Package 原始提交的 `v<完整版本>` Release，上传全部文件后公开。含预发布标识的版本标记为 prerelease。已有同名标签会报错，不覆盖已发布版本；上传失败遗留的草稿需处理后再发布。Package 只读仓库，只有独立 Release 的发布任务具有写入权限。
 
 产物清单由 [package-manifest.ts](../desktop/scripts/package-manifest.ts) 使用现有 Bun 生成；用户运行安装程序不需要 Bun，见 [安装说明](usage.md#安装)。
 

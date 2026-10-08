@@ -854,7 +854,7 @@ Rust workspace 的核心 package 提供 CLI、daemon 和 Rust 中转；桌面 pa
 
 App 使用 Tauri 2、React、TypeScript、Vite 和 Bun，生产包包含静态前端与配套 Rust helper，不包含 Bun。根目录 `bun run --cwd desktop build` 根据平台生成 macOS App ZIP 或 Windows 当前用户 NSIS 安装 EXE；`--debug` 使用调试目录。`--target` 可在同一操作系统内指定 x86_64 或 aarch64 的 Rust target，App 与 helper 按相同 target 构建，产物和缓存进入 `target/<target>/<profile>/`；默认本机构建仍使用 `target/<profile>/`。每个包包含单一架构。macOS 本地包默认 ad-hoc 签名，正式包使用 Developer ID 签名、公证 App 并附票据后打包 ZIP；Windows 安装包当前未签名。桌面包同时包含终端 CLI，用户不需要单独安装 CLI。服务使用固定位置的包内 helper，升级前正常停止。App 隐藏或最小化时暂停页面轮询，再显示时刷新；托盘只读取轻量本地运行状态，不定时校验完整成员清单。CLI 安装 macOS LaunchAgent 时，同配置已加载的服务可重新启动；运行中改变程序路径需要先停止，停止后重新加载新配置。
 
-发布矩阵为 Linux、macOS、Windows 各自的 x86_64 / arm64，共六组。Linux 提供只含二进制的 CLI 压缩包，macOS / Windows 提供上述桌面产物，不单独分发 CLI 包；清单与文件名使用目标系统和架构，不使用构建机器的架构。自动安装脚本按设备架构选择对应清单，安装程序和用户 PATH。Package 默认保留 Actions 产物，可手动启用发布，在全部构建和检查通过后创建版本化 Release，分别提供程序、安装脚本和校验文件。
+发布矩阵为 Linux、macOS、Windows 各自的 x86_64 / arm64，共六组。Linux 提供只含二进制的 CLI 压缩包，macOS / Windows 提供上述桌面产物，不单独分发 CLI 包；清单与文件名使用目标系统和架构，不使用构建机器的架构。自动安装脚本按设备架构选择对应清单，安装程序和用户 PATH。Package 只构建和检查 Actions 产物；独立的 Release 工作流通过手动指定成功的 Package 运行 ID，复用其产物和提交创建版本化 Release，分别提供程序、安装脚本和校验文件。
 
 Rust 与 Cloudflare 中转使用同一套连接认证和端到端会话协议，CLI 与 daemon 不依赖中转保存成员状态。
 

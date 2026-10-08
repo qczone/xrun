@@ -2,11 +2,6 @@ name: Package
 
 on:
   workflow_dispatch:
-    inputs:
-      publish:
-        description: Publish the completed artifacts to a versioned GitHub Release
-        type: boolean
-        default: false
 
 permissions:
   contents: read
@@ -259,55 +254,3 @@ jobs:
             dist/install.sh
             dist/install.ps1
           if-no-files-found: error
-
-  release:
-    name: Publish Release
-    needs: package
-    if: inputs.publish
-    runs-on: ubuntu-24.04
-    timeout-minutes: 15
-    permissions:
-      contents: write
-      actions: read
-    concurrency:
-      group: xrun-release
-      cancel-in-progress: false
-    env:
-      GH_TOKEN: ${{ github.token }}
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
-        with:
-          bun-version-file: desktop/package.json
-      - name: Download the six tested artifact sets
-        shell: bash
-        run: |
-          set -euo pipefail
-          test "$GITHUB_REF" = refs/heads/main || { echo '::error::Publish releases from main.'; exit 1; }
-          gh run download "$GITHUB_RUN_ID" --repo "$GITHUB_REPOSITORY" \
-            --pattern "xrun-*-$GITHUB_SHA" --dir dist/artifacts
-      - name: Verify and prepare Release assets
-        id: assets
-        shell: bash
-        run: |
-          set -euo pipefail
-          version=$(bun desktop/scripts/release-assets.ts --artifacts dist/artifacts --directory dist/release --sha "$GITHUB_SHA")
-          echo "version=$version" >> "$GITHUB_OUTPUT"
-      - name: Upload and publish the complete Release
-        shell: bash
-        env:
-          VERSION: ${{ steps.assets.outputs.version }}
-        run: |
-          set -euo pipefail
-          tag="v$VERSION"
-          existing=$(gh api "repos/$GITHUB_REPOSITORY/git/matching-refs/tags/$tag" \
-            --jq "[.[] | select(.ref == \"refs/tags/$tag\")] | length")
-          test "$existing" = 0 || { echo "::error::Tag $tag already exists; use a new version."; exit 1; }
-          flags=()
-          if [[ "${VERSION%%+*}" == *-* ]]; then flags+=(--prerelease); fi
-          gh release create "$tag" dist/release/* --repo "$GITHUB_REPOSITORY" \
-            --target "$GITHUB_SHA" --title "xrun $VERSION" --draft "${flags[@]}" \
-            --notes-file dist/release-notes.md
-          gh release edit "$tag" --repo "$GITHUB_REPOSITORY" --draft=false
