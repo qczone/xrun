@@ -1,6 +1,6 @@
 [package]
 name = "xrun-desktop"
-version = "0.1.0-rc.1"
+version = "0.1.0-rc.2"
 edition = "2024"
 
 [[test]]
@@ -32,4 +32,4 @@ objc2-foundation = { version = "0.3", features = ["NSString", "NSError"] }
 objc2-service-management = { version = "0.3", features = ["SMAppService"] }
 
 [target.'cfg(windows)'.dependencies]
-winreg = "0.55"
+winreg = "0.56"

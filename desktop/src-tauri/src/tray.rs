@@ -88,7 +88,14 @@ pub(super) fn menu_event<R: tauri::Runtime>(
                 let state = app.state::<Desktop>();
                 let _guard = state.action.lock().await;
                 let result = if start {
-                    platform::start().await
+                    match xrun::client::local_status() {
+                        Ok(status) if !status.joined => {
+                            present(&app);
+                            Ok(())
+                        }
+                        Ok(_) => platform::start().await,
+                        Err(error) => Err(error),
+                    }
                 } else {
                     xrun::client::services::stop_daemon().await
                 };
@@ -195,6 +202,45 @@ pub(crate) mod tests {
     };
     use super::*;
     use anyhow::Result;
+
+    #[test]
+    fn tray_start_without_identity_opens_setup_without_initializing_a_service() -> Result<()> {
+        isolated(
+            "tray_start_without_identity_opens_setup_without_initializing_a_service",
+            || {
+                use tauri::Listener;
+                let (app, _window) = build_app();
+                let directory = xrun::client::services::data_dir()?;
+                assert!(!local_status(app.handle())?.local.joined);
+                let (tx, rx) = std::sync::mpsc::channel();
+                app.listen("xrun-window-visible", move |event| {
+                    tx.send(event.payload().to_owned()).unwrap();
+                });
+                menu_event(app.handle(), tauri::menu::MenuEvent { id: "start".into() });
+                assert_eq!(rx.recv_timeout(std::time::Duration::from_secs(5))?, "true");
+                tauri::async_runtime::block_on(async {
+                    let state = app.state::<Desktop>();
+                    let _guard = state.action.lock().await;
+                    assert!(state.error.lock().unwrap().is_none());
+                });
+                let status = local_status(app.handle())?;
+                assert!(!status.local.joined && !status.local.daemon_running);
+                assert!(status.error.is_none());
+                for name in [
+                    "identity.toml",
+                    "daemon.initialized",
+                    "daemon.db",
+                    "daemon.service",
+                ] {
+                    assert!(
+                        !directory.join(name).exists(),
+                        "created {name} before joining"
+                    );
+                }
+                Ok(())
+            },
+        )
+    }
 
     // Run against the real menu on the process main thread in native_ui.
     #[cfg(target_os = "macos")]

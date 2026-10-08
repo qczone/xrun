@@ -281,14 +281,19 @@ pub(crate) mod tests {
                         .unwrap();
                         tokio::time::timeout(Duration::from_secs(5), async {
                             loop {
-                                if app
+                                let missing_helper = app
                                     .state::<Desktop>()
                                     .error
                                     .lock()
                                     .unwrap()
                                     .as_ref()
-                                    .is_some_and(|e| e.code == "HELPER_NOT_FOUND")
-                                {
+                                    .is_some_and(|e| e.code == "HELPER_NOT_FOUND");
+                                let setup_visible = app
+                                    .get_webview_window("main")
+                                    .unwrap()
+                                    .is_visible()
+                                    .unwrap();
+                                if (joined && missing_helper) || (!joined && setup_visible) {
                                     break;
                                 }
                                 tokio::time::sleep(Duration::from_millis(20)).await;
@@ -296,6 +301,12 @@ pub(crate) mod tests {
                         })
                         .await
                         .unwrap();
+                        if !joined {
+                            assert!(app.state::<Desktop>().error.lock().unwrap().is_none());
+                            let directory = config::device_dir().unwrap();
+                            assert!(!directory.join("identity.toml").exists());
+                            assert!(!directory.join("daemon.initialized").exists());
+                        }
                         select(&app, "stop");
                         tokio::time::timeout(Duration::from_secs(5), async {
                             loop {

@@ -35,7 +35,7 @@ export async function fixture(
       joined,
       device_id: "self",
       name: "mac1",
-      version: "0.1.0-rc.1",
+      version: "0.1.0-rc.2",
       daemon_running: true,
       daemon_connected: true,
       remote_access_paused: false,

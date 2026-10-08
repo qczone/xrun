@@ -11,11 +11,11 @@
     "remove": "bun scripts/remove.ts"
   },
   "devDependencies": {
-    "@cloudflare/workers-types": "5.20261003.1",
+    "@cloudflare/workers-types": "5.20261008.1",
     "@types/bun": "1.4.2",
-    "miniflare": "5.20261001.0-alpha",
+    "miniflare": "5.20261006.0-alpha",
     "typescript": "7.0.2",
-    "wrangler": "4.147.0"
+    "wrangler": "4.148.0"
   },
   "dependencies": {
     "@peculiar/x509": "2.1.0",
