@@ -65,7 +65,8 @@ jobs:
         run: |
           sudo loginctl enable-linger "$(id -un)"
           sudo systemctl start "user@$(id -u).service"
-          export XDG_RUNTIME_DIR="/run/user/$(id -u)"
+          XDG_RUNTIME_DIR="/run/user/$(id -u)"
+          export XDG_RUNTIME_DIR
           export DBUS_SESSION_BUS_ADDRESS="unix:path=$XDG_RUNTIME_DIR/bus"
           systemctl --user is-system-running --wait || test "$?" -eq 1
           mkdir -p "$XRUN_TEST_LOG_DIR"
@@ -101,6 +102,10 @@ jobs:
         run: |
           bun test scripts/compatibility-baseline.test.ts
           bun scripts/test-compatibility.ts
+      - name: Test automatic CLI installation
+        run: |
+          bun test tests/installer-platforms.test.ts
+          bash tests/install-linux.sh target/debug
       - name: Upload failed test process logs
         if: failure()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1

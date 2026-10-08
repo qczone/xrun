@@ -852,9 +852,9 @@ Rust workspace 的核心 package 提供 CLI、daemon 和 Rust 中转；桌面 pa
 
 `cli.rs` 只负责命令入口，参数、本机操作、远端选择、可靠提交、任务查询、日志、文件和转发分别位于 `src/cli/`。`daemon.rs` 持有共享资源并负责启动、恢复和退出；`src/daemon/requests.rs` 统一检查会话权限并建立审计生命周期，再分发给可靠任务、文件和连接型操作模块。各操作保留接收输入后的权限复查、并发配额和进程启动门锁。`network.rs` 保留对外 API 与本机网络状态校验，连接认证、设备同步、链接校验、创建、配对和续证分别位于 `src/network/`；新增请求种类必须显式加入穷尽分发。
 
-App 使用 Tauri 2、React、TypeScript、Vite 和 Bun，生产包包含静态前端与配套 Rust helper，不包含 Bun。根目录 `bun run --cwd desktop build` 根据平台生成 macOS DMG / App ZIP 或 Windows 当前用户 NSIS 安装包；`--debug` 使用调试目录。`--target` 可在同一操作系统内指定 x86_64 或 aarch64 的 Rust target，App 与 helper 按相同 target 构建，产物和缓存进入 `target/<target>/<profile>/`；默认本机构建仍使用 `target/<profile>/`。每个包包含单一架构。macOS 本地包默认 ad-hoc 签名，正式包使用 Developer ID 签名、公证 App 与 DMG 并附票据；Windows 安装包当前未签名。服务使用固定位置的包内 helper，升级前正常停止。App 隐藏或最小化时暂停页面轮询，再显示时刷新；托盘只读取轻量本地运行状态，不定时校验完整成员清单。CLI 安装 macOS LaunchAgent 时，同配置已加载的服务可重新启动；运行中改变程序路径需要先停止，停止后重新加载新配置。
+App 使用 Tauri 2、React、TypeScript、Vite 和 Bun，生产包包含静态前端与配套 Rust helper，不包含 Bun。根目录 `bun run --cwd desktop build` 根据平台生成 macOS App ZIP 或 Windows 当前用户 NSIS 安装 EXE；`--debug` 使用调试目录。`--target` 可在同一操作系统内指定 x86_64 或 aarch64 的 Rust target，App 与 helper 按相同 target 构建，产物和缓存进入 `target/<target>/<profile>/`；默认本机构建仍使用 `target/<profile>/`。每个包包含单一架构。macOS 本地包默认 ad-hoc 签名，正式包使用 Developer ID 签名、公证 App 并附票据后打包 ZIP；Windows 安装包当前未签名。桌面包同时包含终端 CLI，用户不需要单独安装 CLI。服务使用固定位置的包内 helper，升级前正常停止。App 隐藏或最小化时暂停页面轮询，再显示时刷新；托盘只读取轻量本地运行状态，不定时校验完整成员清单。CLI 安装 macOS LaunchAgent 时，同配置已加载的服务可重新启动；运行中改变程序路径需要先停止，停止后重新加载新配置。
 
-发布矩阵为 Linux、macOS、Windows 各自的 x86_64 / arm64，共六组。六组均提供 CLI 压缩包，macOS / Windows 另提供上述桌面产物；清单与文件名使用目标系统和架构，不使用构建机器的架构。自动安装脚本按设备架构选择对应清单。
+发布矩阵为 Linux、macOS、Windows 各自的 x86_64 / arm64，共六组。Linux 提供只含二进制的 CLI 压缩包，macOS / Windows 提供上述桌面产物，不单独分发 CLI 包；清单与文件名使用目标系统和架构，不使用构建机器的架构。自动安装脚本按设备架构选择对应清单，安装程序和用户 PATH。Package 默认保留 Actions 产物，可手动启用发布，在全部构建和检查通过后创建版本化 Release，分别提供程序、安装脚本和校验文件。
 
 Rust 与 Cloudflare 中转使用同一套连接认证和端到端会话协议，CLI 与 daemon 不依赖中转保存成员状态。
 
@@ -869,11 +869,11 @@ Rust 与 Cloudflare 中转使用同一套连接认证和端到端会话协议，
 - 核心测试包含前台提交与日志共用会话，以及独立 CLI 进程之间的缓存复用、配置更新、授权变化、数据库重建、并发请求隔离、私有 IPC 认证、提前归还、缓存上限、证书过期和上传期间源文件变化。
 - Linux 使用 Xvfb 验证 X11 PNG，并以 1 MiB 主线程栈检查命令和取消路径。
 - Linux 工作流另在 workerd 中运行 Cloudflare 中转测试，验证证书挑战、连接数量限制、一次性接入、断线清理和密文窗口。随后运行 `cloudflare` 的 `bun run test:interop`：本地 workerd 使用临时 HTTPS 证书和固定证书指纹，真实 Rust CLI/daemon 完成创建、配对、证书签名、可靠任务、64 MiB 文件往返、二进制流、TCP 半关闭、管理设备离线、空闲恢复与撤销。两组验证均无需 Cloudflare 凭证。互通脚本先用 Cargo 构建 CLI 和 Cloudflare 测试，复制到独立临时目录，再显式运行标为 ignore 的测试，避免运行期间被其他构建替换；普通 `cargo test` 不要求 workerd。相同测试也可通过私有 `XRUN_TEST_CF_LINK_FILE` 对已部署中转运行。
-- macOS/Windows 运行前端类型检查与 UI 测试、desktop Rust 检查，生成调试安装包并检查 App/helper。macOS 挂载 DMG 后使用其中 helper 跑 smoke；Windows 安装 NSIS 后使用安装目录 helper 跑 smoke。
+- macOS/Windows 运行前端类型检查与 UI 测试、desktop Rust 检查，生成调试安装包并检查 App/helper。macOS 解压 App ZIP 后使用其中 helper 跑 smoke；Windows 安装 NSIS 后使用安装目录 helper 跑 smoke。Linux 原生检查命令安装、PATH、重复安装和失败回滚。
 - Cargo 与 Bun 缓存按系统/架构、工具链或锁文件区分。失败时上传测试子进程日志。正式签名、公证与发布产物由独立 Package 工作流处理。
 - Package 工作流中 Linux / Windows 两种架构分别原生构建和运行产物检查；macOS 两组均在 ARM runner 构建，x86_64 产物通过 Rosetta 运行 smoke 与安装检查。后者验证转译环境，不代替 Intel Mac 实机验收。
 
-App 网络界面已通过本机 TypeScript/UI 测试、Rust 检查、调试 DMG、App 自检与包内 helper smoke；浏览器界面验收使用隔离的模拟 IPC。每次提交的远端 CI 结果以对应 Actions 为准，已有测试记录不能代替新提交的验证；正式签名包的真实网络操作仍按下表验收，模拟邀请/撤销不算真实网络验收。
+App 网络界面此前通过本机 TypeScript/UI 测试、Rust 检查、App 自检与包内 helper smoke；浏览器界面验收使用隔离的模拟 IPC。每次提交的远端 CI 结果以对应 Actions 为准，已有测试记录不能代替新提交的验证；正式签名包的真实网络操作仍按下表验收，模拟邀请/撤销不算真实网络验收。
 
 ### 7.3 实机进度与待验收
 

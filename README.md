@@ -49,17 +49,17 @@ xrun linux1 forward 8080:3000
 
 当前版本为 `0.1.0-rc.2`。
 
-| 平台 | CLI | 桌面 App |
-| --- | --- | --- |
-| macOS 13+ · x86_64 / arm64 | 压缩包 | DMG / App ZIP |
-| Windows · x86_64 / arm64 | 压缩包 | 当前用户安装程序 |
-| Linux · x86_64 / arm64 | 压缩包 | — |
+| 平台 | 下载与安装 |
+| --- | --- |
+| macOS 13+ · x86_64 / arm64 | App ZIP，解压后打开 `xrun.app`，自带 CLI |
+| Windows · x86_64 / arm64 | 当前用户安装 EXE，包含桌面 App 和 CLI |
+| Linux · x86_64 / arm64 | CLI 压缩包，里面只有 `xrun` |
 
 每种系统分别提供两种架构的包：`x86_64` 即 AMD64，`arm64` 对应 Apple Silicon、Windows ARM 和 ARM Linux。
 
 CLI、设备后台服务和 Linux Rust 中转使用同一个二进制。运行发布包不需要安装 Rust、Node.js 或 Bun。
 
-[查看安装说明](docs/usage.md#安装)。macOS 和 Windows 另提供适合 AI 与自动化的安装脚本，支持指定版本、SHA-256 校验和 JSON 结果，详见 [自动安装](docs/usage.md#ai-和命令行自动安装)。
+[Release](https://github.com/qczone/xrun/releases) 提供各平台的独立下载文件、安装脚本和校验清单。[查看安装说明](docs/usage.md#安装)。三个平台均支持命令安装，自动识别架构、校验指定版本及 SHA-256，并返回 JSON 结果，详见 [自动安装](docs/usage.md#ai-和命令行自动安装)。
 
 安装 CLI 后，`xrun help` 查看简洁帮助，`xrun doc` 查看完整离线手册，`xrun doc --list` 列出章节。内置手册与仓库使用同一份文件，随程序发布。
 

@@ -75,8 +75,6 @@ jobs:
           $PSNativeCommandUseErrorActionPreference = $true
           $artifactDir = Join-Path $env:RUNNER_TEMP 'xrun-installer-artifacts'
           New-Item -ItemType Directory -Force $artifactDir | Out-Null
-          # Preserve the console CLI before building the GUI-subsystem App helper.
-          Compress-Archive -Path ../target/${{ matrix.target }}/debug/xrun.exe -DestinationPath (Join-Path $artifactDir 'xrun-windows-${{ matrix.arch }}.zip') -Force
           bun install --frozen-lockfile
           bun run check
           bun run build --debug --target '${{ matrix.target }}' --verbose

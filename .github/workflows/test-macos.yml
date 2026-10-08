@@ -48,7 +48,7 @@ jobs:
           path: ~/.bun/install/cache
           key: xrun-${{ runner.os }}-${{ runner.arch }}-bun-${{ hashFiles('desktop/bun.lock', 'desktop/package.json') }}
           restore-keys: xrun-${{ runner.os }}-${{ runner.arch }}-bun-
-      - name: Build desktop DMG
+      - name: Build desktop App ZIP
         working-directory: desktop
         run: |
           bun install --frozen-lockfile
@@ -61,19 +61,17 @@ jobs:
           cargo clippy --locked -p xrun-desktop --all-targets -- -D warnings
           cargo test --locked -p xrun-desktop
           target/debug/bundle/macos/xrun.app/Contents/MacOS/xrun-desktop --self-check
-      - name: Test the DMG's bundled helper
+      - name: Test the App ZIP's bundled helper
         shell: bash
         run: |
           set -euo pipefail
-          dmgs=(target/debug/bundle/dmg/*.dmg)
-          test "${#dmgs[@]}" -eq 1
-          mount_dir="$RUNNER_TEMP/xrun-app-smoke"
-          mkdir -p "$mount_dir"
-          hdiutil attach -nobrowse -readonly -mountpoint "$mount_dir" "${dmgs[0]}"
-          trap 'hdiutil detach "$mount_dir" -force' EXIT
-          export XRUN_TEST_BINARY="$mount_dir/xrun.app/Contents/MacOS/xrun"
+          smoke_dir="$RUNNER_TEMP/xrun-app-smoke"
+          mkdir -p "$smoke_dir"
+          ditto -x -k target/debug/bundle/macos/xrun.app.zip "$smoke_dir"
+          codesign --verify --deep --strict "$smoke_dir/xrun.app"
+          export XRUN_TEST_BINARY="$smoke_dir/xrun.app/Contents/MacOS/xrun"
           cargo test --locked --test smoke -- --nocapture
-      - name: Test automatic App and CLI installation
+      - name: Test automatic App installation and bundled CLI
         shell: bash
         run: bash tests/install-macos.sh target/debug
       - name: Upload failed test process logs

@@ -8,7 +8,7 @@ mod platform;
 mod tray;
 
 fn main() {
-    #[cfg(windows)]
+    #[cfg(any(windows, target_os = "macos"))]
     if std::env::args().any(|arg| arg == "--install-cli") {
         if let Err(e) = platform::install_cli() {
             println!("{e:#}");

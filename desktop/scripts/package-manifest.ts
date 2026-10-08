@@ -22,18 +22,15 @@ const config = Bun.TOML.parse(
   await readFile(resolve(root, "Cargo.toml"), "utf8"),
 ) as { package: { version: string } };
 const version = config.package.version;
-const extension = platform.startsWith("windows-") ? "zip" : "tar.gz";
-const files: Record<string, string> = {
-  cli: `xrun-${platform}.${extension}`,
-};
-let installer: string | undefined;
+const files: Record<string, string> = {};
+let installer = "install.sh";
 if (platform.startsWith("darwin-")) {
   files.app = `xrun-app-${platform}.zip`;
-  files.dmg = `xrun-app-${platform}.dmg`;
-  installer = "install.sh";
 } else if (platform.startsWith("windows-")) {
   files.app = `xrun-app-${platform}.exe`;
   installer = "install.ps1";
+} else {
+  files.cli = `xrun-${platform}.tar.gz`;
 }
 const artifacts: Record<string, { file: string; sha256: string }> = {};
 for (const [component, file] of Object.entries(files)) {
@@ -47,9 +44,7 @@ await writeFile(
   resolve(directory, `xrun-${platform}.json`),
   `${JSON.stringify({ schema: 1, version, platform, artifacts }, null, 2)}\n`,
 );
-if (installer) {
-  await copyFile(
-    resolve(root, "scripts", installer),
-    resolve(directory, installer),
-  );
-}
+await copyFile(
+  resolve(root, "scripts", installer),
+  resolve(directory, installer),
+);

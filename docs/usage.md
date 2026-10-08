@@ -26,37 +26,39 @@ CLI 和 daemon 是同一个 Rust 二进制，运行已构建程序不需要 Rust
 
 | 平台 | 安装方式 |
 | --- | --- |
-| macOS x86_64 / arm64 | macOS 13+，DMG 拖入应用程序，或完整 App ZIP / CLI 压缩包 |
-| Windows x86_64 / arm64 | 当前用户 NSIS 安装程序，或 CLI 压缩包 |
-| Linux x86_64 / arm64 | CLI 压缩包，不提供桌面 App |
+| macOS x86_64 / arm64 | macOS 13+，App ZIP，包含桌面 App 和 CLI |
+| Windows x86_64 / arm64 | 当前用户 NSIS 安装 EXE，包含桌面 App 和 CLI |
+| Linux x86_64 / arm64 | CLI 压缩包，里面只有 `xrun` |
 
 按设备架构选择对应包：`x86_64` 即 AMD64，Intel Mac 使用这一版；`arm64` 对应 Apple Silicon、Windows ARM 和 ARM Linux。每个包只包含一种架构。
 
-CLI 可放在 `~/.local/bin/xrun`，Windows 可用 `%LOCALAPPDATA%\xrun\bin\xrun.exe`。将工具目录加入 PATH，运行 `xrun --version`、`xrun help`。服务注册当前二进制的绝对路径，请安装到固定位置。
+从 [Release](https://github.com/qczone/xrun/releases) 下载对应系统和架构的文件。Linux 手动安装时，将压缩包中的 `xrun` 放到 `~/.local/bin/` 并加入 PATH。服务注册当前二进制的绝对路径，请将程序放到固定位置。
 
-macOS 将 `xrun.app` 从 DMG 拖入“应用程序”后，首次打开 App 会自动把包内 CLI 链接到 `~/.local/bin/xrun`，并配置 zsh 和 Bash 的用户 PATH。重新打开终端即可运行 `xrun --version`，无需先加入网络。已有的独立 CLI 或其他 CLI 链接会保留；重复打开 App 不会重复添加 PATH 配置。从挂载中的 DMG 直接运行时不会创建永久 CLI 入口，请先复制 App。
+macOS 解压 App ZIP 后得到 `xrun.app`，双击即可打开，无需安装向导。长期使用建议先放到 `/Applications` 或 `~/Applications`，再打开 App。首次打开会自动把包内 CLI 链接到 `~/.local/bin/xrun`，并配置 zsh 和 Bash 的用户 PATH。重新打开终端即可运行 `xrun --version`，无需先加入网络。已有的独立 CLI 或其他 CLI 链接会保留；重复打开 App 不会重复添加 PATH 配置。macOS 在临时隔离位置运行下载的 App 时不会创建永久 CLI 入口，请先将 App 移到固定目录。
 
 Windows EXE 安装器同时安装桌面 App 和终端 CLI，并自动将安装目录下的 `cli` 目录加入当前用户 PATH。安装后重新打开终端即可运行 `xrun --version`，无需先打开 App 或加入网络。重复安装不重复添加；卸载只清理由安装器添加的 PATH 项，用户原有配置保留。
 
 ### AI 和命令行自动安装
 
-[install.sh](../scripts/install.sh) 支持 macOS，[install.ps1](../scripts/install.ps1) 支持 Windows，两者均自动识别 x86_64 / arm64 设备。指定完整发布版本，默认安装桌面 App；`--component cli`／`-Component cli` 只安装 CLI。脚本校验平台、版本、SHA-256 和安装后的程序；macOS App 另检查签名。整个过程通过 stdout 返回一条 JSON，失败时 `ok` 为 `false`、包含 `error.code` 和 `error.message`，进程退出码为 1；成功返回版本、安装路径、可执行文件路径、`changed` 和自检结果。重复安装相同产物时返回 `changed: false`。
+[install.sh](../scripts/install.sh) 支持 macOS 和 Linux，[install.ps1](../scripts/install.ps1) 支持 Windows，均自动识别 x86_64 / arm64 设备。指定完整发布版本，macOS、Windows 安装包含 CLI 的桌面 App，Linux 安装 CLI。脚本校验平台、版本、SHA-256 和安装后的程序；macOS App 另检查签名。安装后重新打开终端即可运行 `xrun`，不需要先打开桌面界面。Linux 安装过程需要 curl、tar、sha256sum，以及 jq 或 Python 3 用于读取清单。
 
-CLI 压缩包和源码中的安装脚本位于 `scripts/`。以下命令从解压目录或项目根目录执行；单独下载发布附件中的脚本时，将脚本路径替换为下载位置：
+从相应版本的 Release 下载安装脚本。例如 macOS / Linux：
 
 ```bash
-bash scripts/install.sh --version 0.1.0-rc.2
-bash scripts/install.sh --version 0.1.0-rc.2 --component cli
+curl -fL https://github.com/qczone/xrun/releases/download/v0.1.0-rc.2/install.sh -o install.sh
+bash install.sh --version 0.1.0-rc.2
 ```
 
 ```powershell
-powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File .\scripts\install.ps1 -Version 0.1.0-rc.2
-powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File .\scripts\install.ps1 -Version 0.1.0-rc.2 -Component cli
+Invoke-WebRequest https://github.com/qczone/xrun/releases/download/v0.1.0-rc.2/install.ps1 -OutFile install.ps1
+powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File .\install.ps1 -Version 0.1.0-rc.2
 ```
 
-macOS 默认识别设备的真实架构，即使终端通过 Rosetta 运行也会选择 arm64 包。已安装 Rosetta 的 Apple Silicon Mac 可用 `--arch x86_64` 安装 Intel 版，例如 `bash scripts/install.sh --version 0.1.0-rc.2 --arch x86_64`；Intel Mac 不支持安装 arm64 版。Windows 按系统架构自动选择原生包。
+整个过程通过 stdout 返回一条 JSON，失败时 `ok` 为 `false`、包含 `error.code` 和 `error.message`，进程退出码为 1；成功返回版本、安装路径、终端 CLI 的 `executable` 路径、`changed` 和自检结果。Windows 另返回 `helper_executable` 供检查后台 helper。重复安装相同产物时返回 `changed: false`。源码中的安装脚本位于 `scripts/`，也可直接从项目根目录执行。
 
-默认下载地址是 `https://github.com/qczone/xrun/releases/download/v<完整版本>/`。`--base-url`／`-BaseUrl` 可指定其他 HTTPS 产物目录。每个目录需包含对应的 `xrun-darwin-<架构>.json` 或 `xrun-windows-<架构>.json` 清单及其引用的文件，架构为 `x86_64` 或 `arm64`。安装时不需要 Bun；产物准备见 [开发与发布](development.md#发布与内置文档)。
+macOS 默认识别设备的真实架构，即使终端通过 Rosetta 运行也会选择 arm64 包。已安装 Rosetta 的 Apple Silicon Mac 可用 `--arch x86_64` 安装 Intel 版，例如 `bash install.sh --version 0.1.0-rc.2 --arch x86_64`；Intel Mac 不支持安装 arm64 版。Windows 和 Linux 按系统架构自动选择原生包。
+
+默认下载地址是 `https://github.com/qczone/xrun/releases/download/v<完整版本>/`。`--base-url`／`-BaseUrl` 可指定其他 HTTPS 产物目录。每个目录需包含对应的 `xrun-<系统>-<架构>.json` 清单及其引用的文件，系统为 `darwin`、`windows` 或 `linux`，架构为 `x86_64` 或 `arm64`。安装时不需要 Bun；产物准备见 [开发与发布](development.md#发布与内置文档)。
 
 离线安装或验收本地打包产物时，用 `--source-dir`／`-SourceDir` 指定产物目录。例如 macOS：
 
@@ -64,9 +66,9 @@ macOS 默认识别设备的真实架构，即使终端通过 Rosetta 运行也�
 bash scripts/install.sh --version 0.1.0-rc.2 --source-dir ./dist
 ```
 
-默认 macOS App 安装到 `~/Applications/xrun.app`，CLI 安装到 `~/.local/bin/xrun`；Windows App 安装到 `%LOCALAPPDATA%\Programs\xrun`，CLI 安装到 `%LOCALAPPDATA%\xrun\bin`。`--install-dir`／`-InstallDir` 可指定父目录，AI 可直接使用 JSON 返回的 `executable` 路径调用程序。脚本只安装程序；网络加入、设备授权和后台服务的启用继续使用现有 App 或 CLI 命令。
+默认 macOS App 安装到 `~/Applications/xrun.app`，CLI 入口为 `~/.local/bin/xrun`；Windows App 安装到 `%LOCALAPPDATA%\Programs\xrun`，CLI 位于其 `cli` 子目录；Linux CLI 安装到 `~/.local/bin/xrun`。`--install-dir`／`-InstallDir` 可指定父目录，AI 可直接使用 JSON 返回的 `executable` 路径调用程序。脚本安装程序并配置当前用户的终端 PATH；网络加入、设备授权和后台服务的启用继续使用现有 App 或 CLI 命令。
 
-macOS 更新前需关闭已安装的 App，脚本会正常停止旧 daemon，再替换文件；CLI 更新也会先停止 daemon。相同产物的重复安装不停止服务。macOS App 和 CLI、Windows CLI 的替换或自检失败会恢复旧文件。Windows App 使用 NSIS 静默安装；服务准备失败时不会弹窗或替换程序，返回 32（更新）或 33（卸载），诊断保存在安装目录的 `xrun-install-error.log`。
+macOS 更新前需关闭已安装的 App，脚本会正常停止旧 daemon，再替换文件；Linux CLI 更新也会先停止 daemon。相同产物的重复安装不停止服务。macOS App 和 Linux CLI 的替换或自检失败会恢复旧文件。Windows App 使用 NSIS 静默安装；服务准备失败时不会弹窗或替换程序，返回 32（更新）或 33（卸载），终端配置失败返回 34，诊断保存在安装目录的 `xrun-install-error.log`。
 
 ## 开始使用
 
@@ -259,7 +261,7 @@ xrun linux1 forward 0:3000 --json
 
 在「设置 → 启动与显示 → 语言」中选择「跟随系统」「中文」或「English」，切换后立即生效并保存，托盘菜单同步切换。默认跟随系统首选界面语言：中文使用中文，其余语言或读取失败时使用英文。跟随系统时，修改系统语言后重新启动 App 生效。
 
-macOS 13 及以上打开 DMG，将 `xrun.app` 拖入“应用程序”，再从 `/Applications` 启动；Windows 运行安装程序，安装到当前用户的目录。打开 App 后可以用中转地址创建网络，或粘贴成员邀请加入网络，也可以查看连接状态、控制后台服务，以及允许其他设备访问本机。已有 CLI 身份和配置会直接复用。
+macOS 13 及以上解压 App ZIP 后打开 `xrun.app`，长期使用建议先放到“应用程序”目录；Windows 运行安装 EXE，安装到当前用户的目录。两者自带 CLI。打开 App 后可以用中转地址创建网络，或粘贴成员邀请加入网络，也可以查看连接状态、控制后台服务，以及允许其他设备访问本机。已有 CLI 身份和配置会直接复用。
 
 App 分为本机、设备、活动、设置四个页面。本机概览分别显示后台服务、中转连接和远程访问状态；设备页管理其他设备对本机的访问，管理设备可通过页头入口生成邀请。「活动」展示在本机执行的任务，可以按状态筛选，查看来源设备、命令、工作目录、耗时、退出结果和 stdout/stderr；宽窗口并排显示列表与详情。窗口可见时，运行中的输出每 3 秒刷新；隐藏或最小化窗口会暂停页面查询，重新显示时刷新。向上滚动会暂停自动滚动，可点击“回到最新输出”继续跟随。其中「文件与截图」标签展示 push、pull 和 screenshot 的已有操作记录。App 只读本机 daemon 数据库，服务停止或网络断开后仍可查询，不会查询其他设备上执行的任务。
 

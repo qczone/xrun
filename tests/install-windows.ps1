@@ -71,8 +71,8 @@ function Invoke-Process([string]$File, [string]$Arguments, [int]$Timeout = 12000
         }
     } finally { $process.Dispose() }
 }
-function Run-Installer([string]$Component, [string]$Directory, [string]$Source = $ArtifactDir) {
-    $arguments = "-NoProfile -NonInteractive -ExecutionPolicy Bypass -File `"$root\scripts\install.ps1`" -Version $version -Component $Component -InstallDir `"$Directory`" -SourceDir `"$Source`""
+function Run-Installer([string]$Directory, [string]$Source = $ArtifactDir) {
+    $arguments = "-NoProfile -NonInteractive -ExecutionPolicy Bypass -File `"$root\scripts\install.ps1`" -Version $version -InstallDir `"$Directory`" -SourceDir `"$Source`""
     $result = Invoke-Process 'powershell.exe' $arguments
     $data = $result.Stdout | ConvertFrom-Json
     return [pscustomobject]@{ ExitCode = $result.ExitCode; Data = $data }
@@ -109,10 +109,6 @@ try {
     if (-not $ArtifactDir) { $ArtifactDir = Join-Path $testDir 'artifacts' }
     $ArtifactDir = [IO.Path]::GetFullPath($ArtifactDir)
     [void](New-Item -ItemType Directory -Path $ArtifactDir -Force)
-    $cliArchive = Join-Path $ArtifactDir "xrun-$platform.zip"
-    if (-not (Test-Path -LiteralPath $cliArchive)) {
-        Compress-Archive -Path (Join-Path $buildProfileDir 'xrun.exe') -DestinationPath $cliArchive
-    }
     $installer = Join-Path $ArtifactDir "xrun-app-$platform.exe"
     if (-not (Test-Path -LiteralPath $installer)) {
         $bundles = @(Get-ChildItem (Join-Path $buildProfileDir 'bundle/nsis/*.exe'))
@@ -124,19 +120,20 @@ try {
     $manifest = Get-Content -LiteralPath (Join-Path $ArtifactDir "xrun-$platform.json") -Raw | ConvertFrom-Json
     $version = $manifest.version
     $appDir = Join-Path $testDir '安装 App with spaces'
-    $cliDir = Join-Path $testDir 'CLI with spaces'
     # Exercise preservation of unrelated entries and an unexpanded variable.
     # The runner's original value and registry type are restored even on failure.
     $baselinePath = "$sandboxHome\工具;%USERPROFILE%\xrun-unrelated"
     $userEnvironment.SetValue('Path', $baselinePath, [Microsoft.Win32.RegistryValueKind]::ExpandString)
-    $result = Run-Installer 'app' $appDir
+    $result = Run-Installer $appDir
     Assert-That ($result.ExitCode -eq 0 -and $result.Data.ok -and $result.Data.changed) "App installation failed: $($result.Data | ConvertTo-Json -Compress)"
     Assert-That ($result.Data.path -ceq $appDir) 'JSON did not preserve the Unicode installation path.'
     Assert-That ($result.Data.platform -ceq $platform) 'Installer selected the wrong architecture.'
-    $appBinary = $result.Data.executable
+    $appBinary = $result.Data.helper_executable
+    $cliBinary = $result.Data.executable
     Assert-BinaryArchitecture $appBinary
     Assert-BinaryArchitecture $result.Data.desktop_executable
     $terminalDir = Join-Path $appDir 'cli'
+    Assert-That ($cliBinary -ceq (Join-Path $terminalDir 'xrun.exe')) 'JSON must expose the console CLI executable.'
     Assert-BinaryArchitecture (Join-Path $terminalDir 'xrun.exe') -Console
     $installedPath = "$baselinePath;$terminalDir"
     Assert-That ($userEnvironment.GetValue('Path', '', $rawValue) -ceq $installedPath) 'Installer did not preserve and extend user PATH.'
@@ -145,14 +142,8 @@ try {
     $result = Invoke-Process $installer "/S /D=$appDir"
     Assert-That ($result.ExitCode -eq 0) 'Direct EXE reinstallation failed.'
     Assert-That ($userEnvironment.GetValue('Path', '', $rawValue) -ceq $installedPath) 'Reinstallation duplicated or changed PATH entries.'
-    $result = Run-Installer 'app' $appDir
+    $result = Run-Installer $appDir
     Assert-That ($result.ExitCode -eq 0 -and -not $result.Data.changed) 'Repeated App installation should reuse the verified installation.'
-    $result = Run-Installer 'cli' $cliDir
-    Assert-That ($result.ExitCode -eq 0 -and $result.Data.ok -and $result.Data.changed) 'CLI installation failed.'
-    $cliBinary = $result.Data.executable
-    Assert-BinaryArchitecture $cliBinary
-    $result = Run-Installer 'cli' $cliDir
-    Assert-That ($result.ExitCode -eq 0 -and -not $result.Data.changed) 'Repeated CLI installation should reuse identical bytes.'
 
     $bad = Join-Path $testDir 'corrupt'
     [void](New-Item -ItemType Directory -Path $bad)
@@ -160,22 +151,22 @@ try {
     Copy-Item -LiteralPath (Join-Path $ArtifactDir "xrun-$platform.json") -Destination $bad
     [IO.File]::AppendAllText((Join-Path $bad "xrun-app-$platform.exe"), 'corrupt')
     $before = (Get-FileHash -LiteralPath $appBinary).Hash
-    $result = Run-Installer 'app' $appDir $bad
+    $result = Run-Installer $appDir $bad
     Assert-That ($result.ExitCode -ne 0 -and $result.Data.error.code -eq 'CHECKSUM_MISMATCH') 'Corrupt installer was not rejected.'
     Assert-That ((Get-FileHash -LiteralPath $appBinary).Hash -eq $before) 'Checksum failure changed the installed helper.'
     $manifest.version = '9.9.9'
     $manifest | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath (Join-Path $bad "xrun-$platform.json") -Encoding UTF8
-    $result = Run-Installer 'app' $appDir $bad
+    $result = Run-Installer $appDir $bad
     Assert-That ($result.ExitCode -ne 0 -and $result.Data.error.code -eq 'INVALID_MANIFEST') 'Wrong-version manifest was not rejected.'
     $manifest.version = $version
     $manifest.platform = 'wrong-platform'
     $manifest | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath (Join-Path $bad "xrun-$platform.json") -Encoding UTF8
-    $result = Run-Installer 'app' $appDir $bad
+    $result = Run-Installer $appDir $bad
     Assert-That ($result.ExitCode -ne 0 -and $result.Data.error.code -eq 'INVALID_MANIFEST') 'Wrong-platform manifest was not rejected.'
     $manifest.platform = $platform
     $manifest.artifacts.app.file = 'other-architecture.exe'
     $manifest | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath (Join-Path $bad "xrun-$platform.json") -Encoding UTF8
-    $result = Run-Installer 'app' $appDir $bad
+    $result = Run-Installer $appDir $bad
     Assert-That ($result.ExitCode -ne 0 -and $result.Data.error.code -eq 'INVALID_MANIFEST') 'Wrong artifact name was not rejected.'
     Assert-That ((Get-FileHash -LiteralPath $appBinary).Hash -eq $before) 'Manifest failure changed the installed helper.'
 
@@ -189,7 +180,7 @@ try {
     Assert-That ($result.ExitCode -eq 32) "Silent update should return 32, got $($result.ExitCode)."
     Assert-That ((Get-Content -LiteralPath (Join-Path $blocked 'xrun-install-error.log') -Raw) -match '^UPDATE_PREPARE_FAILED:') 'Silent update failure did not write diagnostics.'
     Assert-That ((Get-FileHash -LiteralPath $fakeDesktop).Hash -eq $before) 'Failed preparation replaced an existing executable.'
-    $result = Run-Installer 'app' $blocked
+    $result = Run-Installer $blocked
     Assert-That ($result.ExitCode -ne 0 -and $result.Data.error.code -eq 'UPDATE_PREPARE_FAILED' -and $result.Data.error.installer_exit_code -eq 32) 'Automatic installer did not preserve the structured preparation failure.'
 
     $desktop = Join-Path $appDir 'xrun-desktop.exe'
@@ -225,7 +216,7 @@ try {
 
     # A directory already registered by the user must survive App removal.
     $userEnvironment.SetValue('Path', $installedPath, [Microsoft.Win32.RegistryValueKind]::ExpandString)
-    $result = Run-Installer 'app' $appDir
+    $result = Run-Installer $appDir
     Assert-That ($result.ExitCode -eq 0 -and $result.Data.ok) 'Installation with a preexisting PATH entry failed.'
     Assert-That (-not (Test-Path -LiteralPath (Join-Path $appDir '.xrun-cli-path.json'))) 'Installer claimed ownership of a preexisting PATH entry.'
     $result = Invoke-Process $uninstaller "/S _?=$appDir" 30000
@@ -236,7 +227,7 @@ try {
     # silently overwriting it or hanging the unattended installer on a dialog.
     $userEnvironment.SetValue('Path', 7, [Microsoft.Win32.RegistryValueKind]::DWord)
     $pathFailure = Join-Path $testDir 'PATH failure'
-    $result = Run-Installer 'app' $pathFailure
+    $result = Run-Installer $pathFailure
     Assert-That ($result.ExitCode -ne 0 -and $result.Data.error.code -eq 'CLI_INSTALL_FAILED' -and $result.Data.error.installer_exit_code -eq 34) 'PATH registration failure was not reported.'
     Assert-That ($userEnvironment.GetValue('Path') -eq 7) 'Failed PATH registration overwrote the existing value.'
     $result = Invoke-Process (Join-Path $pathFailure 'uninstall.exe') "/S _?=$pathFailure" 30000

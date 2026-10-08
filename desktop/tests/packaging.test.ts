@@ -172,13 +172,12 @@ test("release manifests identify and hash all six platform artifact sets", async
         const platform = `${os}-${arch}`;
         const directory = join(temp, platform);
         await mkdir(directory);
-        const files: Record<string, string> = {
-          cli: `xrun-${platform}.${os === "windows" ? "zip" : "tar.gz"}`,
-        };
-        if (os === "darwin") {
-          files.app = `xrun-app-${platform}.zip`;
-          files.dmg = `xrun-app-${platform}.dmg`;
-        } else if (os === "windows") files.app = `xrun-app-${platform}.exe`;
+        const files: Record<string, string> =
+          os === "linux"
+            ? { cli: `xrun-${platform}.tar.gz` }
+            : {
+                app: `xrun-app-${platform}.${os === "darwin" ? "zip" : "exe"}`,
+              };
         for (const file of Object.values(files))
           await writeFile(join(directory, file), file);
         const child = Bun.spawn(
@@ -211,12 +210,10 @@ test("release manifests identify and hash all six platform artifact sets", async
             sha256: createHash("sha256").update(file).digest("hex"),
           });
         }
-        if (os !== "linux") {
-          const installer = os === "darwin" ? "install.sh" : "install.ps1";
-          expect(await readFile(join(directory, installer), "utf8")).toBe(
-            await readFile(join(root, "scripts", installer), "utf8"),
-          );
-        }
+        const installer = os === "windows" ? "install.ps1" : "install.sh";
+        expect(await readFile(join(directory, installer), "utf8")).toBe(
+          await readFile(join(root, "scripts", installer), "utf8"),
+        );
       }
     }
     const missing = join(temp, "missing");
