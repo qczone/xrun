@@ -13,11 +13,23 @@ $testDir = Join-Path ([IO.Path]::GetTempPath()) "xrun-installer-test-$([Guid]::N
 [void](New-Item -ItemType Directory -Path $testDir)
 $sandboxHome = Join-Path $testDir 'home'
 [void](New-Item -ItemType Directory -Path $sandboxHome)
+$userEnvironment = [Microsoft.Win32.Registry]::CurrentUser.CreateSubKey('Environment')
+$rawValue = [Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames
+$savedPath = $userEnvironment.GetValue('Path', $null, $rawValue)
+$savedPathKind = if ($null -ne $savedPath) { $userEnvironment.GetValueKind('Path') } else { $null }
+$machinePath = [Environment]::GetEnvironmentVariable('Path', 'Machine')
+
+Add-Type -Namespace XrunInstallerTests -Name EnvironmentNotification -MemberDefinition @'
+    [System.Runtime.InteropServices.DllImport("user32.dll", CharSet = System.Runtime.InteropServices.CharSet.Unicode)]
+    public static extern System.IntPtr SendMessageTimeout(
+        System.IntPtr window, uint message, System.UIntPtr parameter, string value,
+        uint flags, uint timeout, System.IntPtr result);
+'@
 
 function Assert-That([bool]$Condition, [string]$Message) {
     if (-not $Condition) { throw $Message }
 }
-function Assert-BinaryArchitecture([string]$File) {
+function Assert-BinaryArchitecture([string]$File, [switch]$Console) {
     # The NSIS bootstrap is x86 even for ARM64 apps; check its installed payload instead.
     $bytes = [IO.File]::ReadAllBytes($File)
     $peOffset = [BitConverter]::ToInt32($bytes, 0x3c)
@@ -26,8 +38,11 @@ function Assert-BinaryArchitecture([string]$File) {
     $machine = [BitConverter]::ToUInt16($bytes, $peOffset + 4)
     $expected = if ($Arch -eq 'arm64') { 0xaa64 } else { 0x8664 }
     Assert-That ($machine -eq $expected) "Installed executable has the wrong architecture: $File"
+    if ($Console) {
+        Assert-That ([BitConverter]::ToUInt16($bytes, $peOffset + 0x5c) -eq 3) 'Terminal CLI must use the console subsystem.'
+    }
 }
-function Invoke-Process([string]$File, [string]$Arguments, [int]$Timeout = 120000) {
+function Invoke-Process([string]$File, [string]$Arguments, [int]$Timeout = 120000, [string]$SearchPath) {
     $info = New-Object Diagnostics.ProcessStartInfo
     $info.FileName = $File
     $info.Arguments = $Arguments
@@ -36,6 +51,7 @@ function Invoke-Process([string]$File, [string]$Arguments, [int]$Timeout = 12000
     $info.RedirectStandardOutput = $true
     $info.RedirectStandardError = $true
     $info.EnvironmentVariables['HOME'] = $sandboxHome
+    if ($SearchPath) { $info.EnvironmentVariables['PATH'] = $SearchPath }
     # Process.Start bypasses PowerShell 7's Windows PowerShell module-path handling.
     $info.EnvironmentVariables.Remove('PSModulePath')
     $process = New-Object Diagnostics.Process
@@ -60,6 +76,21 @@ function Run-Installer([string]$Component, [string]$Directory, [string]$Source =
     $result = Invoke-Process 'powershell.exe' $arguments
     $data = $result.Stdout | ConvertFrom-Json
     return [pscustomobject]@{ ExitCode = $result.ExitCode; Data = $data }
+}
+
+function Assert-TerminalCommand([string]$Directory) {
+    # A child otherwise inherits this already-running runner's stale PATH. Rebuild
+    # its environment from the persisted values, as a newly opened terminal does.
+    $userPath = $userEnvironment.GetValue('Path', '', $rawValue)
+    $searchPath = [Environment]::ExpandEnvironmentVariables("$machinePath;$userPath")
+    $command = '-NoProfile -NonInteractive -Command "$ErrorActionPreference=''Stop''; (Get-Command xrun -CommandType Application).Source; xrun --version; exit $LASTEXITCODE"'
+    $result = Invoke-Process 'powershell.exe' $command 30000 $searchPath
+    $lines = $result.Stdout -split '\r?\n'
+    Assert-That ($result.ExitCode -eq 0) "PowerShell could not run xrun: $($result.Stderr)"
+    Assert-That ($lines[0] -ieq (Join-Path $Directory 'xrun.exe')) 'PowerShell resolved the wrong CLI.'
+    Assert-That ($lines[-1] -ceq "xrun $version") 'PowerShell CLI version output is missing or incorrect.'
+    $result = Invoke-Process 'cmd.exe' '/d /c "xrun --version"' 30000 $searchPath
+    Assert-That ($result.ExitCode -eq 0 -and $result.Stdout -ceq "xrun $version") 'CMD could not run xrun and receive its version output.'
 }
 
 try {
@@ -94,6 +125,10 @@ try {
     $version = $manifest.version
     $appDir = Join-Path $testDir '安装 App with spaces'
     $cliDir = Join-Path $testDir 'CLI with spaces'
+    # Exercise preservation of unrelated entries and an unexpanded variable.
+    # The runner's original value and registry type are restored even on failure.
+    $baselinePath = "$sandboxHome\工具;%USERPROFILE%\xrun-unrelated"
+    $userEnvironment.SetValue('Path', $baselinePath, [Microsoft.Win32.RegistryValueKind]::ExpandString)
     $result = Run-Installer 'app' $appDir
     Assert-That ($result.ExitCode -eq 0 -and $result.Data.ok -and $result.Data.changed) "App installation failed: $($result.Data | ConvertTo-Json -Compress)"
     Assert-That ($result.Data.path -ceq $appDir) 'JSON did not preserve the Unicode installation path.'
@@ -101,6 +136,15 @@ try {
     $appBinary = $result.Data.executable
     Assert-BinaryArchitecture $appBinary
     Assert-BinaryArchitecture $result.Data.desktop_executable
+    $terminalDir = Join-Path $appDir 'cli'
+    Assert-BinaryArchitecture (Join-Path $terminalDir 'xrun.exe') -Console
+    $installedPath = "$baselinePath;$terminalDir"
+    Assert-That ($userEnvironment.GetValue('Path', '', $rawValue) -ceq $installedPath) 'Installer did not preserve and extend user PATH.'
+    Assert-That ($userEnvironment.GetValueKind('Path') -eq [Microsoft.Win32.RegistryValueKind]::ExpandString) 'Installer changed the registry value type.'
+    Assert-TerminalCommand $terminalDir
+    $result = Invoke-Process $installer "/S /D=$appDir"
+    Assert-That ($result.ExitCode -eq 0) 'Direct EXE reinstallation failed.'
+    Assert-That ($userEnvironment.GetValue('Path', '', $rawValue) -ceq $installedPath) 'Reinstallation duplicated or changed PATH entries.'
     $result = Run-Installer 'app' $appDir
     Assert-That ($result.ExitCode -eq 0 -and -not $result.Data.changed) 'Repeated App installation should reuse the verified installation.'
     $result = Run-Installer 'cli' $cliDir
@@ -158,6 +202,7 @@ try {
     Assert-That ($result.ExitCode -eq 33) "Silent uninstall should return 33, got $($result.ExitCode)."
     Assert-That ((Get-Content -LiteralPath (Join-Path $appDir 'xrun-install-error.log') -Raw) -match '^UNINSTALL_PREPARE_FAILED:') 'Silent uninstall failure did not write diagnostics.'
     Assert-That (Test-Path -LiteralPath $appBinary) 'Failed preparation removed the installed helper.'
+    Assert-That ($userEnvironment.GetValue('Path', '', $rawValue) -ceq $installedPath) 'Failed uninstall changed user PATH.'
     Copy-Item -LiteralPath $savedDesktop -Destination $desktop -Force
 
     Set-Location $root
@@ -175,7 +220,34 @@ try {
     $logPath = Join-Path $appDir 'xrun-install-error.log'
     $details = if (Test-Path -LiteralPath $logPath) { Get-Content -LiteralPath $logPath -Raw } else { $result.Stderr }
     Assert-That ($result.ExitCode -eq 0) "Restored App did not uninstall successfully (exit $($result.ExitCode)): $details"
+    Assert-That ($userEnvironment.GetValue('Path', '', $rawValue) -ceq $baselinePath) 'Uninstall removed unrelated PATH entries or left its own entry behind.'
+    Assert-That (-not (Test-Path -LiteralPath (Join-Path $terminalDir 'xrun.exe'))) 'Uninstall left the bundled terminal CLI behind.'
+
+    # A directory already registered by the user must survive App removal.
+    $userEnvironment.SetValue('Path', $installedPath, [Microsoft.Win32.RegistryValueKind]::ExpandString)
+    $result = Run-Installer 'app' $appDir
+    Assert-That ($result.ExitCode -eq 0 -and $result.Data.ok) 'Installation with a preexisting PATH entry failed.'
+    Assert-That (-not (Test-Path -LiteralPath (Join-Path $appDir '.xrun-cli-path.json'))) 'Installer claimed ownership of a preexisting PATH entry.'
+    $result = Invoke-Process $uninstaller "/S _?=$appDir" 30000
+    Assert-That ($result.ExitCode -eq 0) 'Uninstall with a preexisting PATH entry failed.'
+    Assert-That ($userEnvironment.GetValue('Path', '', $rawValue) -ceq $installedPath) 'Uninstall removed a user-owned PATH entry.'
+
+    # An invalid registry value must produce a visible structured failure, without
+    # silently overwriting it or hanging the unattended installer on a dialog.
+    $userEnvironment.SetValue('Path', 7, [Microsoft.Win32.RegistryValueKind]::DWord)
+    $pathFailure = Join-Path $testDir 'PATH failure'
+    $result = Run-Installer 'app' $pathFailure
+    Assert-That ($result.ExitCode -ne 0 -and $result.Data.error.code -eq 'CLI_INSTALL_FAILED' -and $result.Data.error.installer_exit_code -eq 34) 'PATH registration failure was not reported.'
+    Assert-That ($userEnvironment.GetValue('Path') -eq 7) 'Failed PATH registration overwrote the existing value.'
+    $result = Invoke-Process (Join-Path $pathFailure 'uninstall.exe') "/S _?=$pathFailure" 30000
+    Assert-That ($result.ExitCode -eq 0) 'Partially installed App did not uninstall successfully.'
+    Assert-That ([Environment]::GetEnvironmentVariable('Path', 'Machine') -ceq $machinePath) 'Installer changed machine PATH.'
     Write-Host 'Automatic Windows App and CLI installation and silent failure tests passed.'
 } finally {
+    if ($null -eq $savedPath) { $userEnvironment.DeleteValue('Path', $false) }
+    else { $userEnvironment.SetValue('Path', $savedPath, $savedPathKind) }
+    $userEnvironment.Dispose()
+    [void][XrunInstallerTests.EnvironmentNotification]::SendMessageTimeout(
+        [IntPtr]0xffff, 0x1a, [UIntPtr]::Zero, 'Environment', 2, 5000, [IntPtr]::Zero)
     Remove-Item -LiteralPath $testDir -Recurse -Force
 }

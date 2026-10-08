@@ -57,18 +57,53 @@ pub async fn start() -> Result<()> {
 }
 
 #[cfg(target_os = "macos")]
+#[path = "platform/cli_install.rs"]
+mod cli_install;
+#[cfg(target_os = "macos")]
 #[path = "platform/macos.rs"]
 mod mac;
 #[cfg(windows)]
 mod windows;
+#[cfg(any(windows, test))]
+#[path = "platform/windows_path.rs"]
+mod windows_path;
 #[cfg(windows)]
 use windows::start_impl;
 #[cfg(windows)]
 pub(crate) use windows::{autostart, prepare_uninstall, remove, status};
+#[cfg(windows)]
+pub(crate) use windows_path::install_cli;
 
 #[cfg(target_os = "macos")]
 pub fn status() -> Result<ServiceStatus> {
     mac::state()
+}
+#[cfg(target_os = "macos")]
+pub fn install_cli() -> Result<()> {
+    let executable = std::env::current_exe()?;
+    // A mounted DMG or Gatekeeper's temporary copy cannot back a lasting CLI link.
+    if !mac::is_bundle_executable(&executable)
+        || executable.starts_with("/Volumes")
+        || executable
+            .components()
+            .any(|part| part.as_os_str() == "AppTranslocation")
+    {
+        return Ok(());
+    }
+    let directory = xrun::client::services::data_dir()?;
+    let home = directory.parent().ok_or_else(|| {
+        error::failure(
+            "CLI_INSTALL_FAILED",
+            "cannot locate the user home directory",
+        )
+    })?;
+    let zsh_directory = std::env::var_os("ZDOTDIR").map(PathBuf::from);
+    cli_install::install(&helper()?, home, zsh_directory.as_deref()).map_err(|failure| {
+        error::failure(
+            "CLI_INSTALL_FAILED",
+            format!("could not configure the terminal xrun command: {failure:#}"),
+        )
+    })
 }
 #[cfg(target_os = "macos")]
 async fn start_impl(helper: &std::path::Path) -> Result<()> {

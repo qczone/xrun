@@ -34,6 +34,10 @@ CLI 和 daemon 是同一个 Rust 二进制，运行已构建程序不需要 Rust
 
 CLI 可放在 `~/.local/bin/xrun`，Windows 可用 `%LOCALAPPDATA%\xrun\bin\xrun.exe`。将工具目录加入 PATH，运行 `xrun --version`、`xrun help`。服务注册当前二进制的绝对路径，请安装到固定位置。
 
+macOS 将 `xrun.app` 从 DMG 拖入“应用程序”后，首次打开 App 会自动把包内 CLI 链接到 `~/.local/bin/xrun`，并配置 zsh 和 Bash 的用户 PATH。重新打开终端即可运行 `xrun --version`，无需先加入网络。已有的独立 CLI 或其他 CLI 链接会保留；重复打开 App 不会重复添加 PATH 配置。从挂载中的 DMG 直接运行时不会创建永久 CLI 入口，请先复制 App。
+
+Windows EXE 安装器同时安装桌面 App 和终端 CLI，并自动将安装目录下的 `cli` 目录加入当前用户 PATH。安装后重新打开终端即可运行 `xrun --version`，无需先打开 App 或加入网络。重复安装不重复添加；卸载只清理由安装器添加的 PATH 项，用户原有配置保留。
+
 ### AI 和命令行自动安装
 
 [install.sh](../scripts/install.sh) 支持 macOS，[install.ps1](../scripts/install.ps1) 支持 Windows，两者均自动识别 x86_64 / arm64 设备。指定完整发布版本，默认安装桌面 App；`--component cli`／`-Component cli` 只安装 CLI。脚本校验平台、版本、SHA-256 和安装后的程序；macOS App 另检查签名。整个过程通过 stdout 返回一条 JSON，失败时 `ok` 为 `false`、包含 `error.code` 和 `error.message`，进程退出码为 1；成功返回版本、安装路径、可执行文件路径、`changed` 和自检结果。重复安装相同产物时返回 `changed: false`。

@@ -96,17 +96,24 @@ function main() {
       process.env.CARGO_BUILD_TARGET,
     );
   const extension = process.platform === "win32" ? ".exe" : "";
-  run("cargo", [
+  const build = [
     "build",
     "--locked",
     "-p",
     "xrun",
     ...targetArgs,
-    ...(process.platform === "win32" ? ["--features", "desktop-helper"] : []),
     ...(debug ? [] : ["--release"]),
-  ]);
+  ];
+  run("cargo", build);
   const binaries = resolve(desktop, "src-tauri/binaries");
   mkdirSync(binaries, { recursive: true });
+  if (process.platform === "win32") {
+    const cli = resolve(binaries, "cli");
+    mkdirSync(cli, { recursive: true });
+    copyFileSync(resolve(profileDir, "xrun.exe"), resolve(cli, "xrun.exe"));
+    // The terminal CLI waits and prints normally; the daemon helper has no console.
+    run("cargo", [...build, "--features", "desktop-helper"]);
+  }
   copyFileSync(
     resolve(profileDir, `xrun${extension}`),
     resolve(binaries, `xrun-${target}${extension}`),

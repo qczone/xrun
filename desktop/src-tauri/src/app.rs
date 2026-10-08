@@ -65,6 +65,8 @@ pub(super) fn app_builder<R: tauri::Runtime>(
             #[cfg(target_os = "macos")]
             app.set_activation_policy(tauri::ActivationPolicy::Accessory);
             let item = tray::build(app)?;
+            #[cfg(target_os = "macos")]
+            let _ = record(app.handle(), platform::install_cli());
             let handle = app.handle().clone();
             tauri::async_runtime::spawn(async move {
                 loop {
@@ -163,6 +165,12 @@ pub(crate) mod tests {
                     )?;
                     let bundled = contents.join("MacOS/ui-test");
                     std::fs::copy(&exe, &bundled)?;
+                    let helper = contents.join("MacOS/xrun");
+                    std::fs::write(
+                        &helper,
+                        format!("#!/bin/sh\nprintf 'xrun {}\\n'\n", xrun::protocol::VERSION),
+                    )?;
+                    std::fs::set_permissions(&helper, std::fs::Permissions::from_mode(0o755))?;
                     bundled
                 } else {
                     exe.clone()
@@ -186,6 +194,7 @@ pub(crate) mod tests {
                     .env("XRUN_UI_SCENARIO", scenario)
                     .env("HOME", &home)
                     .env("USERPROFILE", &home)
+                    .env("ZDOTDIR", &home)
                     .stdout(Stdio::piped())
                     .stderr(Stdio::piped())
                     .spawn()?;
@@ -233,6 +242,7 @@ pub(crate) mod tests {
         fn scenario_child(scenario: &str) -> Result<()> {
             let joined = scenario == "joined";
             let background = scenario == "background";
+            let bundled = scenario == "bundled";
             if joined {
                 seed(&relay_config(&config::home_dir()?)?)?;
             }
@@ -251,6 +261,26 @@ pub(crate) mod tests {
             let code = app.run_return(move |app, event| match event {
                 tauri::RunEvent::Ready => {
                     assert!(app.tray_by_id("xrun").is_some());
+                    let home = config::home_dir().unwrap();
+                    let cli = home.join(".local/bin/xrun");
+                    if bundled {
+                        assert_eq!(
+                            std::fs::read_link(cli).unwrap(),
+                            std::env::current_exe().unwrap().with_file_name("xrun")
+                        );
+                        let output = Command::new("/bin/zsh")
+                            .args(["-lc", "xrun --version"])
+                            .env("PATH", "/usr/bin:/bin:/usr/sbin:/sbin")
+                            .output()
+                            .unwrap();
+                        assert!(output.status.success());
+                        assert_eq!(
+                            String::from_utf8(output.stdout).unwrap().trim(),
+                            format!("xrun {}", xrun::protocol::VERSION)
+                        );
+                    } else {
+                        assert!(!cli.exists());
+                    }
                     super::super::super::tray::tests::verify_language_switch(app).unwrap();
                     let window = app.get_webview_window("main").unwrap();
                     assert_eq!(window.is_visible().unwrap(), !background && !joined);

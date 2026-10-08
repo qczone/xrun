@@ -8,6 +8,14 @@ mod platform;
 mod tray;
 
 fn main() {
+    #[cfg(windows)]
+    if std::env::args().any(|arg| arg == "--install-cli") {
+        if let Err(e) = platform::install_cli() {
+            println!("{e:#}");
+            std::process::exit(1);
+        }
+        return;
+    }
     if std::env::args().any(|arg| arg == "--self-check") {
         let result = tauri::async_runtime::block_on(platform::check_helper()).and_then(|()| {
             let status = xrun::client::local_status()?;

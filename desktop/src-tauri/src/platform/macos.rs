@@ -65,7 +65,7 @@ fn set_enabled(service: &impl AppService, enabled: bool) -> Result<()> {
     Ok(())
 }
 
-fn is_bundle_executable(exe: &std::path::Path) -> bool {
+pub(super) fn is_bundle_executable(exe: &std::path::Path) -> bool {
     let Some(macos) = exe.parent() else {
         return false;
     };

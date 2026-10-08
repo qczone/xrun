@@ -21,6 +21,25 @@
   xrun_install_ready:
 !macroend
 
+!macro NSIS_HOOK_POSTINSTALL
+  nsExec::ExecToStack '"$INSTDIR\xrun-desktop.exe" --install-cli'
+  Pop $0
+  Pop $1
+  ${If} $0 != 0
+    DetailPrint "Could not configure the xrun terminal command: $1"
+    ClearErrors
+    FileOpen $2 "$INSTDIR\xrun-install-error.log" w
+    ${IfNot} ${Errors}
+      FileWriteUTF16LE /BOM $2 "CLI_INSTALL_FAILED: $1$\r$\n"
+      FileClose $2
+    ${EndIf}
+    IfSilent +2
+      MessageBox MB_OK|MB_ICONSTOP "Could not configure the xrun terminal command: $1"
+    SetErrorLevel 34
+    Abort
+  ${EndIf}
+!macroend
+
 !macro NSIS_HOOK_PREUNINSTALL
   Delete "$INSTDIR\xrun-install-error.log"
   nsExec::ExecToStack '"$INSTDIR\xrun-desktop.exe" --prepare-uninstall'

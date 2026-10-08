@@ -1,5 +1,6 @@
 {
   "bundle": {
-    "targets": ["nsis"]
+    "targets": ["nsis"],
+    "resources": { "binaries/cli/xrun.exe": "cli/xrun.exe" }
   }
 }

@@ -39,6 +39,7 @@ pub(crate) async fn prepare_uninstall() -> Result<()> {
     if key.get_value::<String, _>("xrun").ok().as_deref() == Some(&own_value) {
         key.delete_value("xrun")?;
     }
+    super::windows_path::uninstall_cli()?;
     Ok(())
 }
 

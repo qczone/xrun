@@ -30,6 +30,8 @@ tauri = { version = "2", features = ["test"] }
 libc = "0.2"
 objc2-foundation = { version = "0.3", features = ["NSString", "NSError"] }
 objc2-service-management = { version = "0.3", features = ["SMAppService"] }
+tempfile = "3.27.0"
 
 [target.'cfg(windows)'.dependencies]
 winreg = "0.56"
+windows-sys = { version = "0.61.2", features = ["Win32_UI_WindowsAndMessaging", "Win32_System_Environment"] }

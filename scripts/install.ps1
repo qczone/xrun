@@ -151,7 +151,11 @@ try {
                 $installerExitCode = $installed.ExitCode
                 $logPath = Join-Path $InstallDir 'xrun-install-error.log'
                 $details = if (Test-Path -LiteralPath $logPath) { (Get-Content -LiteralPath $logPath -Raw).Trim() } else { $installed.Stderr }
-                $code = if ($installed.ExitCode -eq 32) { 'UPDATE_PREPARE_FAILED' } else { 'INSTALLER_FAILED' }
+                $code = switch ($installed.ExitCode) {
+                    32 { 'UPDATE_PREPARE_FAILED' }
+                    34 { 'CLI_INSTALL_FAILED' }
+                    default { 'INSTALLER_FAILED' }
+                }
                 Fail-Install $code "NSIS exited with code $($installed.ExitCode). $details"
             }
         }

@@ -71,6 +71,10 @@ macOS 开发模式可在界面中启动和停止后台 daemon，无需先打包 
 
 桌面入口为 `desktop/scripts/desktop.ts`，先编译配套 daemon，再调用 Tauri；打包时自动构建前端，两者完整版本必须一致。平台配置 `tauri.macos.conf.json` 和 `tauri.windows.conf.json` 分别指定 DMG 和 NSIS。默认构建目录是项目根目录的 `target/`；如果设置了 `CARGO_TARGET_DIR`，构建缓存和产物会使用指定目录。前端源代码在 `desktop/src/`，构建输出在 `desktop/dist/`。macOS 本地包默认对整个 App 和内嵌程序做 ad-hoc 签名，打包后校验签名；正式发布需要 Developer ID 签名和公证，可通过 `APPLE_SIGNING_IDENTITY` 指定签名身份，GitHub Actions 会对包内 App 和最终 DMG 分别公证并附加公证票据。Windows 安装包目前未签名。
 
+macOS 安装版 App 在启动时配置当前用户的终端 CLI；开发模式和挂载中的 DMG 不修改终端配置。CLI 使用指向包内 helper 的 `~/.local/bin/xrun` 链接，zsh 的 `.zprofile` / `.zshrc`（遵循 `ZDOTDIR`）及 Bash 当前有效的登录配置 / `.bashrc` 添加幂等 PATH 块。配置文件原有内容、权限和符号链接保留，写入失败会在 App 中报告 `CLI_INSTALL_FAILED`，不妨碍打开主窗口。`--self-check` 不执行安装配置。
+
+Windows 安装包在 `cli/xrun.exe` 中包含控制台版 CLI，根目录 `xrun.exe` 仍是无控制台 daemon helper。NSIS 安装后调用 App 的 `--install-cli` 写入 `HKCU\Environment\Path`，保留原有注册表类型、未展开的变量和长 PATH，并广播环境更新。安装器通过 `.xrun-cli-path.json` 记录自己添加的项，卸载准备成功后只移除该项；预先存在的用户 PATH 项不归安装器所有。配置失败返回安装器退出码 34 和 `CLI_INSTALL_FAILED`。Windows 安装回归同时检查 PowerShell / CMD 按名称运行 CLI、重复安装、卸载清理和配置失败。
+
 ## 验证
 
 Rust 模块内部测试统一放在对应源码末尾的 `#[cfg(test)] mod tests` 中，平台限定条件按需保留。集成测试放在 `tests/`。桌面端原生 UI 测试需要在进程主线程运行，独立入口保留在 `desktop/src-tauri/tests/native_ui.rs`，使用 `harness = false`。
