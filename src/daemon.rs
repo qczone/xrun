@@ -17,7 +17,7 @@ use crate::{
     net::{self},
     network,
     protocol::*,
-    store::TaskStore,
+    store::JobStore,
 };
 use anyhow::{Context, Result, bail};
 use std::{
@@ -44,10 +44,10 @@ pub(crate) fn init() -> Result<()> {
     config::restrict_dir(&dir)?;
     let marker = dir.join("daemon.initialized");
     if !marker.exists() {
-        TaskStore::open(&dir.join("daemon.db"), true)?;
+        JobStore::open(&dir.join("daemon.db"), true)?;
         config::atomic_private_write(&marker, b"2\n")?;
     } else {
-        TaskStore::open(&dir.join("daemon.db"), false)?;
+        JobStore::open(&dir.join("daemon.db"), false)?;
     }
     if !dir.join("daemon.toml").exists() {
         let mut cfg = DaemonConfig::default();
@@ -82,7 +82,7 @@ pub(crate) fn reset() -> Result<()> {
             std::fs::remove_file(path)?
         }
     }
-    TaskStore::open(&dir.join("daemon.db"), true)?;
+    JobStore::open(&dir.join("daemon.db"), true)?;
     config::atomic_private_write(&dir.join("daemon.initialized"), b"2\n")?;
     Ok(())
 }
@@ -93,7 +93,7 @@ struct Runtime {
     access: watch::Sender<access::Snapshot>,
     access_scan: Mutex<()>,
     network_id: String,
-    store: Arc<TaskStore>,
+    store: Arc<JobStore>,
     running: Mutex<HashMap<String, u32>>,
     jobs: Mutex<tokio::task::JoinSet<()>>,
     canceled: Mutex<HashSet<String>>,
@@ -123,41 +123,102 @@ impl Drop for RunningStream {
     fn drop(&mut self) {
         self.rt.running.lock().unwrap().remove(&self.id);
         self.rt.streams.fetch_sub(1, Ordering::SeqCst);
+        self.rt.canceled.lock().unwrap().remove(&self.id);
     }
 }
-struct FileAudit {
-    store: Arc<TaskStore>,
-    value: serde_json::Value,
-    completed: bool,
-    stream_counts: Option<Arc<crate::streaming::Counts>>,
-    persisted: bool,
+struct OperationJob {
+    store: Arc<JobStore>,
+    job_id: String,
+    finished: bool,
+    attachment_error: Option<String>,
+    leftover_possible: bool,
 }
-impl FileAudit {
-    fn snapshot(&mut self) -> serde_json::Value {
-        self.value["ended_at_ms"] = serde_json::json!(now_ms());
-        if let Some(counts) = &self.stream_counts {
-            self.value["bytes"] = counts.snapshot();
+impl OperationJob {
+    async fn retain_file(&mut self, path: &std::path::Path, name: String) {
+        let cache = self.store.attachments();
+        let path = path.to_owned();
+        let result = tokio::task::spawn_blocking(move || cache.save_file(&path, &name))
+            .await
+            .map_err(anyhow::Error::from)
+            .and_then(|result| result);
+        self.retained(result).await;
+    }
+    async fn retain_bytes(&mut self, bytes: Vec<u8>, name: String) {
+        let cache = self.store.attachments();
+        let result =
+            tokio::task::spawn_blocking(move || cache.save(std::io::Cursor::new(bytes), &name))
+                .await
+                .map_err(anyhow::Error::from)
+                .and_then(|result| result);
+        self.retained(result).await;
+    }
+    async fn retained(&mut self, result: Result<crate::attachments::AttachmentMetadata>) {
+        let result = match result {
+            Ok(metadata) => self.store.attach(&self.job_id, metadata).await,
+            Err(error) => Err(error),
+        };
+        if let Err(error) = result {
+            tracing::warn!(%error,"job attachment could not be retained");
+            let mut diagnostic = format!("{error:#}");
+            crate::store::jobs::bound_diagnostic(&mut diagnostic);
+            self.attachment_error = Some(diagnostic);
         }
-        self.value["result"] = serde_json::json!(if self.completed {
-            "ok"
-        } else {
-            "failed_or_disconnected"
-        });
-        self.value.clone()
     }
-    async fn persist(&mut self) -> Result<()> {
-        let value = self.snapshot();
-        self.store.audit_async(value).await?;
-        self.persisted = true;
+    fn finish(&mut self, state: JobState, mut result: JobResult) -> Result<()> {
+        match &mut result {
+            JobResult::File(value) => value.attachment_error = self.attachment_error.take(),
+            JobResult::Screenshot(value) => value.attachment_error = self.attachment_error.take(),
+            _ => {}
+        }
+        self.store.finish_sync(
+            &self.job_id,
+            crate::store::JobOutcome {
+                result: Some(result),
+                ..crate::store::JobOutcome::new(state)
+            },
+        )?;
+        self.finished = true;
+        Ok(())
+    }
+    fn cancel(&mut self) -> Result<()> {
+        self.store.finish_sync(
+            &self.job_id,
+            crate::store::JobOutcome {
+                error_code: Some("JOB_CANCELED".into()),
+                error_message: Some("operation canceled by its source device".into()),
+                ..crate::store::JobOutcome::new(JobState::Canceled)
+            },
+        )?;
+        self.finished = true;
+        Ok(())
+    }
+    fn fail(&mut self, error: &anyhow::Error) -> Result<()> {
+        let mut outcome = crate::store::JobOutcome::failed(error);
+        if crate::error::code(error).is_none_or(|code| {
+            matches!(
+                code,
+                ErrorCode::Unconfirmed | ErrorCode::StorageError | ErrorCode::ConnectionClosed
+            )
+        }) {
+            outcome.state = JobState::Lost;
+            outcome.leftover_possible = self.leftover_possible;
+        }
+        self.store.finish_sync(&self.job_id, outcome)?;
+        self.finished = true;
         Ok(())
     }
 }
-impl Drop for FileAudit {
+impl Drop for OperationJob {
     fn drop(&mut self) {
-        if !self.persisted {
-            let value = self.snapshot();
-            if let Err(error) = self.store.audit_detached(value) {
-                tracing::error!(%error, "operation audit could not be queued");
+        if !self.finished {
+            let outcome = crate::store::JobOutcome {
+                error_code: Some("RESULT_LOST".into()),
+                error_message: Some("operation interrupted before its result was recorded".into()),
+                leftover_possible: self.leftover_possible,
+                ..crate::store::JobOutcome::new(JobState::Lost)
+            };
+            if let Err(error) = self.store.finish_detached(self.job_id.clone(), outcome) {
+                tracing::error!(%error,"interrupted job could not be queued");
             }
         }
     }
@@ -244,7 +305,7 @@ pub async fn run() -> Result<()> {
     let network_id = network::authority(&id)?.network_id.clone();
     network::current(&id)?;
     let members = network::cache()?;
-    let store = Arc::new(TaskStore::open(&dir.join("daemon.db"), false)?);
+    let store = Arc::new(JobStore::open(&dir.join("daemon.db"), false)?);
     store.prune()?;
     for mut job in store.unfinished()? {
         job.leftover_possible = true;
@@ -265,21 +326,21 @@ pub async fn run() -> Result<()> {
             job.leftover_possible = false;
         }
         job.state = JobState::Lost;
-        job.error = Some("RESULT_LOST: daemon stopped before recording result".into());
+        job.error_code = Some("RESULT_LOST".into());
+        job.error_message = Some("RESULT_LOST: daemon stopped before recording result".into());
         job.updated_at_ms = now_ms();
         store.finish_sync(
             &job.job_id,
             crate::store::JobOutcome {
-                state: job.state,
-                exit_code: None,
-                signal: None,
-                duration_ms: None,
-                error: job.error,
-                incomplete_reason: Some("DETACHED_OUTPUT".into()),
+                error_code: Some("RESULT_LOST".into()),
+                error_message: job.error_message,
+                output_loss_reason: job.output_complete.map(|_| "DETACHED_OUTPUT".into()),
                 leftover_possible: job.leftover_possible,
+                ..crate::store::JobOutcome::new(job.state)
             },
         )?;
     }
+    store.attachments().prune_orphans()?;
     let (stop, _) = watch::channel(false);
     let initial_access = Arc::new(access::Authorization {
         config: DaemonConfig::load()?,
@@ -361,7 +422,7 @@ async fn finish_tasks(rt: Arc<Runtime>) -> Result<()> {
         tokio::time::sleep(Duration::from_millis(20)).await;
     }
     // Canceled file requests retain their permits until their worker/capture
-    // process has stopped and the operation's audit has been saved.
+    // process has stopped and the operation's job result has been saved.
     while rt.files.available_permits() != FILE_OPERATION_LIMIT {
         tokio::time::sleep(Duration::from_millis(20)).await;
     }

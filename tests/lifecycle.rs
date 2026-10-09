@@ -170,13 +170,13 @@ fn main() {
         std::fs::write(finish, b"finish")?;
         // Observe completion in target-local storage with the relay still down.
         let storage =
-            xrun::testing::store::TaskStore::open(&lab.target.join(".xrun/daemon.db"), false)?;
+            xrun::testing::store::JobStore::open(&lab.target.join(".xrun/daemon.db"), false)?;
         tokio::time::timeout(Duration::from_secs(10), async {
             loop {
                 let value = storage.get(id)?.context("accepted task missing")?;
                 if value.state.terminal() {
-                    assert_eq!(value.state, xrun::protocol::JobState::Exited);
-                    assert_eq!(value.exit_code, Some(0));
+                    assert_eq!(value.state, xrun::protocol::JobState::Succeeded);
+                    assert_eq!(value.exit_code(), Some(0));
                     break;
                 }
                 tokio::time::sleep(Duration::from_millis(50)).await;
@@ -187,8 +187,8 @@ fn main() {
         lab.relay.start().await?;
         online(&lab.source, "target1").await?;
         let result = json(cli(&lab.source, &["target1", "wait", id, "--json"]).await);
-        assert_eq!(result["job"]["state"], "exited");
-        assert_eq!(result["job"]["exit_code"], 0);
+        assert_eq!(result["job"]["state"], "succeeded");
+        assert_eq!(result["job"]["result"]["exit_code"], 0);
         assert!(
             ok(cli(&lab.source, &["target1", "logs", id]).await)
                 .contains("finished while relay was down")

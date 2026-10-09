@@ -81,11 +81,16 @@ pub struct DaemonConfig {
     pub default_cwd: Option<PathBuf>,
     #[serde(default = "concurrency")]
     pub max_concurrent_jobs: usize,
+    #[serde(default = "attachment_retention")]
+    pub attachment_retention_days: u16,
     #[serde(default)]
     pub env: BTreeMap<String, String>,
 }
 fn concurrency() -> usize {
     4
+}
+fn attachment_retention() -> u16 {
+    30
 }
 impl Default for DaemonConfig {
     fn default() -> Self {
@@ -97,6 +102,7 @@ impl Default for DaemonConfig {
             pause_generation: 0,
             default_cwd: None,
             max_concurrent_jobs: 4,
+            attachment_retention_days: attachment_retention(),
             env: BTreeMap::new(),
         }
     }
@@ -133,7 +139,10 @@ impl DaemonConfig {
         Ok(())
     }
     pub fn load() -> Result<Self> {
-        let path = device_dir()?.join("daemon.toml");
+        Self::load_at(&device_dir()?)
+    }
+    pub(crate) fn load_at(dir: &Path) -> Result<Self> {
+        let path = dir.join("daemon.toml");
         let value: Self = if path.exists() {
             read(&path)?
         } else {
@@ -143,6 +152,11 @@ impl DaemonConfig {
         Ok(value)
     }
     fn validate(&self) -> Result<()> {
+        if self.attachment_retention_days > 3650 {
+            bail!(ErrorCode::InvalidConfig.error(
+                "attachment_retention_days must be 0..3650 (0 keeps attachments indefinitely)"
+            ))
+        }
         if !(1..=64).contains(&self.max_concurrent_jobs) {
             bail!(ErrorCode::InvalidConfig.error("max_concurrent_jobs must be 1..64"))
         }

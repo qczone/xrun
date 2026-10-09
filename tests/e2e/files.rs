@@ -98,5 +98,28 @@ pub(super) async fn check(suite: &Suite) -> Result<()> {
         );
     }
 
+    // Snapshots from the first transfer survive subsequent overwrites of the
+    // published file. Inspect only this lifecycle's isolated target home.
+    let db = rusqlite::Connection::open_with_flags(
+        target.join(".xrun/daemon.db"),
+        rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
+    )?;
+    let copies = db
+        .prepare(
+            "SELECT jobs.kind,job_attachments.attachment_id FROM job_attachments JOIN jobs USING(job_id)
+         WHERE job_attachments.sha256=?1 AND jobs.state='succeeded'",
+        )?
+        .query_map([sha256(&content)], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+        })?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    assert!(copies.iter().any(|(op, _)| op == "push"));
+    assert!(copies.iter().any(|(op, _)| op == "pull"));
+    for (_, id) in copies {
+        assert_eq!(
+            std::fs::read(target.join(".xrun/attachments").join(format!("{id}.blob")))?,
+            content
+        );
+    }
     Ok(())
 }

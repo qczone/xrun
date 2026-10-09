@@ -1,4 +1,4 @@
-import { PROTOCOL, parseRange } from "../src/protocol";
+import { PROTOCOL } from "../src/protocol";
 import "reflect-metadata";
 import { chmod, copyFile, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -136,22 +136,15 @@ try {
       httpsKey: pemKey,
       httpsCert: `${server.toString("pem")}\n${ca.toString("pem")}`,
       modules: true,
-      // Load the bundle as one module; historical files can live outside
-      // Miniflare's module root and must not become ../ module names.
       script: await Bun.file(
-        process.env.XRUN_TEST_CF_WORKER ||
-          resolve(import.meta.dir, "../.wrangler/build/index.js"),
+        resolve(import.meta.dir, "../.wrangler/build/index.js"),
       ).text(),
       compatibilityDate: "2026-10-03",
       durableObjects: { NETWORKS: { className: "XrunRelay", useSQLite: true } },
       bindings: {
         RELAY_ROUTE: route,
-        XRUN_PROTOCOL_MIN: process.env.XRUN_TEST_CF_PROTOCOL
-          ? parseRange(process.env.XRUN_TEST_CF_PROTOCOL).min
-          : PROTOCOL.min,
-        XRUN_PROTOCOL_MAX: process.env.XRUN_TEST_CF_PROTOCOL
-          ? parseRange(process.env.XRUN_TEST_CF_PROTOCOL).max
-          : PROTOCOL.max,
+        XRUN_PROTOCOL_MIN: PROTOCOL.min,
+        XRUN_PROTOCOL_MAX: PROTOCOL.max,
       },
     }),
   );

@@ -75,6 +75,7 @@ export function useOperationController(
       all_permissions: "action.allPermissionsFailed",
       pause_access: "action.pauseFailed",
       save_settings: "action.settingsFailed",
+      save_attachment_retention: "settings.retentionFailed",
     };
     const success =
       (await operate(

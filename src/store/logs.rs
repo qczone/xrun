@@ -1,5 +1,5 @@
 //! Log rows, quotas and loss markers commit together before notifying readers.
-use super::{tasks::Database, *};
+use super::{jobs::Database, *};
 
 impl Database {
     pub(super) fn tail(
@@ -13,7 +13,7 @@ impl Database {
             return Ok(vec![]);
         }
         let mut statement = self.db.prepare(
-            "SELECT seq,stream,bytes FROM logs WHERE job=?1 AND seq>?2 AND seq<=?3 ORDER BY seq DESC",
+            "SELECT seq,stream,bytes FROM job_logs WHERE job_id=?1 AND seq>?2 AND seq<=?3 ORDER BY seq DESC",
         )?;
         let mut rows =
             statement.query(params![id, i64::try_from(after)?, i64::try_from(through)?])?;
@@ -53,7 +53,7 @@ impl Database {
             return Ok(vec![]);
         };
         let mut statement = self.db.prepare(
-            "SELECT seq,stream,bytes FROM logs WHERE job=?1 AND seq>?2 ORDER BY seq LIMIT 16",
+            "SELECT seq,stream,bytes FROM job_logs WHERE job_id=?1 AND seq>?2 ORDER BY seq LIMIT 16",
         )?;
         Ok(statement
             .query_map(params![id, after], |row| {
@@ -74,7 +74,7 @@ impl Database {
             return Ok(None);
         }
         let own: i64 = transaction
-            .query_row("SELECT bytes FROM log_sizes WHERE job=?1", [id], |row| {
+            .query_row("SELECT log_bytes FROM jobs WHERE job_id=?1", [id], |row| {
                 row.get(0)
             })
             .optional()?
@@ -88,8 +88,7 @@ impl Database {
         if own + incoming <= MAX_JOB_LOG_BYTES && total + incoming > MAX_TOTAL_LOG_BYTES {
             let candidates: Vec<String> = {
                 let mut statement = transaction.prepare(
-                    "SELECT id FROM jobs JOIN log_sizes ON id=job
-                    WHERE bytes>0 AND state NOT IN ('starting','running') ORDER BY updated_at_ms",
+                    "SELECT job_id FROM jobs WHERE log_bytes>0 AND state NOT IN ('accepted','running') ORDER BY finished_at_ms",
                 )?;
                 statement
                     .query_map([], |row| row.get(0))?
@@ -104,25 +103,24 @@ impl Database {
         }
         let sequence =
             if own + incoming > MAX_JOB_LOG_BYTES || total + incoming > MAX_TOTAL_LOG_BYTES {
-                merge_incomplete(&mut job.incomplete_reason, Some("TRUNCATED".into()));
+                merge_incomplete(&mut job.output_loss_reason, Some("TRUNCATED".into()));
                 job.output_complete = false;
                 None
             } else {
-                job.last_seq = job
-                    .last_seq
+                job.last_log_seq = job
+                    .last_log_seq
                     .checked_add(1)
                     .context(ErrorCode::StorageError.error("log sequence exhausted"))?;
                 transaction.execute(
-                    "INSERT INTO logs VALUES(?1,?2,?3,?4)",
-                    params![id, i64::try_from(job.last_seq)?, stream, bytes],
+                    "INSERT INTO job_logs VALUES(?1,?2,?3,?4)",
+                    params![id, i64::try_from(job.last_log_seq)?, stream, bytes],
                 )?;
                 transaction.execute(
-                    "INSERT INTO log_sizes VALUES(?1,?2)
-                ON CONFLICT(job) DO UPDATE SET bytes=bytes+excluded.bytes",
+                    "UPDATE jobs SET log_bytes=log_bytes+?2 WHERE job_id=?1",
                     params![id, incoming],
                 )?;
                 total += incoming;
-                Some(job.last_seq)
+                Some(job.last_log_seq)
             };
         job.save(&transaction, id)?;
         transaction.execute("UPDATE meta SET value=?1 WHERE key='log_bytes'", [total])?;
@@ -134,14 +132,10 @@ impl Database {
         let transaction = self
             .db
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
-        transaction.execute(
-            "DELETE FROM audit WHERE time<?1",
-            [now_ms() - AUDIT_RETENTION_MS],
-        )?;
+        // Activity summaries outlive their attachment bytes and command output.
         let expired: Vec<String> = {
             let mut statement = transaction.prepare(
-                "SELECT id FROM jobs JOIN log_sizes ON id=job
-                WHERE bytes>0 AND state NOT IN ('starting','running') AND updated_at_ms<?1",
+                "SELECT job_id FROM jobs WHERE log_bytes>0 AND state NOT IN ('accepted','running') AND finished_at_ms<?1",
             )?;
             statement
                 .query_map([now_ms() - FINISHED_LOG_RETENTION_MS], |row| row.get(0))?
@@ -150,27 +144,20 @@ impl Database {
         for id in expired {
             expire_logs(&transaction, &id)?;
         }
-        transaction.execute("UPDATE meta SET value=(SELECT COALESCE(SUM(bytes),0) FROM log_sizes) WHERE key='log_bytes'", [])?;
+        transaction.execute("UPDATE meta SET value=(SELECT COALESCE(SUM(log_bytes),0) FROM jobs) WHERE key='log_bytes'", [])?;
         transaction.commit()?;
         self.changes.send_replace(());
         Ok(())
     }
-    pub(super) fn audit(&self, value: serde_json::Value) -> Result<()> {
-        self.db.execute(
-            "INSERT INTO audit VALUES(?1,?2)",
-            params![now_ms(), serde_json::to_string(&value)?],
-        )?;
-        Ok(())
-    }
 }
+
 fn expire_logs(db: &Connection, id: &str) -> Result<i64> {
-    let bytes = db.query_row("SELECT bytes FROM log_sizes WHERE job=?1", [id], |row| {
+    let bytes = db.query_row("SELECT log_bytes FROM jobs WHERE job_id=?1", [id], |row| {
         row.get(0)
     })?;
-    db.execute("DELETE FROM logs WHERE job=?1", [id])?;
-    db.execute("DELETE FROM log_sizes WHERE job=?1", [id])?;
+    db.execute("DELETE FROM job_logs WHERE job_id=?1", [id])?;
     db.execute(
-        "UPDATE jobs SET output_complete=0,incomplete_reason='LOG_EXPIRED' WHERE id=?1",
+        "UPDATE jobs SET log_bytes=0,output_complete=0,output_loss_reason='LOG_EXPIRED' WHERE job_id=?1",
         [id],
     )?;
     Ok(bytes)
@@ -178,22 +165,22 @@ fn expire_logs(db: &Connection, id: &str) -> Result<i64> {
 
 struct LogState {
     terminal: bool,
-    last_seq: u64,
+    last_log_seq: u64,
     output_complete: bool,
-    incomplete_reason: Option<String>,
+    output_loss_reason: Option<String>,
 }
 impl LogState {
     fn load(db: &Connection, id: &str) -> Result<Self> {
         db.query_row(
-            "SELECT state NOT IN ('starting','running'),last_seq,output_complete,incomplete_reason
-             FROM jobs WHERE id=?1",
+            "SELECT state NOT IN ('accepted','running'),last_log_seq,output_complete,output_loss_reason
+             FROM jobs WHERE job_id=?1",
             [id],
             |row| {
                 Ok(Self {
                     terminal: row.get(0)?,
-                    last_seq: row.get::<_, i64>(1)? as u64,
+                    last_log_seq: row.get::<_, i64>(1)? as u64,
                     output_complete: row.get(2)?,
-                    incomplete_reason: row.get(3)?,
+                    output_loss_reason: row.get(3)?,
                 })
             },
         )
@@ -201,16 +188,17 @@ impl LogState {
         .context(ErrorCode::JobNotFound.error("unknown log task"))
     }
     fn save(&mut self, db: &Connection, id: &str) -> Result<()> {
-        if let Some(reason) = self.incomplete_reason.as_mut() {
-            super::tasks::bound_diagnostic(reason);
+        if let Some(reason) = self.output_loss_reason.as_mut() {
+            super::jobs::bound_diagnostic(reason);
         }
         db.execute(
-            "UPDATE jobs SET last_seq=?2,output_complete=?3,incomplete_reason=?4 WHERE id=?1",
+            "UPDATE jobs SET last_log_seq=?2,output_complete=?3,output_loss_reason=?4,updated_at_ms=?5 WHERE job_id=?1",
             params![
                 id,
-                i64::try_from(self.last_seq)?,
+                i64::try_from(self.last_log_seq)?,
                 self.output_complete,
-                self.incomplete_reason
+                self.output_loss_reason,
+                now_ms()
             ],
         )?;
         Ok(())

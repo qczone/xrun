@@ -10,13 +10,18 @@ pub use membership::{
     Invitation, JoinInfo, Permission, Revocation, create_network, invite, join, pause_access,
     revoke, set_all_permissions, set_permission,
 };
-pub use settings::{ExecutionSettings, Settings, save_settings, settings};
+pub use settings::{
+    ExecutionSettings, Settings, save_attachment_retention, save_settings, settings,
+};
 pub use status::{
     LocalSnapshot, LocalStatus, NetworkStatus, Status, local_snapshot, local_status, status,
 };
-/// Read-only local task and file history. Queries never create or reset the database.
+/// Local activity and task output. Reads never create or reset the database;
+/// activity reads can clean expired attachment cache copies.
 pub mod history {
-    pub use crate::history::{FilePage, FileRecord, TaskOutput, TaskPage, files, output, tasks};
+    pub use crate::attachments::{Attachment, AttachmentMetadata, AttachmentPreview};
+    pub use crate::history::{ActivityPage, activity, attachment, job, save_attachment};
+    pub use crate::history::{JobOutput, output};
 }
 
 use crate::{config::Identity, error::ErrorCode, protocol::valid_name};

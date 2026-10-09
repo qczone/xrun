@@ -111,7 +111,7 @@ pub(super) async fn check(suite: &mut Suite) -> Result<()> {
     assert_eq!(forbidden, 0);
     let task_db = rusqlite::Connection::open(target.join(".xrun/daemon.db"))?;
     let metadata: String = task_db.query_row(
-        "SELECT data FROM jobs WHERE request_id='dedupe-1'",
+        "SELECT params_json FROM jobs WHERE request_id='dedupe-1'",
         [],
         |r| r.get(0),
     )?;

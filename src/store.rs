@@ -1,6 +1,6 @@
+pub(crate) mod jobs;
 mod logs;
 mod submissions;
-mod tasks;
 mod worker;
 use crate::error::ErrorCode;
 use crate::{config::restrict_dir, protocol::*};
@@ -14,7 +14,6 @@ pub(crate) use submissions::{Submission, SubmissionStore};
 const MAX_JOB_LOG_BYTES: i64 = 64 * 1024 * 1024;
 const MAX_TOTAL_LOG_BYTES: i64 = 1024 * 1024 * 1024;
 const FINISHED_LOG_RETENTION_MS: i64 = 7 * 86_400_000;
-const AUDIT_RETENTION_MS: i64 = 7 * 86_400_000;
 const SUBMISSION_RETENTION_MS: i64 = 7 * 86_400_000;
 
 fn open(path: &Path, create: bool) -> Result<Connection> {
@@ -44,18 +43,20 @@ fn decode<T: serde::de::DeserializeOwned>(s: String) -> Result<T> {
     Ok(serde_json::from_str(&s)?)
 }
 
-pub(crate) use tasks::JobOutcome;
-pub(crate) use tasks::{JOB_COLUMNS, TASK_SCHEMA_VERSION, merge_incomplete, read_job};
+pub(crate) use jobs::JobOutcome;
+pub(crate) use jobs::{JOB_COLUMNS, JOB_SCHEMA_VERSION, merge_incomplete, read_job};
 
-pub struct TaskStore {
+pub struct JobStore {
     worker: worker::Worker,
+    attachments: crate::attachments::Cache,
     pub db_id: String,
     changes: tokio::sync::watch::Sender<()>,
 }
-impl TaskStore {
+impl JobStore {
     pub fn open(path: &Path, create: bool) -> Result<Self> {
-        let database = tasks::Database::open(path, create)?;
+        let database = jobs::Database::open(path, create)?;
         Ok(Self {
+            attachments: crate::attachments::Cache::for_database(path),
             db_id: database.db_id.clone(),
             changes: database.changes.clone(),
             worker: worker::Worker::start(database)?,
@@ -163,18 +164,25 @@ impl TaskStore {
             .await
     }
     pub fn prune(&self) -> Result<()> {
-        self.worker.call(|db| db.prune())
+        self.worker.call(|db| db.prune())?;
+        self.attachments.prune_if_due();
+        Ok(())
     }
-    pub fn audit(&self, value: serde_json::Value) -> Result<()> {
-        self.worker.call(move |db| db.audit(value))
+    pub(crate) fn attachments(&self) -> crate::attachments::Cache {
+        self.attachments.clone()
     }
-    pub(crate) async fn audit_async(&self, value: serde_json::Value) -> Result<()> {
-        self.worker.query(move |db| db.audit(value)).await
+    pub(crate) async fn attach(
+        &self,
+        id: &str,
+        metadata: crate::attachments::AttachmentMetadata,
+    ) -> Result<()> {
+        let id = id.to_owned();
+        self.worker.query(move |db| db.attach(&id, metadata)).await
     }
-    pub(crate) fn audit_detached(&self, value: serde_json::Value) -> Result<()> {
+    pub(crate) fn finish_detached(&self, id: String, outcome: JobOutcome) -> Result<()> {
         self.worker.enqueue(Box::new(move |db| {
-            if let Err(error) = db.audit(value) {
-                tracing::error!(%error, "operation audit could not be saved");
+            if let Err(error) = db.finish(&id, outcome) {
+                tracing::error!(%error,"interrupted job could not be finalized");
             }
         }))
     }
@@ -195,19 +203,8 @@ impl TaskStore {
         self.worker.query(move |db| db.finish(&id, outcome)).await
     }
     pub(crate) async fn mark_failed(&self, id: &str, error: String) -> Result<Job> {
-        self.finish(
-            id,
-            JobOutcome {
-                state: JobState::Failed,
-                exit_code: None,
-                signal: None,
-                duration_ms: None,
-                error: Some(error),
-                incomplete_reason: None,
-                leftover_possible: false,
-            },
-        )
-        .await
+        self.finish(id, JobOutcome::failed(&anyhow::anyhow!(error)))
+            .await
     }
     /// Waits for operations already queued, including work whose reader was canceled.
     pub(crate) async fn flush(&self) -> Result<()> {

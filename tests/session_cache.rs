@@ -4,7 +4,7 @@ use common::*;
 use std::path::Path;
 use xrun::testing::{
     config::{self, DaemonConfig},
-    protocol::VERSION,
+    protocol::{JobContext, VERSION},
 };
 
 fn manager_log(home: &Path) -> Result<String> {
@@ -60,7 +60,7 @@ async fn cli_reuses_completed_sessions_refreshes_defaults_and_discards_stale_con
         )
         .await,
     );
-    assert_eq!(job["cwd"].as_str(), cwd.to_str());
+    assert_eq!(job["params"]["cwd"].as_str(), cwd.to_str());
     // A denial on a previously cached connection must still prevent execution.
     cfg.deny_from.push(lab.source_identity.device_id.clone());
     config::write(&path, &cfg)?;
@@ -123,7 +123,7 @@ async fn concurrent_cli_requests_keep_outputs_and_request_ids_separate() -> Resu
             let job_id = job["job_id"].as_str().context("job id")?;
             let waited = json(cli(&home, &["target1", "wait", job_id, "--json"]).await);
             assert_eq!(waited["job"]["request_id"], request);
-            assert_eq!(waited["job"]["exit_code"], 0);
+            assert_eq!(waited["job"]["result"]["exit_code"], 0);
             Ok::<_, anyhow::Error>(())
         });
     }
@@ -220,14 +220,14 @@ async fn changed_upload_is_rejected_without_overwriting_the_destination() -> Res
         &lab.target_identity.device_id,
     )
     .await?;
-    assert!(matches!(
-        net::receive::<Data>(&mut ws).await?,
-        Data::Ready { .. }
-    ));
+    let Data::Ready { db_id, .. } = net::receive::<Data>(&mut ws).await? else {
+        anyhow::bail!("ready expected")
+    };
     net::send(
         &mut ws,
         &Data::Request {
             request: Request::Push {
+                context: JobContext::new(&db_id),
                 path: target.to_string_lossy().into(),
                 cwd: None,
                 size,
@@ -239,6 +239,10 @@ async fn changed_upload_is_rejected_without_overwriting_the_destination() -> Res
         },
     )
     .await?;
+    assert!(matches!(
+        net::receive::<Data>(&mut ws).await?,
+        Data::Accepted { fresh: true, .. }
+    ));
     net::send_file(&mut ws, &file).await?;
     assert!(
         matches!(net::receive::<Data>(&mut ws).await?, Data::Error { code, .. } if code == "CHECKSUM_MISMATCH")

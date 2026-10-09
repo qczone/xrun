@@ -1,7 +1,9 @@
 //! Negotiated wire messages and shared limits.
 #![deny(missing_docs)]
+mod job;
 mod relay;
 mod version;
+pub use job::*;
 pub use relay::{ChallengeBinding, Proof, RelayMessage, valid_relay_route};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -128,6 +130,8 @@ pub struct StreamResult {
     pub signal: Option<i32>,
     /// Whether the requested execution deadline was exceeded.
     pub timed_out: bool,
+    /// Whether the process was stopped by an explicit job cancellation.
+    pub canceled: bool,
     /// Elapsed process time in milliseconds.
     pub duration_ms: u64,
 }
@@ -137,20 +141,21 @@ impl Execution {
         let mut value = serde_json::to_value(self).expect("serializable execution");
         value.as_object_mut().unwrap().remove("request_id");
         value.as_object_mut().unwrap().remove("db_id");
+        value["kind"] = serde_json::json!("exec");
         sha256(&serde_json::to_vec(&value).unwrap())
     }
 }
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
-/// Persistent task lifecycle; terminal states never transition back to active.
+/// Persistent job lifecycle; terminal states never transition back to active.
 pub enum JobState {
-    /// Accepted and awaiting process launch.
-    Starting,
-    /// Process is running.
+    /// Accepted and awaiting execution.
+    Accepted,
+    /// Operation is running.
     Running,
-    /// Process has exited; exit_code or signal describe its outcome.
-    Exited,
-    /// Execution was confirmed not to have started.
+    /// Operation completed successfully.
+    Succeeded,
+    /// Operation failed, including a nonzero process exit.
     Failed,
     /// Cancellation or daemon shutdown ended the task.
     Canceled,
@@ -162,7 +167,7 @@ pub enum JobState {
 impl JobState {
     /// Whether lifecycle updates must no longer return this task to active state.
     pub fn terminal(&self) -> bool {
-        !matches!(self, Self::Starting | Self::Running)
+        !matches!(self, Self::Accepted | Self::Running)
     }
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -176,13 +181,13 @@ pub struct ProcessIdentity {
     pub start: Option<String>,
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
-/// Persistent accepted task and cumulative output availability.
+/// One accepted business job with typed parameters, outcome and attachments.
 pub struct Job {
-    /// Target-local task identifier within db_id.
+    /// Target-local job identifier within db_id.
     pub job_id: String,
     /// Caller-chosen idempotency key, scoped to source and target identity.
     pub request_id: String,
-    /// Hash of immutable execution fields, excluding request_id and db_id.
+    /// Hash of operation type and immutable fields, excluding request_id and db_id.
     pub request_hash: String,
     /// Immutable identity that submitted the task or file operation.
     pub source_device_id: String,
@@ -190,36 +195,39 @@ pub struct Job {
     pub target_device_id: String,
     /// Database generation that prevents replay after storage reset.
     pub db_id: String,
-    /// Executable name or path.
-    pub program: String,
-    /// Arguments passed as separate values without implicit shell parsing.
-    pub args: Vec<String>,
-    /// Absolute working directory, or an empty value requesting the endpoint default.
-    pub cwd: String,
+    /// Operation type and its immutable, displayable parameters.
+    #[serde(flatten)]
+    pub details: JobDetails,
     /// Current persistent lifecycle state.
     pub state: JobState,
-    /// Process exit code when available; separate from protocol/CLI failure status.
-    pub exit_code: Option<i64>,
-    /// Terminating Unix signal, if applicable.
-    pub signal: Option<i32>,
-    /// Elapsed process time in milliseconds.
-    pub duration_ms: Option<u64>,
+    /// Type-specific operation outcome.
+    pub result: Option<JobResult>,
     /// Highest output sequence assigned; does not fall when logs are pruned.
-    pub last_seq: u64,
+    pub last_log_seq: u64,
+    /// Currently retained output bytes.
+    pub log_bytes: u64,
     /// Whether all expected output remains available.
-    pub output_complete: bool,
+    pub output_complete: Option<bool>,
     /// Cumulative strongest loss reason, such as LOG_EXPIRED, TRUNCATED or CAPTURE_ERROR.
-    pub incomplete_reason: Option<String>,
-    /// Human-readable execution failure, when recorded.
-    pub error: Option<String>,
+    pub output_loss_reason: Option<String>,
+    /// Machine-readable operation failure code, when recorded.
+    pub error_code: Option<String>,
+    /// Bounded diagnostic accompanying error_code.
+    pub error_message: Option<String>,
     /// Creation timestamp in Unix milliseconds.
     pub created_at_ms: i64,
+    /// Time the operation actually started.
+    pub started_at_ms: Option<i64>,
+    /// Time the operation entered a terminal state.
+    pub finished_at_ms: Option<i64>,
     /// Last lifecycle/output update in Unix milliseconds.
     pub updated_at_ms: i64,
     /// Whether recovery could not prove that all previous processes were terminated.
     pub leftover_possible: bool,
     /// Persisted process proof used during crash recovery, if launched.
     pub process: Option<ProcessIdentity>,
+    /// Retained file and screenshot snapshots.
+    pub attachments: Vec<crate::attachments::Attachment>,
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
 /// A sequenced binary output event from a task.
@@ -245,7 +253,7 @@ pub enum Request {
     },
     /// Query task status, scoped to the authenticated source.
     Jobs {
-        /// Target-local task identifier.
+        /// Target-local job identifier.
         id: Option<String>,
         /// Restrict the task query to active states.
         running: bool,
@@ -258,7 +266,7 @@ pub enum Request {
     },
     /// Read sequenced output, optionally following updates.
     Logs {
-        /// Target-local task identifier.
+        /// Target-local job identifier.
         id: String,
         /// Only return output with sequence greater than this value.
         after: u64,
@@ -271,16 +279,18 @@ pub enum Request {
     },
     /// Wait for a task to become terminal.
     Wait {
-        /// Target-local task identifier.
+        /// Target-local job identifier.
         id: String,
     },
     /// Request cancellation of an accepted task.
     Kill {
-        /// Target-local task identifier.
+        /// Target-local job identifier.
         id: String,
     },
     /// Receive a file with optional compare-and-replace semantics.
     Push {
+        /// Identity of this upload attempt.
+        context: JobContext,
         /// Operation path, resolved relative to cwd when permitted.
         path: String,
         /// Absolute working directory; `None` requests the endpoint default.
@@ -298,20 +308,29 @@ pub enum Request {
     },
     /// Read a remote file.
     Pull {
+        /// Identity of this download attempt.
+        context: JobContext,
         /// Operation path, resolved relative to cwd when permitted.
         path: String,
         /// Absolute working directory, or an empty value requesting the endpoint default.
         cwd: Option<String>,
     },
     /// Capture a supported unlocked desktop.
-    Screenshot,
+    Screenshot {
+        /// Identity of this capture attempt.
+        context: JobContext,
+    },
     /// Open a TCP connection to an endpoint-local port.
     Forward {
+        /// Identity of this forwarding connection.
+        context: JobContext,
         /// Endpoint-local TCP port.
         port: u16,
     },
     /// Run a streaming process bound to this session.
     StreamExec {
+        /// Identity of this streaming command.
+        context: JobContext,
         /// Execution intent to validate and run.
         execution: StreamExecution,
     },
@@ -328,7 +347,7 @@ impl Request {
             | Self::Wait { .. }
             | Self::Push { .. }
             | Self::Pull { .. }
-            | Self::Screenshot
+            | Self::Screenshot { .. }
             | Self::Forward { .. }
             | Self::StreamExec { .. } => 1,
         }
@@ -366,10 +385,17 @@ pub enum Data {
         /// Authenticated operation request.
         request: Request,
     },
-    /// Persistent accepted task and cumulative output availability.
+    /// One accepted business job with typed parameters, outcome and attachments.
     Job {
         /// Task snapshot associated with the response.
         job: Job,
+    },
+    /// Admission result for a connection-bound operation, before any payload.
+    Accepted {
+        /// Original or freshly accepted job.
+        job: Job,
+        /// False for a repeated request; its data stream is never replayed.
+        fresh: bool,
     },
     /// Query task status, scoped to the authenticated source.
     Jobs {
@@ -428,7 +454,7 @@ pub enum Data {
     },
 }
 impl Data {
-    /// Human-readable execution failure, when recorded.
+    /// Convert an internal error to its wire response.
     pub fn error(error: &anyhow::Error) -> Self {
         let (code, message) = crate::error::wire(error);
         Self::Error { code, message }
@@ -499,10 +525,10 @@ mod limit_tests {
     #[test]
     fn ordinary_messages_ignore_safe_metadata_but_keep_required_fields() {
         let request: Request = serde_json::from_value(serde_json::json!({
-            "op":"forward", "port":1234, "diagnostic":"optional metadata",
+            "op":"forward", "port":1234, "context":{"request_id":"request","db_id":"db"}, "diagnostic":"optional metadata",
         }))
         .unwrap();
-        assert!(matches!(request, Request::Forward { port: 1234 }));
+        assert!(matches!(request, Request::Forward { port: 1234, .. }));
         assert_eq!(request.minimum_protocol(), 1);
         assert!(serde_json::from_value::<Request>(serde_json::json!({"op":"forward"})).is_err());
         let ready: Data = serde_json::from_value(serde_json::json!({

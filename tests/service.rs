@@ -128,7 +128,7 @@ async fn systemd_install_stop_restart_upgrade_and_uninstall() -> Result<()> {
         .await?,
     )?;
     let job_id = job["job_id"].as_str().context("job id")?;
-    let store = xrun::testing::store::TaskStore::open(&data.join("daemon.db"), false)?;
+    let store = xrun::testing::store::JobStore::open(&data.join("daemon.db"), false)?;
     let pid = tokio::time::timeout(Duration::from_secs(5), async {
         loop {
             if let Some(process) = store.get(job_id)?.and_then(|j| j.process) {

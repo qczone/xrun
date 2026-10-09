@@ -4,7 +4,7 @@ import { ErrorNotice } from "../../components/ErrorNotice";
 import { commandText, duration, isRunning, recordTime } from "../../format";
 import { t } from "../../i18n";
 import { StateChip } from "./TaskState";
-import { useTaskOutput, type Selection } from "./useTaskOutput";
+import { useJobOutput, type Selection } from "./useJobOutput";
 interface DetailProps {
   selection: Selection;
   active: boolean;
@@ -29,7 +29,7 @@ export function TaskDetail({
   back,
 }: DetailProps) {
   const { job, error, outputStatus, revision, buffer, clearError } =
-    useTaskOutput({ selection, active, paused, refresh, onLoading });
+    useJobOutput({ selection, active, paused, refresh, onLoading });
   const [stream, setStream] = useState("all");
   const [follow, setFollow] = useState(true);
   const log = useRef<HTMLPreElement>(null);
@@ -43,7 +43,7 @@ export function TaskDetail({
 
   const source = deviceLabel(job.source_device_id);
   const warnings = [];
-  if (job.error) warnings.push(job.error);
+  if (job.error_message) warnings.push(job.error_message);
   if (!job.output_complete) {
     const reasons: Record<string, string> = {
       TRUNCATED: t("output.truncated"),
@@ -51,9 +51,9 @@ export function TaskDetail({
       DETACHED_OUTPUT: t("output.detached"),
     };
     warnings.push(
-      reasons[job.incomplete_reason || ""] ||
+      reasons[job.output_loss_reason || ""] ||
         t("output.incomplete", {
-          reason: job.incomplete_reason || t("output.unknownReason"),
+          reason: job.output_loss_reason || t("output.unknownReason"),
         }),
     );
   }
@@ -61,17 +61,17 @@ export function TaskDetail({
   if (isRunning(job) && status && !status.local.daemon_running)
     warnings.push(t("output.stale"));
   const elapsed =
-    job.duration_ms !== null
-      ? duration(job.duration_ms)
+    job.result != null
+      ? duration(job.result?.duration_ms)
       : isRunning(job)
         ? t("output.elapsed", {
             duration: duration(Math.max(0, Date.now() - job.created_at_ms)),
           })
         : "—";
-  const result = job.signal
-    ? t("output.signal", { signal: job.signal })
-    : job.exit_code !== null
-      ? t("output.exitCode", { code: job.exit_code })
+  const result = job.result?.signal
+    ? t("output.signal", { signal: job.result?.signal })
+    : job.result?.exit_code != null
+      ? t("output.exitCode", { code: job.result?.exit_code })
       : isRunning(job)
         ? t("output.notFinished")
         : t("output.noExitCode");
@@ -83,7 +83,7 @@ export function TaskDetail({
       </button>
       <article className="panel task-heading">
         <div className="task-title">
-          <h2 className="mono">{commandText(job)}</h2>
+          <h2 className="mono">{commandText(job.params)}</h2>
           <StateChip job={job} />
         </div>
         <div className="task-summary-meta">
@@ -99,7 +99,7 @@ export function TaskDetail({
           </div>
           <div className="panel-row">
             <span>{t("output.cwd")}</span>
-            <code>{job.cwd}</code>
+            <code>{job.params.cwd}</code>
           </div>
           <div className="panel-row">
             <span>{t("output.startedAt")}</span>

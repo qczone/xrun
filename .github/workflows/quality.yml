@@ -19,6 +19,6 @@ jobs:
         working-directory: desktop
         run: bun install --frozen-lockfile
       - name: Verify the readability checker
-        run: bun test desktop/tests/quality.test.ts scripts/compatibility-baseline.test.ts
+        run: bun test desktop/tests/quality.test.ts
       - name: Enforce source readability and typed relay states
         run: bun desktop/scripts/check-quality.ts

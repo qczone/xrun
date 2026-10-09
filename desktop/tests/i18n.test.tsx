@@ -105,18 +105,24 @@ test("dates, times and durations follow the selected interface language", () => 
 test("English UI localizes all pages, dynamic labels, confirmations and operation errors", async () => {
   const name = "<img id=untrusted-device> {name}";
   const job = task("TASK-42", {
-    state: "exited",
-    exit_code: 1,
-    duration_ms: 65_000,
+    state: "failed",
+    result: {
+      exit_code: 1,
+      signal: null,
+      duration_ms: 65_000,
+      input_bytes: null,
+      stdout_bytes: null,
+      stderr_bytes: null,
+    },
   });
   const { devices, status, poll, page } = await fixture(
     {
-      task_history: () => ({
+      activity_history: () => ({
         db_id: job.db_id,
-        jobs: [job],
+        entries: [job],
         next_cursor: null,
       }),
-      task_output: () => ({ job, events: [], has_more: false }),
+      job_output: () => ({ job, events: [], has_more: false }),
       start: () => {
         throw { code: "HELPER_NOT_FOUND", message: "technical detail" };
       },
@@ -139,7 +145,7 @@ test("English UI localizes all pages, dynamic labels, confirmations and operatio
     within(confirmation).getByRole("button", { name: "Cancel" }),
   ).toBeTruthy();
   await act(async () => (confirmation as HTMLDialogElement).close("cancel"));
-  page("Activity");
+  page("Activity journey");
   fireEvent.click(await screen.findByRole("button", { name: /TASK-42/ }));
   await screen.findByText("Task finished");
   expect(screen.getByText("Exit code 1")).toBeTruthy();
@@ -167,19 +173,25 @@ test("English UI localizes all pages, dynamic labels, confirmations and operatio
 
 test("language switching is immediate, persists, and preserves unsaved fields and selected activity", async () => {
   const job = task("LANG-42", {
-    state: "exited",
-    exit_code: 0,
-    duration_ms: 1000,
+    state: "succeeded",
+    result: {
+      exit_code: 0,
+      signal: null,
+      duration_ms: 1000,
+      input_bytes: null,
+      stdout_bytes: null,
+      stderr_bytes: null,
+    },
   });
   const { page, calls } = await fixture(
     {
       devices: () => ({ devices: [], server_error: null }),
-      task_history: () => ({
+      activity_history: () => ({
         db_id: job.db_id,
-        jobs: [job],
+        entries: [job],
         next_cursor: null,
       }),
-      task_output: () => ({
+      job_output: () => ({
         job,
         events: [event(1, "stdout", "original output")],
         has_more: false,
@@ -188,7 +200,7 @@ test("language switching is immediate, persists, and preserves unsaved fields an
     true,
     "en-US",
   );
-  page("Activity");
+  page("Activity journey");
   fireEvent.click(await screen.findByRole("button", { name: /LANG-42/ }));
   await screen.findByText("Task finished");
   page("Settings");
@@ -210,9 +222,9 @@ test("language switching is immediate, persists, and preserves unsaved fields an
   expect(
     (screen.getByLabelText("工具搜索路径") as HTMLTextAreaElement).value,
   ).toBe("/custom/bin");
-  expect(screen.getByRole("button", { name: "活动" })).toBeTruthy();
+  expect(screen.getByRole("button", { name: "活动旅程" })).toBeTruthy();
   expect(screen.queryByRole("button", { name: "活动记录" })).toBeNull();
-  page("活动");
+  page("活动旅程");
   expect(screen.getByText("任务已结束")).toBeTruthy();
   expect(screen.getByText("original output")).toBeTruthy();
   page("设备");

@@ -5,12 +5,12 @@ pub(crate) struct Submission {
     pub request_id: String,
     pub source_device_id: String,
     pub target_device_id: String,
-    #[serde(default)]
     pub target_name: String,
     pub ca_pin: String,
     pub db_id: String,
     pub request_hash: String,
-    pub program: String,
+    pub kind: JobKind,
+    pub label: String,
     pub created_at_ms: i64,
     pub job_id: Option<String>,
     pub status: String,
@@ -22,7 +22,7 @@ impl SubmissionStore {
         crate::database::initialize(
             &mut db,
             "submissions",
-            1,
+            2,
             "
             CREATE TABLE submissions(id TEXT PRIMARY KEY,data TEXT NOT NULL,time INTEGER NOT NULL);
             CREATE INDEX submission_time ON submissions(time);

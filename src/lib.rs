@@ -1,5 +1,6 @@
 //! Remote execution core, with user operations and process entry points as its public boundary.
 #![deny(unreachable_pub)]
+mod attachments;
 mod cli;
 pub mod client;
 mod clock;

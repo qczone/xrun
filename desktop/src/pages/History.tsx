@@ -1,12 +1,19 @@
 import { useCallback, useState } from "react";
-import type { Device, Status, TaskFilter } from "../api";
+import type { Job, Device, Status, TaskFilter } from "../api";
 import { Icon } from "../components/Icon";
 import { ErrorNotice } from "../components/ErrorNotice";
-import { commandText, duration, fileSize, recordTime } from "../format";
-import { t } from "../i18n";
+import { duration, fileSize } from "../format";
+import { formatLocale, t } from "../i18n";
 import { StateChip } from "./history/TaskState";
 import { TaskDetail } from "./history/TaskDetail";
-import type { Selection } from "./history/useTaskOutput";
+import { JobDetail } from "./history/JobDetail";
+import {
+  operationLabel,
+  jobDescription,
+  jobSize,
+  jobDuration,
+  attachmentLabel,
+} from "./history/operation";
 import { useRecordHistory } from "./history/useRecordHistory";
 interface Props {
   active: boolean;
@@ -14,17 +21,32 @@ interface Props {
   status: Status | null;
   devices: Device[];
 }
+function dayLabel(time: number) {
+  const date = new Date(time);
+  const today = new Date();
+  const yesterday = new Date();
+  yesterday.setDate(today.getDate() - 1);
+  if (date.toDateString() === today.toDateString()) return t("history.today");
+  if (date.toDateString() === yesterday.toDateString())
+    return t("history.yesterday");
+  return date.toLocaleDateString(formatLocale(), {
+    year: "numeric",
+    month: "long",
+    day: "numeric",
+  });
+}
 export function History({ active, paused, status, devices }: Props) {
-  const [selected, setSelected] = useState<Selection | null>(null);
-  const [outputLoading, setOutputLoading] = useState(false);
+  const [selected, setSelected] = useState<{
+    job: Job;
+    dbId: string;
+  } | null>(null);
+  const [detailLoading, setDetailLoading] = useState(false);
   const history = useRecordHistory(active, paused, selected !== null);
   const {
-    tab,
     filter,
     pagination,
     next,
-    jobs,
-    files,
+    entries,
     dbId,
     loading,
     error,
@@ -38,8 +60,18 @@ export function History({ active, paused, status, devices }: Props) {
     },
     [status, devices],
   );
-  const records = tab === "tasks" ? jobs : files;
-
+  const groups: { day: string; entries: Job[] }[] = [];
+  for (const entry of entries) {
+    const day = dayLabel(entry.created_at_ms);
+    const group = groups.at(-1);
+    if (group?.day === day) group.entries.push(entry);
+    else groups.push({ day, entries: [entry] });
+  }
+  const back = () => {
+    setSelected(null);
+    setDetailLoading(false);
+    history.clearError();
+  };
   return (
     <>
       <div className="page-heading">
@@ -48,11 +80,11 @@ export function History({ active, paused, status, devices }: Props) {
           <p>{t("history.description")}</p>
         </div>
         <button
-          disabled={selected ? outputLoading : loading}
+          disabled={selected ? detailLoading : loading}
           onClick={refreshRecords}
         >
           <Icon name="refresh" />
-          {(selected ? outputLoading : loading)
+          {(selected ? detailLoading : loading)
             ? t("common.refreshing")
             : t("common.refresh")}
         </button>
@@ -60,134 +92,120 @@ export function History({ active, paused, status, devices }: Props) {
       <div className={`history-layout ${selected ? "has-selection" : ""}`}>
         <div className="history-list">
           <div className="history-toolbar">
-            <div
-              className="segmented"
-              role="group"
-              aria-label={t("history.recordType")}
-            >
-              <button
-                aria-pressed={tab === "tasks"}
-                className={tab === "tasks" ? "selected" : ""}
-                onClick={() => {
-                  history.selectTab("tasks");
-                  setSelected(null);
+            <span className="journey-order">{t("history.newestFirst")}</span>
+            <label>
+              {t("history.state")}
+              <select
+                aria-label={t("history.activityState")}
+                value={filter}
+                onChange={(event) => {
+                  history.selectFilter(event.target.value as TaskFilter);
+                  back();
                 }}
               >
-                {t("history.tasks")}
-              </button>
-              <button
-                aria-pressed={tab === "files"}
-                className={tab === "files" ? "selected" : ""}
-                onClick={() => {
-                  history.selectTab("files");
-                  setSelected(null);
-                }}
-              >
-                {t("history.files")}
-              </button>
-            </div>
-            {tab === "tasks" && (
-              <label>
-                {t("history.state")}
-                <select
-                  aria-label={t("history.taskState")}
-                  value={filter}
-                  onChange={(event) => {
-                    history.selectFilter(event.target.value as TaskFilter);
-                    setSelected(null);
-                  }}
-                >
-                  <option value="all">{t("history.allTasks")}</option>
-                  <option value="running">{t("history.running")}</option>
-                  <option value="failed">{t("history.failed")}</option>
-                </select>
-              </label>
-            )}
+                <option value="all">{t("history.allActivities")}</option>
+                <option value="running">{t("history.running")}</option>
+                <option value="failed">{t("history.failed")}</option>
+              </select>
+            </label>
           </div>
-          <section className="panel history-record-panel">
+          <section
+            className="panel history-record-panel"
+            aria-label={t("history.timeline")}
+          >
             <div id="history-records">
-              {tab === "tasks"
-                ? jobs.map((job) => (
-                    <button
-                      className={`task-record ${selected?.job.job_id === job.job_id ? "selected" : ""}`}
-                      key={job.job_id}
-                      aria-pressed={selected?.job.job_id === job.job_id}
-                      onClick={() => {
-                        history.clearLoading();
-                        history.clearError();
-                        setSelected({ job, dbId: dbId || job.db_id });
-                      }}
-                    >
-                      <span className="record-header">
-                        <strong className="record-command mono">
-                          {commandText(job)}
-                        </strong>
-                        <StateChip job={job} />
-                      </span>
-                      <span className="record-meta">
-                        {t("history.source", {
-                          name: deviceLabel(job.source_device_id),
-                        })}{" "}
-                        ·{" "}
-                        {job.duration_ms === null
-                          ? t("history.viewOutput")
-                          : t("history.duration", {
-                              duration: duration(job.duration_ms),
-                            })}
-                      </span>
-                      <span className="record-secondary">
-                        <code>{job.job_id}</code>
-                        <span>{recordTime(job.created_at_ms)}</span>
-                      </span>
-                    </button>
-                  ))
-                : files.map((record, index) => (
-                    <article
-                      className="file-record"
-                      key={`${record.time_ms}:${index}`}
-                    >
-                      <div className="record-header">
-                        <strong>
-                          {(
-                            {
-                              push: t("history.receiveFile"),
-                              pull: t("history.sendFile"),
-                              screenshot: t("history.screenshot"),
-                            } as Record<string, string>
-                          )[record.op] || record.op}
-                        </strong>
-                        <span
-                          className={`task-state ${record.result === "ok" ? "success" : "failed"}`}
-                        >
-                          {record.result === "ok"
-                            ? t("history.completed")
-                            : t("history.interrupted")}
-                        </span>
-                      </div>
-                      {record.path && (
-                        <p className="record-command mono">{record.path}</p>
-                      )}
-                      <p className="record-meta">
-                        {t("history.source", {
-                          name: deviceLabel(record.source_device_id),
-                        })}
-                        {fileSize(record.size)}
-                      </p>
-                      <span className="record-secondary">
-                        {recordTime(record.time_ms)}
-                      </span>
-                    </article>
-                  ))}
+              {groups.map((group) => (
+                <div className="journey-day" key={group.day}>
+                  <h2>{group.day}</h2>
+                  <ol className="journey-timeline">
+                    {group.entries.map((entry) => {
+                      const job = entry;
+                      return (
+                        <li key={entry.job_id}>
+                          <button
+                            className={`task-record journey-record ${selected?.job.job_id === entry.job_id ? "selected" : ""}`}
+                            aria-pressed={selected?.job.job_id === entry.job_id}
+                            onClick={() => {
+                              history.clearLoading();
+                              history.clearError();
+                              setSelected({
+                                job: entry,
+                                dbId: dbId || job?.db_id || "",
+                              });
+                            }}
+                          >
+                            <span className="journey-node">
+                              <Icon
+                                name={
+                                  job.kind === "exec" ||
+                                  job.kind === "stream_exec"
+                                    ? "terminal"
+                                    : job.kind === "screenshot"
+                                      ? "monitor"
+                                      : job.kind === "forward"
+                                        ? "arrow"
+                                        : "folder"
+                                }
+                              />
+                            </span>
+                            <span className="record-header">
+                              <strong>{operationLabel(job.kind)}</strong>
+                              <StateChip job={job} />
+                            </span>
+                            {jobDescription(job) && (
+                              <span className="record-command mono">
+                                {jobDescription(job)}
+                              </span>
+                            )}
+                            <span className="record-meta">
+                              {t("history.source", {
+                                name: deviceLabel(job.source_device_id),
+                              })}
+                              {fileSize(jobSize(job))}
+                              {jobDuration(job) !== null &&
+                                ` · ${duration(jobDuration(job)!)}`}
+                            </span>
+                            {["push", "pull", "screenshot"].includes(
+                              job.kind,
+                            ) && (
+                              <span
+                                className={`attachment-tag ${job.attachments[0]?.status === "available" ? "available" : ""}`}
+                              >
+                                <Icon name="folder" />{" "}
+                                {attachmentLabel(job.attachments[0] ?? null)}
+                              </span>
+                            )}
+                            <span className="record-secondary">
+                              {job && <code>{job.job_id}</code>}
+                              <time
+                                dateTime={new Date(
+                                  entry.created_at_ms,
+                                ).toISOString()}
+                              >
+                                {new Date(
+                                  entry.created_at_ms,
+                                ).toLocaleTimeString(formatLocale(), {
+                                  hour: "2-digit",
+                                  minute: "2-digit",
+                                  hour12: false,
+                                })}
+                              </time>
+                            </span>
+                          </button>
+                        </li>
+                      );
+                    })}
+                  </ol>
+                </div>
+              ))}
             </div>
-            {!records.length && !error && (
+            {!entries.length && !error && (
               <p className="empty-state">
                 {loading
                   ? t("history.loading")
-                  : tab === "files"
-                    ? t("history.emptyFiles")
-                    : filter === "all"
-                      ? t("history.emptyTasks")
-                      : t("history.emptyFiltered")}
+                  : filter === "all"
+                    ? t("history.empty")
+                    : t("history.emptyFiltered")}
               </p>
             )}
           </section>
@@ -217,21 +235,31 @@ export function History({ active, paused, status, devices }: Props) {
             />
           )}
         </div>
-        {selected && (
+        {selected?.job.kind === "exec" && (
           <TaskDetail
             key={`${selected.dbId}:${selected.job.job_id}`}
-            selection={selected}
+            selection={{ job: selected.job, dbId: selected.dbId }}
             active={active}
             paused={paused}
             refresh={refresh}
             status={status}
             deviceLabel={deviceLabel}
-            onLoading={setOutputLoading}
+            onLoading={setDetailLoading}
             retry={refreshRecords}
-            back={() => {
-              setSelected(null);
-              history.clearError();
-            }}
+            back={back}
+          />
+        )}
+        {selected && selected.job.kind !== "exec" && (
+          <JobDetail
+            key={`${selected.dbId}:${selected.job.job_id}`}
+            selection={selected}
+            active={active}
+            paused={paused}
+            refresh={refresh}
+            deviceLabel={deviceLabel}
+            onLoading={setDetailLoading}
+            retry={refreshRecords}
+            back={back}
           />
         )}
       </div>

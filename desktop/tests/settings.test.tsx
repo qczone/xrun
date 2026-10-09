@@ -24,3 +24,23 @@ test("settings save only execution fields and preserve unsaved input across poll
       .disabled,
   ).toBe(true);
 });
+
+test("attachment retention can be saved before joining without losing unsaved execution inputs", async () => {
+  const { calls, poll, page, settings } = await fixture({}, false);
+  page("设置");
+  const days = screen.getByLabelText("附件保留时间（天）") as HTMLInputElement;
+  expect(days.value).toBe("30");
+  expect(days.disabled).toBe(false);
+  fireEvent.change(days, { target: { value: "7" } });
+  await poll();
+  page("本机");
+  page("设置");
+  expect(days.value).toBe("7");
+  fireEvent.submit(document.getElementById("retention-form")!);
+  await screen.findByText("附件保留时间已保存");
+  expect(
+    calls.find((call) => call.command === "save_attachment_retention")?.args,
+  ).toEqual({ days: 7 });
+  expect(settings.attachment_retention_days).toBe(7);
+  expect(calls.some((call) => call.command === "save_settings")).toBe(false);
+});

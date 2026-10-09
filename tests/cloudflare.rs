@@ -169,7 +169,7 @@ async fn public_relay_executes_transfers_streams_and_rejects_route_takeover() ->
         let job = json(run(&lab.source, &["target1", "start", "--json", "--", &binary, "--version"]).await);
         let job_id = job["job_id"].as_str().context("job ID")?;
         let completed = json(run(&lab.source, &["target1", "wait", job_id, "--json"]).await);
-        assert_eq!(completed["job"]["exit_code"], 0);
+        assert_eq!(completed["job"]["result"]["exit_code"], 0);
         assert!(ok(run(&lab.source, &["target1", "logs", job_id]).await).contains(VERSION));
         println!("network creation, pairing, execution and job history: passed");
         let source: Identity = xrun::testing::config::read(&lab.source.join(".xrun/identity.toml"))?;

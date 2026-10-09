@@ -28,6 +28,7 @@ pub(crate) fn configure(db: &Connection) -> Result<()> {
     }
     db.busy_timeout(BUSY_TIMEOUT)?;
     db.pragma_update(None, "synchronous", "FULL")?;
+    db.pragma_update(None, "foreign_keys", "ON")?;
     Ok(())
 }
 

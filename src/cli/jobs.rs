@@ -114,7 +114,7 @@ pub(super) async fn run(
             };
             match result {
                 Ok(job) => {
-                    let (logs, logs_error) = if tail == 0 {
+                    let (logs, logs_error) = if tail == 0 || job.kind() != JobKind::Exec {
                         (vec![], None)
                     } else {
                         let read = collect_logs(id, target, &job.job_id, 0, tail);
@@ -144,7 +144,11 @@ pub(super) async fn run(
                         if let Some(e) = &logs_error {
                             eprintln!("[xrun] {e}")
                         }
-                        if let Some(e) = job.error.as_ref().or(job.incomplete_reason.as_ref()) {
+                        if let Some(e) = job
+                            .error_message
+                            .as_ref()
+                            .or(job.output_loss_reason.as_ref())
+                        {
                             eprintln!("[xrun] {e}")
                         }
                     }
@@ -178,7 +182,7 @@ pub(super) async fn run(
             if let Some(tail) = tail {
                 let (all, state, latest) = if tail == 0 {
                     // A task snapshot gives an exact starting cursor without
-                    // downloading output, including on older endpoints.
+                    // downloading output.
                     let value = request(
                         id,
                         target,
@@ -194,12 +198,11 @@ pub(super) async fn run(
                     let Data::Job { job: state } = value else {
                         bail!(ErrorCode::InvalidMessage.error("expected job snapshot"));
                     };
-                    let latest = state.last_seq.max(after);
+                    let latest = state.last_log_seq.max(after);
                     (vec![], state, latest)
                 } else {
                     let (all, state) = collect_logs(id, target, &job, after, tail).await?;
-                    // Older endpoints can attach a newer task state than their
-                    // log snapshot. Only advance past output actually returned.
+                    // Only advance past output actually returned.
                     let latest = all.last().map(|event| event.seq).unwrap_or(after);
                     (all, state, latest)
                 };

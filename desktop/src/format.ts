@@ -10,7 +10,7 @@ export const recordTime = (time: number) =>
 export const clockTime = (time: number) =>
   new Date(time).toLocaleTimeString(formatLocale());
 export const isRunning = (job: Job) =>
-  job.state === "starting" || job.state === "running";
+  job.state === "accepted" || job.state === "running";
 
 export function duration(ms: number | null) {
   if (ms === null) return "—";
@@ -71,23 +71,26 @@ export function relayHost(address: string) {
 export { errorText } from "./errors";
 
 export function taskState(job: Job): [string, string] {
-  if (job.state === "exited")
-    return job.exit_code === 0 && !job.signal
-      ? [t("task.success"), "success"]
-      : [t("task.nonzeroExit"), "failed"];
+  if (
+    job.state === "failed" &&
+    (job.kind === "exec" || job.kind === "stream_exec") &&
+    job.result &&
+    (job.result.exit_code !== null || job.result.signal !== null)
+  )
+    return [t("task.nonzeroExit"), "failed"];
   const states = {
-    starting: [t("task.starting"), "active"],
+    accepted: [t("task.accepted"), "active"],
     running: [t("status.running"), "active"],
+    succeeded: [t("task.success"), "success"],
     failed: [t("task.failed"), "failed"],
     canceled: [t("task.canceled"), "neutral"],
     timed_out: [t("task.timedOut"), "failed"],
     lost: [t("task.lost"), "failed"],
-  } satisfies Record<string, [string, string]>;
+  } satisfies Record<Job["state"], [string, string]>;
   return states[job.state];
 }
-
-export function commandText(job: Job) {
-  return [job.program || t("task.script"), ...job.args]
+export function commandText(params: { program: string; args: string[] }) {
+  return [params.program || t("task.script"), ...params.args]
     .map((arg) => (/[\s"'\\]/.test(arg) ? JSON.stringify(arg) : arg))
     .join(" ");
 }

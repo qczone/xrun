@@ -37,13 +37,6 @@ pub(crate) struct Counts {
     pub stdout: AtomicU64,
     pub stderr: AtomicU64,
 }
-impl Counts {
-    pub(crate) fn snapshot(&self) -> serde_json::Value {
-        serde_json::json!({"stdin_bytes_received":self.input.load(Ordering::Relaxed),
-            "stdout_bytes_read":self.stdout.load(Ordering::Relaxed),
-            "stderr_bytes_read":self.stderr.load(Ordering::Relaxed)})
-    }
-}
 
 fn frame(value: &Data) -> Result<Message> {
     Ok(Message::Text(serde_json::to_string(value)?.into()))
@@ -97,7 +90,8 @@ pub(crate) async fn serve(
     mut child: ManagedChild,
     timeout: u64,
     counts: Arc<Counts>,
-    on_finished: impl FnOnce() + Send,
+    cancellation: impl std::future::Future<Output = ()> + Send,
+    on_finished: impl FnOnce(&StreamResult, &Counts) -> Result<()> + Send,
 ) -> Result<Outcome> {
     net::send(ws, &Data::StreamReady).await?;
     let (socket_tx, mut socket_rx) = ws.split();
@@ -165,6 +159,7 @@ pub(crate) async fn serve(
     let start = crate::clock::elapsed_clock_ms()?;
     let pid = child.pid;
     let output_tx = tx.clone();
+    let finished_counts = counts.clone();
     let output = async move {
         let counts = tokio::try_join!(
             drain(stdout, 1, output_tx.clone(), counts.clone()),
@@ -176,12 +171,14 @@ pub(crate) async fn serve(
     let completion = async {
         let wait = async {
             let completed = tokio::select! {
-                status = child.wait() => status.map(Some),
-                result = timeout_reached(timeout, start) => result.map(|()| None),
+                status = child.wait() => status.map(|status| (Some(status), false)),
+                result = timeout_reached(timeout, start) => result.map(|()| (None, false)),
+                _ = cancellation => Ok((None, true)),
             }?;
+            let (completed, canceled) = completed;
             let (status, timed_out) = match completed {
                 Some(status) => (status, false),
-                None => (terminate_and_wait(&mut child).await?, true),
+                None => (terminate_and_wait(&mut child).await?, !canceled),
             };
             let _ = exited.send(true);
             process::terminate(pid);
@@ -198,19 +195,20 @@ pub(crate) async fn serve(
             };
             #[cfg(not(unix))]
             let signal = None;
-            Ok::<_, anyhow::Error>((status.code().map(i64::from), signal, timed_out))
+            Ok::<_, anyhow::Error>((status.code().map(i64::from), signal, timed_out, canceled))
         };
-        let ((exit_code, signal, timed_out), (stdout_bytes, stderr_bytes)) =
+        let ((exit_code, signal, timed_out, canceled), (stdout_bytes, stderr_bytes)) =
             tokio::try_join!(wait, output)?;
-        // Remove the PID from daemon bookkeeping before releasing it to the OS.
-        on_finished();
-        child.reap().await?;
         let result = StreamResult {
             exit_code,
             signal,
             timed_out,
+            canceled,
             duration_ms: crate::clock::elapsed_clock_ms()?.saturating_sub(start),
         };
+        // Persist the process outcome while its leader still protects the group PID.
+        on_finished(&result, &finished_counts)?;
+        child.reap().await?;
         exit_sent.store(true, Ordering::Relaxed);
         tx.send(frame(&Data::StreamExit {
             result: result.clone(),

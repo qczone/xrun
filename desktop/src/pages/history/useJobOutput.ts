@@ -1,10 +1,10 @@
 import { t, type PlainMessageKey } from "../../i18n";
 import { useEffect, useRef, useState } from "react";
-import { api, type Job } from "../../api";
+import { api, type CommandJob } from "../../api";
 import { errorCode, errorText } from "../../errors";
 import { isRunning } from "../../format";
 import { OutputBuffer } from "../../logs";
-export type Selection = { job: Job; dbId: string };
+export type Selection = { job: CommandJob; dbId: string };
 interface Input {
   selection: Selection;
   active: boolean;
@@ -12,7 +12,7 @@ interface Input {
   refresh: number;
   onLoading: (value: boolean) => void;
 }
-export function useTaskOutput({
+export function useJobOutput({
   selection,
   active,
   paused,

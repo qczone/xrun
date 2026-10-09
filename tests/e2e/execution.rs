@@ -118,12 +118,12 @@ pub(super) async fn check(suite: &Suite) -> Result<String> {
     assert_eq!(conflict.status.code(), Some(2));
     let id = first["job_id"].as_str().unwrap();
     let waited = json(cli(source, &["runner1", "wait", id, "--json"]).await);
-    assert_eq!(waited["job"]["state"], "exited");
+    assert_eq!(waited["job"]["state"], "succeeded");
     // Expiring logs must retain the task result and original request deduplication.
-    let tasks = xrun::testing::store::TaskStore::open(&target.join(".xrun/daemon.db"), false)?;
+    let tasks = xrun::testing::store::JobStore::open(&target.join(".xrun/daemon.db"), false)?;
     let mut expired = tasks.get(id)?.unwrap();
-    expired.updated_at_ms = now_ms() - 8 * 86_400_000;
-    xrun::testing::replace_task_fixture(&tasks, &expired)?;
+    expired.finished_at_ms = Some(now_ms() - 8 * 86_400_000);
+    xrun::testing::replace_job_fixture(&tasks, &expired)?;
     tasks.prune()?;
     let unavailable = cli(source, &["runner1", "logs", id]).await;
     assert_eq!(unavailable.status.code(), Some(1));
@@ -136,17 +136,17 @@ pub(super) async fn check(suite: &Suite) -> Result<String> {
         ("CAPTURE_ERROR: disk unavailable", "LOG_INCOMPLETE"),
     ] {
         let mut partial = expired_logs.clone();
-        partial.incomplete_reason = Some(reason.into());
-        xrun::testing::replace_task_fixture(&tasks, &partial)?;
+        partial.output_loss_reason = Some(reason.into());
+        xrun::testing::replace_job_fixture(&tasks, &partial)?;
         let result = cli(source, &["runner1", "logs", id, "--json"]).await;
         assert_eq!(result.status.code(), Some(1));
         let diagnostic: Value = serde_json::from_slice(&result.stderr)?;
         assert_eq!(diagnostic["code"], code);
         assert_eq!(diagnostic["message"], reason);
     }
-    xrun::testing::replace_task_fixture(&tasks, &expired_logs)?;
+    xrun::testing::replace_job_fixture(&tasks, &expired_logs)?;
     let waited = json(cli(source, &["runner1", "wait", id, "--json"]).await);
-    assert_eq!(waited["job"]["state"], "exited");
+    assert_eq!(waited["job"]["state"], "succeeded");
     assert!(
         waited["logs_error"]
             .as_str()

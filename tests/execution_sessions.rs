@@ -91,21 +91,34 @@ fn job(execution: &Execution, lab: &Lab) -> Job {
         source_device_id: lab.source_identity.device_id.clone(),
         target_device_id: lab.target_identity.device_id.clone(),
         db_id: execution.db_id.clone(),
-        program: execution.program.clone(),
-        args: execution.args.clone(),
-        cwd: execution.cwd.clone(),
         state: JobState::Running,
-        exit_code: None,
-        signal: None,
-        duration_ms: None,
-        last_seq: 0,
-        output_complete: true,
-        incomplete_reason: None,
-        error: None,
+        last_log_seq: 0,
+        output_loss_reason: None,
         created_at_ms: now_ms(),
         updated_at_ms: now_ms(),
         leftover_possible: false,
         process: None,
+        details: JobDetails::Exec(CommandParams {
+            program: execution.program.clone(),
+            args: execution.args.clone(),
+            cwd: execution.cwd.clone(),
+            timeout: 0,
+            shell: None,
+            input_size: None,
+            input_sha256: None,
+        }),
+        result: None,
+        output_complete: Some(true),
+        error_code: None,
+        error_message: None,
+        log_bytes: 0,
+        attachments: vec![],
+        started_at_ms: None,
+        finished_at_ms: if (JobState::Running).terminal() {
+            Some(now_ms())
+        } else {
+            None
+        },
     }
 }
 
@@ -230,7 +243,7 @@ async fn foreground_uses_one_session_and_recovers_without_resubmitting() -> Resu
                     };
                     let mut value = accepted.clone().unwrap();
                     if after == 0 {
-                        value.last_seq = 1;
+                        value.last_log_seq = 1;
                         net::send(
                             &mut ws,
                             &Data::Logs {
@@ -248,9 +261,12 @@ async fn foreground_uses_one_session_and_recovers_without_resubmitting() -> Resu
                         ws.close(None).await?;
                         continue;
                     }
-                    value.last_seq = 2;
-                    value.state = JobState::Exited;
-                    value.exit_code = Some(7);
+                    value.last_log_seq = 2;
+                    value.state = JobState::Failed;
+                    value.result = Some(JobResult::Command(CommandResult {
+                        exit_code: Some(7),
+                        ..Default::default()
+                    }));
                     net::send(
                         &mut ws,
                         &Data::Logs {
@@ -325,7 +341,7 @@ fn main() {
         assert_eq!(child.wait_with_output().await?.status.code(), Some(9));
         let mut background = args.to_vec(); background.insert(1, "start"); background.insert(2, "--json");
         let repeated = json(cli(&lab.source, &background).await);
-        assert_eq!(repeated["exit_code"], 9);
+        assert_eq!(repeated["result"]["exit_code"], 9);
         let output = cli(&lab.source, &args).await;
         assert_eq!(output.status.code(), Some(9));
         assert_eq!(output.stdout, b"before\nafter\n");

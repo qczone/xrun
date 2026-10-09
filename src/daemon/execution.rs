@@ -1,6 +1,6 @@
 //! Durable acceptance, process execution, cancellation and output capture.
 use crate::error::ErrorCode;
-use crate::{config, protocol::*, store::TaskStore};
+use crate::{config, protocol::*, store::JobStore};
 use anyhow::{Context, Result, bail};
 #[cfg(windows)]
 use std::collections::HashSet;
@@ -29,7 +29,7 @@ fn short_id() -> String {
 }
 pub(super) fn check_capacity(rt: &Runtime) -> Result<()> {
     let jobs = rt.store.active_count()?;
-    if jobs + rt.streams.load(Ordering::SeqCst) >= rt.config()?.max_concurrent_jobs {
+    if jobs >= rt.config()?.max_concurrent_jobs {
         bail!(ErrorCode::DeviceBusy.error("job capacity reached"))
     }
     Ok(())
@@ -111,29 +111,25 @@ pub(super) fn submit(
     while rt.store.get(&id)?.is_some() {
         id = short_id()
     }
-    let job = Job {
-        job_id: id,
-        request_id: request.request_id.clone(),
-        request_hash: hash,
-        source_device_id: source.into(),
-        target_device_id: rt.id.device_id.clone(),
-        db_id: rt.store.db_id.clone(),
-        program: request.program.clone(),
-        args: request.args.clone(),
-        cwd: request.cwd.clone(),
-        state: JobState::Starting,
-        exit_code: None,
-        signal: None,
-        duration_ms: None,
-        last_seq: 0,
-        output_complete: true,
-        incomplete_reason: None,
-        error: None,
-        created_at_ms: now_ms(),
-        updated_at_ms: now_ms(),
-        leftover_possible: false,
-        process: None,
-    };
+    let mut job = Job::accepted(
+        source,
+        &rt.id.device_id,
+        &JobContext {
+            request_id: request.request_id.clone(),
+            db_id: request.db_id.clone(),
+        },
+        hash,
+        JobDetails::Exec(CommandParams {
+            program: request.program.clone(),
+            args: request.args.clone(),
+            cwd: request.cwd.clone(),
+            timeout: request.timeout,
+            shell: request.shell.clone(),
+            input_size: Some(request.input_size),
+            input_sha256: Some(request.input_sha256.clone()),
+        }),
+    );
+    job.job_id = id;
     validate_job_size(&job)?;
     rt.store.insert(&job)?;
     let background = rt.clone();
@@ -165,10 +161,11 @@ pub(super) fn submit(
             );
             let recorded = if started.load(Ordering::SeqCst) {
                 let mut lost = outcome(JobState::Lost);
-                lost.error = Some(format!(
+                lost.error_code = Some("RESULT_LOST".into());
+                lost.error_message = Some(format!(
                     "RESULT_LOST: execution started but its result could not be recorded: {e:#}"
                 ));
-                lost.incomplete_reason = Some("CAPTURE_ERROR: execution interrupted".into());
+                lost.output_loss_reason = Some("CAPTURE_ERROR: execution interrupted".into());
                 lost.leftover_possible = cfg!(unix);
                 background.store.finish(&saved.job_id, lost).await
             } else {
@@ -379,15 +376,27 @@ async fn execute(
     child.reap().await?;
     drop(script);
     rt.store.flush().await?;
-    let mut completed = outcome(reason.unwrap_or(JobState::Exited));
-    completed.exit_code = status.code().map(i64::from);
+    let exit_code = status.code().map(i64::from);
     #[cfg(unix)]
-    {
+    let signal = {
         use std::os::unix::process::ExitStatusExt;
-        completed.signal = status.signal();
-    }
-    completed.duration_ms = Some(crate::clock::elapsed_clock_ms()?.saturating_sub(start));
-    completed.incomplete_reason = incomplete.lock().unwrap().clone();
+        status.signal()
+    };
+    #[cfg(not(unix))]
+    let signal = None;
+    let state = reason.unwrap_or(if exit_code == Some(0) && signal.is_none() {
+        JobState::Succeeded
+    } else {
+        JobState::Failed
+    });
+    let mut completed = outcome(state);
+    completed.result = Some(JobResult::Command(CommandResult {
+        exit_code,
+        signal,
+        duration_ms: crate::clock::elapsed_clock_ms()?.saturating_sub(start),
+        ..Default::default()
+    }));
+    completed.output_loss_reason = incomplete.lock().unwrap().clone();
     rt.store.finish(&job.job_id, completed).await?;
     Ok(())
 }
@@ -406,18 +415,11 @@ const PROCESS_TERMINATION_GRACE: Duration = Duration::from_secs(5);
 const LOG_BATCH_BYTES: usize = 32 * 1024;
 const LOG_BATCH_WAIT: Duration = Duration::from_millis(50);
 fn outcome(state: JobState) -> crate::store::JobOutcome {
-    crate::store::JobOutcome {
-        state,
-        exit_code: None,
-        signal: None,
-        duration_ms: None,
-        error: None,
-        incomplete_reason: None,
-        leftover_possible: false,
-    }
+    crate::store::JobOutcome::new(state)
 }
+
 async fn drain(
-    store: Arc<TaskStore>,
+    store: Arc<JobStore>,
     id: String,
     stream: String,
     mut pipe: Box<dyn AsyncRead + Unpin + Send>,
@@ -485,7 +487,7 @@ mod tests {
     #[tokio::test]
     async fn log_batches_flush_at_size_deadline_and_eof() -> Result<()> {
         let directory = tempfile::tempdir()?;
-        let store = Arc::new(TaskStore::open(&directory.path().join("tasks.db"), true)?);
+        let store = Arc::new(JobStore::open(&directory.path().join("tasks.db"), true)?);
         store.insert(&Job {
             job_id: "BATCH1".into(),
             request_id: "batch".into(),
@@ -493,21 +495,34 @@ mod tests {
             source_device_id: "source".into(),
             target_device_id: "target".into(),
             db_id: store.db_id.clone(),
-            program: "test".into(),
-            args: vec![],
-            cwd: "/".into(),
             state: JobState::Running,
-            exit_code: None,
-            signal: None,
-            duration_ms: None,
-            last_seq: 0,
-            output_complete: true,
-            incomplete_reason: None,
-            error: None,
+            last_log_seq: 0,
+            output_loss_reason: None,
             created_at_ms: now_ms(),
             updated_at_ms: now_ms(),
             leftover_possible: false,
             process: None,
+            details: JobDetails::Exec(CommandParams {
+                program: "test".into(),
+                args: vec![],
+                cwd: "/".into(),
+                timeout: 0,
+                shell: None,
+                input_size: None,
+                input_sha256: None,
+            }),
+            result: None,
+            output_complete: Some(true),
+            error_code: None,
+            error_message: None,
+            log_bytes: 0,
+            attachments: vec![],
+            started_at_ms: None,
+            finished_at_ms: if (JobState::Running).terminal() {
+                Some(now_ms())
+            } else {
+                None
+            },
         })?;
         let (mut output, input) = tokio::io::duplex(2 * LOG_BATCH_BYTES);
         let incomplete = Arc::new(Mutex::new(None));
@@ -521,16 +536,16 @@ mod tests {
         ));
         output.write_all(&vec![b'x'; LOG_BATCH_BYTES]).await?;
         tokio::time::timeout(Duration::from_secs(1), changes.changed()).await??;
-        assert_eq!(store.get_async("BATCH1").await?.unwrap().last_seq, 1);
+        assert_eq!(store.get_async("BATCH1").await?.unwrap().last_log_seq, 1);
         changes.borrow_and_update();
         output.write_all(b"timer").await?;
         tokio::time::timeout(LOG_BATCH_WAIT + Duration::from_secs(1), changes.changed()).await??;
-        assert_eq!(store.get_async("BATCH1").await?.unwrap().last_seq, 2);
+        assert_eq!(store.get_async("BATCH1").await?.unwrap().last_log_seq, 2);
         output.write_all(b"eof").await?;
         drop(output);
         capture.await?;
         store.flush().await?;
-        assert_eq!(store.get_async("BATCH1").await?.unwrap().last_seq, 3);
+        assert_eq!(store.get_async("BATCH1").await?.unwrap().last_log_seq, 3);
         assert!(incomplete.lock().unwrap().is_none());
         let events = store.logs("BATCH1", 0)?;
         use base64::Engine;
@@ -631,7 +646,7 @@ mod tests {
                     id,
                     members,
                     network_id: roster.roster.network_id,
-                    store: Arc::new(TaskStore::open(&dir.join("tasks.db"), true)?),
+                    store: Arc::new(JobStore::open(&dir.join("tasks.db"), true)?),
                     running: Mutex::new(Default::default()),
                     jobs: Mutex::new(tokio::task::JoinSet::new()),
                     canceled: Mutex::new(Default::default()),
@@ -662,7 +677,7 @@ mod tests {
                     let accepted = submit(rt.clone(), &rt.id.device_id, request.clone(), vec![])?;
                     assert_eq!(
                         rt.store.get(&accepted.job_id)?.unwrap().state,
-                        JobState::Starting
+                        JobState::Accepted
                     );
                     if stopping {
                         rt.stopping.store(true, Ordering::SeqCst);

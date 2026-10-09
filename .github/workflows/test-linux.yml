@@ -49,6 +49,8 @@ jobs:
         run: |
           cargo fmt --all -- --check
           cargo clippy --locked --all-targets -- -D warnings
+          # Integration tests launch the CLI; build it after clippy to refresh cached binaries.
+          cargo build --locked --bin xrun
           # Catch command stack overflows with a Windows-sized main-thread stack.
           ulimit -s 1024
           cargo test --locked
@@ -95,13 +97,6 @@ jobs:
         env:
           WRANGLER_SEND_METRICS: 'false'
         run: bun run test:interop
-      - name: Test real previous compatible builds
-        timeout-minutes: 20
-        env:
-          WRANGLER_SEND_METRICS: 'false'
-        run: |
-          bun test scripts/compatibility-baseline.test.ts
-          bun scripts/test-compatibility.ts
       - name: Test automatic CLI installation
         run: |
           bun test tests/installer-platforms.test.ts

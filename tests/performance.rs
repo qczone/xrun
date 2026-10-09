@@ -1,4 +1,4 @@
-//! Optional measurements using actual CLI processes and isolated task databases.
+//! Optional measurements using actual CLI processes and isolated job databases.
 mod common;
 use anyhow::{Context, Result, ensure};
 use common::*;
@@ -148,19 +148,21 @@ async fn history_recovery(lab: &mut Lab) -> Result<serde_json::Value> {
     {
         let database = rusqlite::Connection::open(&path)?;
         let template: String =
-            database.query_row("SELECT data FROM jobs LIMIT 1", [], |row| row.get(0))?;
-        // Valid, old terminal payloads plus two unfinished records with no live process.
+            database.query_row("SELECT params_json FROM jobs LIMIT 1", [], |row| row.get(0))?;
+        // A large terminal history plus two unfinished records without a live process.
         database.execute(
             "WITH RECURSIVE history(n) AS (
                 SELECT 1 UNION ALL SELECT n+1 FROM history WHERE n<100002
-            ) INSERT INTO jobs
-            SELECT printf('history-%d',n),json_extract(?1,'$.source_device_id'),
-                printf('history-%d',n),json_set(?1,'$.job_id',printf('history-%d',n),
-                    '$.request_id',printf('history-%d',n),'$.created_at_ms',1,'$.process',NULL),
-                CASE WHEN n>100000 THEN 'starting' ELSE 'exited' END,
-                0,1,NULL,1,CASE WHEN n>100000 THEN NULL ELSE 0 END,NULL
-            FROM history",
-            [template],
+            ) INSERT INTO jobs(job_id,source_device_id,target_device_id,request_id,request_hash,
+                kind,params_json,state,created_at_ms,updated_at_ms,finished_at_ms,output_complete)
+            SELECT printf('history-%d',n),?2,?3,printf('history-%d',n),'hash','exec',?1,
+                CASE WHEN n>100000 THEN 'accepted' ELSE 'succeeded' END,
+                1,1,CASE WHEN n>100000 THEN NULL ELSE 1 END,1 FROM history",
+            rusqlite::params![
+                template,
+                lab.source_identity.device_id,
+                lab.target_identity.device_id
+            ],
         )?;
     }
     let started = Instant::now();
@@ -177,12 +179,12 @@ async fn history_recovery(lab: &mut Lab) -> Result<serde_json::Value> {
     let database =
         rusqlite::Connection::open_with_flags(&path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)?;
     let retained: i64 = database.query_row(
-        "SELECT COUNT(*) FROM jobs WHERE id LIKE 'history-%'",
+        "SELECT COUNT(*) FROM jobs WHERE job_id LIKE 'history-%'",
         [],
         |row| row.get(0),
     )?;
     let lost: i64 = database.query_row(
-        "SELECT COUNT(*) FROM jobs WHERE id LIKE 'history-%' AND state='lost'",
+        "SELECT COUNT(*) FROM jobs WHERE job_id LIKE 'history-%' AND state='lost'",
         [],
         |row| row.get(0),
     )?;
@@ -265,14 +267,17 @@ async fn measure_idle_sessions_and_dense_logs() -> Result<()> {
             queries.push(query_started.elapsed().as_secs_f64() * 1000.0);
         }
         let completed = json(waiting.wait_with_output().await?);
-        ensure!(completed["job"]["exit_code"] == 0, "producer failed");
+        ensure!(
+            completed["job"]["result"]["exit_code"] == 0,
+            "producer failed"
+        );
         let elapsed = started.elapsed().as_secs_f64();
         let database = rusqlite::Connection::open_with_flags(
             lab.target.join(".xrun/daemon.db"),
             rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
         )?;
         let (chunks, bytes): (i64, i64) = database.query_row(
-            "SELECT COUNT(*),COALESCE(SUM(length(bytes)),0) FROM logs WHERE job=?1",
+            "SELECT COUNT(*),COALESCE(SUM(length(bytes)),0) FROM job_logs WHERE job_id=?1",
             [id],
             |row| Ok((row.get(0)?, row.get(1)?)),
         )?;

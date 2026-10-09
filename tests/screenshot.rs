@@ -71,20 +71,18 @@ async fn screenshot_download_checks_metadata_integrity_errors_and_local_destinat
                     &mut ws,
                     &Data::Ready {
                         version: VERSION.into(),
-                        protocol: xrun::protocol::ProtocolRange::CURRENT,
-                        selected_protocol: xrun::protocol::PROTOCOL,
+                        protocol: ProtocolRange::CURRENT,
+                        selected_protocol: PROTOCOL,
                         device_id: lab.target_identity.device_id.clone(),
                         db_id: "screenshot-db".into(),
                         default_cwd: lab.target.to_string_lossy().into(),
                     },
                 )
                 .await?;
-                assert!(matches!(
-                    net::receive(&mut ws).await?,
-                    Data::Request {
-                        request: Request::Screenshot
-                    }
-                ));
+                let Data::Request { request } = net::receive(&mut ws).await? else {
+                    anyhow::bail!("request expected")
+                };
+                assert!(matches!(request, Request::Screenshot { .. }));
                 let error = match case {
                     "permission" => Some("PERMISSION_DENIED"),
                     "locked" => Some("SCREEN_LOCKED"),
@@ -101,6 +99,14 @@ async fn screenshot_download_checks_metadata_integrity_errors_and_local_destinat
                     )
                     .await?;
                 } else {
+                    let job = Job::accepted(
+                        &lab.source_identity.device_id,
+                        &lab.target_identity.device_id,
+                        &request.job_context().unwrap(),
+                        request.job_hash().unwrap(),
+                        request.job_details().unwrap(),
+                    );
+                    net::send(&mut ws, &Data::Accepted { job, fresh: true }).await?;
                     net::send(
                         &mut ws,
                         &Data::File {

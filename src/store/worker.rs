@@ -1,5 +1,5 @@
-//! One bounded queue owns the task database connection and all transactions.
-use super::tasks::Database;
+//! One bounded queue owns the job database connection and all transactions.
+use super::jobs::Database;
 use anyhow::{Context, Result};
 use std::sync::mpsc;
 use tokio::sync::mpsc::{Sender, error::TrySendError};
@@ -11,7 +11,7 @@ impl Worker {
     pub(super) fn start(mut database: Database) -> Result<Self> {
         let (sender, mut receiver) = tokio::sync::mpsc::channel::<Command>(DATABASE_QUEUE_CAPACITY);
         std::thread::Builder::new()
-            .name("xrun-task-store".into())
+            .name("xrun-job-store".into())
             .spawn(move || {
                 while let Some(command) = receiver.blocking_recv() {
                     command(&mut database);
@@ -28,7 +28,7 @@ impl Worker {
             let _ = reply.send(operation(database));
         });
         self.enqueue(command)?;
-        result.recv().context("task database worker stopped")?
+        result.recv().context("job database worker stopped")?
     }
     pub(super) fn enqueue(&self, mut command: Command) -> Result<()> {
         loop {
@@ -38,7 +38,7 @@ impl Worker {
                     command = waiting;
                     std::thread::sleep(std::time::Duration::from_millis(1));
                 }
-                Err(TrySendError::Closed(_)) => anyhow::bail!("task database worker stopped"),
+                Err(TrySendError::Closed(_)) => anyhow::bail!("job database worker stopped"),
             }
         }
         Ok(())
@@ -54,7 +54,7 @@ impl Worker {
         self.0
             .send(command)
             .await
-            .map_err(|_| anyhow::anyhow!("task database worker stopped"))?;
-        result.await.context("task database worker stopped")?
+            .map_err(|_| anyhow::anyhow!("job database worker stopped"))?;
+        result.await.context("job database worker stopped")?
     }
 }

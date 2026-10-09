@@ -3,9 +3,9 @@ use anyhow::Result;
 use base64::{Engine, engine::general_purpose::STANDARD};
 use common::*;
 use std::time::Duration;
-use xrun::testing::{net, protocol::*, store::TaskStore};
+use xrun::testing::{net, protocol::*, store::JobStore};
 
-fn job(lab: &Lab, store: &TaskStore, id: &str) -> Job {
+fn job(lab: &Lab, store: &JobStore, id: &str) -> Job {
     Job {
         job_id: id.into(),
         request_id: format!("query-{id}"),
@@ -13,21 +13,34 @@ fn job(lab: &Lab, store: &TaskStore, id: &str) -> Job {
         source_device_id: lab.source_identity.device_id.clone(),
         target_device_id: lab.target_identity.device_id.clone(),
         db_id: store.db_id.clone(),
-        program: "fixture".into(),
-        args: vec![],
-        cwd: lab.target.to_string_lossy().into(),
         state: JobState::Running,
-        exit_code: None,
-        signal: None,
-        duration_ms: None,
-        last_seq: 0,
-        output_complete: true,
-        incomplete_reason: None,
-        error: None,
+        last_log_seq: 0,
+        output_loss_reason: None,
         created_at_ms: now_ms(),
         updated_at_ms: now_ms(),
         leftover_possible: false,
         process: None,
+        details: JobDetails::Exec(CommandParams {
+            program: "fixture".into(),
+            args: vec![],
+            cwd: lab.target.to_string_lossy().into(),
+            timeout: 0,
+            shell: None,
+            input_size: None,
+            input_sha256: None,
+        }),
+        result: None,
+        output_complete: Some(true),
+        error_code: None,
+        error_message: None,
+        log_bytes: 0,
+        attachments: vec![],
+        started_at_ms: None,
+        finished_at_ms: if (JobState::Running).terminal() {
+            Some(now_ms())
+        } else {
+            None
+        },
     }
 }
 
@@ -79,12 +92,18 @@ fn output(events: &[LogEvent]) -> Vec<u8> {
 async fn large_task_pages_continue_without_exceeding_message_limit() -> Result<()> {
     tokio::time::timeout(Duration::from_secs(45), async {
         let mut lab = Lab::new().await?;
-        let store = TaskStore::open(&lab.target.join(".xrun/daemon.db"), false)?;
+        let store = JobStore::open(&lab.target.join(".xrun/daemon.db"), false)?;
         for index in 0..50 {
             let mut job = job(&lab, &store, &format!("Q{index:05}"));
-            job.args = vec!["x".repeat(24 * 1024)];
-            job.state = JobState::Exited;
-            job.exit_code = Some(0);
+            let JobDetails::Exec(params) = &mut job.details else {
+                panic!("exec parameters")
+            };
+            params.args = vec!["x".repeat(24 * 1024)];
+            job.state = JobState::Succeeded;
+            job.result = Some(JobResult::Command(CommandResult {
+                exit_code: Some(0),
+                ..Default::default()
+            }));
             store.insert(&job)?;
         }
         let mut ws = peer_session(
@@ -146,19 +165,22 @@ async fn large_task_pages_continue_without_exceeding_message_limit() -> Result<(
 async fn remote_tail_reads_only_the_suffix_and_preserves_binary_event_order() -> Result<()> {
     tokio::time::timeout(Duration::from_secs(45), async {
         let mut lab = Lab::new().await?;
-        let store = TaskStore::open(&lab.target.join(".xrun/daemon.db"), false)?;
+        let store = JobStore::open(&lab.target.join(".xrun/daemon.db"), false)?;
         store.insert(&job(&lab, &store, "TA1101"))?;
         for _ in 0..64 {
             store.append("TA1101", "stdout", &b"old line\n".repeat(4096))?;
         }
-        let boundary = store.get("TA1101")?.unwrap().last_seq;
+        let boundary = store.get("TA1101")?.unwrap().last_log_seq;
         store.append("TA1101", "stdout", b"first\nsecond \xe4")?;
         store.append("TA1101", "stderr", b"\xb8\xad\nlast")?;
         store.append("TA1101", "stdout", b" line\n")?;
         let mut completed = store.get("TA1101")?.unwrap();
-        completed.state = JobState::Exited;
-        completed.exit_code = Some(0);
-        xrun::testing::replace_task_fixture(&store, &completed)?;
+        completed.state = JobState::Succeeded;
+        completed.result = Some(JobResult::Command(CommandResult {
+            exit_code: Some(0),
+            ..Default::default()
+        }));
+        xrun::testing::replace_job_fixture(&store, &completed)?;
         let (events, bytes) = tail(&lab, 0, 2).await?;
         assert_eq!(output(&events), "second 中\nlast line\n".as_bytes());
         assert!(bytes < 8192, "tail transferred {bytes} bytes");
@@ -191,7 +213,7 @@ async fn remote_tail_reads_only_the_suffix_and_preserves_binary_event_order() ->
 async fn execution_that_cannot_fit_its_acknowledgment_is_rejected_before_acceptance() -> Result<()>
 {
     let mut lab = Lab::new().await?;
-    let store = TaskStore::open(&lab.target.join(".xrun/daemon.db"), false)?;
+    let store = JobStore::open(&lab.target.join(".xrun/daemon.db"), false)?;
     let mut ws = peer_session(
         &lab.source,
         &lab.source_identity,

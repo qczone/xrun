@@ -77,12 +77,18 @@ pub(super) fn job_code(job: &Job) -> i32 {
     match job.state {
         JobState::TimedOut => 124,
         JobState::Canceled => 130,
-        JobState::Failed | JobState::Lost => 125,
+        JobState::Lost => 125,
         _ => {
-            if let Some(signal) = job.signal {
+            if let Some(signal) = job.signal() {
                 128 + signal
             } else {
-                let code = job.exit_code.unwrap_or(125);
+                let code = job
+                    .exit_code()
+                    .unwrap_or(if job.state == JobState::Succeeded {
+                        0
+                    } else {
+                        125
+                    });
                 if (0..=255).contains(&code) {
                     code as i32
                 } else {
@@ -95,7 +101,7 @@ pub(super) fn job_code(job: &Job) -> i32 {
 }
 pub(super) fn show_job(json: bool, job: &Job) {
     print(json, job, || {
-        println!("{}\t{:?}\t{}", job_ref(job), job.state, job.program)
+        println!("{}\t{:?}\t{}", job_ref(job), job.state, job.details.label())
     });
 }
 pub(super) fn read_input(max: u64) -> Result<Vec<u8>> {

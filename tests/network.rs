@@ -6,7 +6,8 @@ use std::time::Duration;
 use xrun::testing::{
     config::{DaemonConfig, Identity},
     membership::RosterCache,
-    store::TaskStore,
+    protocol::{ForwardParams, Job, JobContext, JobDetails, JobState, now_ms},
+    store::JobStore,
 };
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
@@ -108,8 +109,12 @@ async fn registration_permissions_migration_and_manager_offline_execution() -> R
             ..Default::default()
         };
         xrun::testing::config::write(&dir.join("daemon.toml"), &old_cfg)?;
-        let history = TaskStore::open(&dir.join("daemon.db"), true)?;
-        history.audit(serde_json::json!({"op":"old-history","preserve":true}))?;
+        let history = JobStore::open(&dir.join("daemon.db"), true)?;
+        let mut job = Job::accepted("source", "target", &JobContext::new(&history.db_id), "hash".into(), JobDetails::Forward(ForwardParams { port: 8080 }));
+        job.request_id = "preserved-history".into();
+        job.state = JobState::Lost;
+        job.finished_at_ms = Some(now_ms());
+        history.insert(&job)?;
         std::fs::write(dir.join("daemon.initialized"), b"2\n")?;
         let allow = json(cli(&lab.source, &["invite", "--allow", "--json"]).await);
         ok(cli(
@@ -141,7 +146,7 @@ async fn registration_permissions_migration_and_manager_offline_execution() -> R
         );
         let db = rusqlite::Connection::open(dir.join("daemon.db"))?;
         let count: i64 = db.query_row(
-            "SELECT COUNT(*) FROM audit WHERE json_extract(data,'$.op')='old-history'",
+            "SELECT COUNT(*) FROM jobs WHERE request_id='preserved-history'",
             [],
             |r| r.get(0),
         )?;

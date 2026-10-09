@@ -101,6 +101,7 @@ codes! {
     InvalidToken => "INVALID_TOKEN",
     InvitationLimit => "INVITATION_LIMIT",
     IsDirectory => "IS_DIRECTORY",
+    JobCanceled => "JOB_CANCELED",
     JobNotFound => "JOB_NOT_FOUND",
     LogIncomplete => "LOG_INCOMPLETE",
     LogTruncated => "LOG_TRUNCATED",

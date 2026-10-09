@@ -2,10 +2,10 @@ mod common;
 use anyhow::{Context, Result};
 use common::*;
 use std::{path::Path, time::Duration};
-use xrun::testing::{net, protocol::*, store::TaskStore};
+use xrun::testing::{net, protocol::*, store::JobStore};
 
-fn store(lab: &Lab) -> Result<TaskStore> {
-    TaskStore::open(&lab.target.join(".xrun/daemon.db"), false)
+fn store(lab: &Lab) -> Result<JobStore> {
+    JobStore::open(&lab.target.join(".xrun/daemon.db"), false)
 }
 fn database(lab: &Lab) -> Result<rusqlite::Connection> {
     let db = rusqlite::Connection::open(lab.target.join(".xrun/daemon.db"))?;
@@ -251,7 +251,7 @@ async fn daemon_rejects_invalid_execution_without_cli_checks_or_accepting_a_job(
         );
     }
     let job = accepted(submit(&lab, &base, &[]).await?);
-    assert_eq!(terminal(&lab, &job.job_id).await?.exit_code, Some(0));
+    assert_eq!(terminal(&lab, &job.job_id).await?.exit_code(), Some(0));
     Ok(())
 }
 
@@ -263,7 +263,10 @@ async fn long_program_lookup_failure_keeps_task_responses_within_the_message_lim
     let job = accepted(submit(&lab, &request, &[]).await?);
     let finished = terminal(&lab, &job.job_id).await?;
     assert_eq!(finished.state, JobState::Failed);
-    let error = finished.error.as_ref().context("program lookup failure")?;
+    let error = finished
+        .error_message
+        .as_ref()
+        .context("program lookup failure")?;
     assert!(error.contains("PROGRAM_NOT_FOUND"));
     assert!(error.ends_with(" [diagnostic truncated]"));
     assert!(error.len() <= 1024);
@@ -272,8 +275,8 @@ async fn long_program_lookup_failure_keeps_task_responses_within_the_message_lim
         &["target1", "jobs", &job.job_id, "--json"],
     )
     .await))?;
-    assert_eq!(queried.program, program);
-    assert_eq!(queried.error, finished.error);
+    assert_eq!(queried.details.command().unwrap().program, program);
+    assert_eq!(queried.error_message, finished.error_message);
     // Logs also carry the complete Job object even when no output was produced.
     ok(cli(&lab.source, &["target1", "logs", &job.job_id, "--json"]).await);
     Ok(())
@@ -323,12 +326,12 @@ async fn daemon_deduplicates_before_capacity_and_refuses_changed_execution_field
         rejected(submit(&lab, &changed, &input).await?, "REQUEST_CONFLICT");
     }
     std::fs::write(dir.join("release"), b"")?;
-    assert_eq!(terminal(&lab, &job.job_id).await?.exit_code, Some(0));
+    assert_eq!(terminal(&lab, &job.job_id).await?.exit_code(), Some(0));
     assert_eq!(accepted(submit(&lab, &base, &[]).await?).job_id, job.job_id);
     assert_eq!(std::fs::read(dir.join("runs"))?, b"run\n");
     let retried = accepted(submit(&lab, &busy, &[]).await?);
     assert_ne!(retried.job_id, job.job_id);
-    assert_eq!(terminal(&lab, &retried.job_id).await?.exit_code, Some(0));
+    assert_eq!(terminal(&lab, &retried.job_id).await?.exit_code(), Some(0));
     assert_eq!(std::fs::read(dir.join("runs"))?, b"run\nrun\n");
     Ok(())
 }
@@ -338,24 +341,26 @@ async fn failed_process_recording_kills_the_spawned_process_and_releases_capacit
     let mut lab = Lab::new().await?;
     let program = fixture(&lab).await?;
     let db = database(&lab)?;
-    for phase in ["starting", "running"] {
+    for phase in ["accepted", "running"] {
         let dir = lab.root.path().join(phase);
         std::fs::create_dir(&dir)?;
         db.execute_batch(&format!(
-            "CREATE TRIGGER fail_process BEFORE UPDATE OF data ON jobs
-             WHEN NEW.state='{phase}' AND json_extract(NEW.data,'$.process.pid') IS NOT NULL
+            "CREATE TRIGGER fail_process BEFORE UPDATE OF process_json,state ON jobs
+             WHEN NEW.state='{phase}' AND json_extract(NEW.process_json,'$.pid') IS NOT NULL
              BEGIN SELECT RAISE(FAIL,
-                 'test process record failure pid=' || json_extract(NEW.data,'$.process.pid'));
+                 'test process record failure pid=' || json_extract(NEW.process_json,'$.pid'));
              END;"
         ))?;
         let request = execution(&lab, &program, &["wait", dir.to_str().unwrap()])?;
         let job = accepted(submit(&lab, &request, &[]).await?);
         let failed = terminal(&lab, &job.job_id).await?;
         assert_eq!(failed.state, JobState::Lost);
-        assert!(!failed.output_complete);
+        assert_eq!(failed.output_complete, Some(false));
         // The failed lifecycle transaction rolls back every write, including
         // trigger writes. Carry the PID in the injected error to prove cleanup.
-        let failure = failed.error.context("missing process recording failure")?;
+        let failure = failed
+            .error_message
+            .context("missing process recording failure")?;
         assert!(failure.starts_with("RESULT_LOST:"));
         let pid: u32 = failure
             .split_once("test process record failure pid=")
@@ -371,7 +376,7 @@ async fn failed_process_recording_kills_the_spawned_process_and_releases_capacit
         db.execute_batch("DROP TRIGGER fail_process;")?;
     }
     let job = accepted(submit(&lab, &execution(&lab, &binary(), &["--version"])?, &[]).await?);
-    assert_eq!(terminal(&lab, &job.job_id).await?.exit_code, Some(0));
+    assert_eq!(terminal(&lab, &job.job_id).await?.exit_code(), Some(0));
     Ok(())
 }
 
@@ -443,7 +448,7 @@ async fn authorization_changes_during_acceptance_never_claim_the_request_was_rej
                 }
             })
             .await??;
-            assert_eq!(terminal(&lab, &job.job_id).await?.exit_code, Some(0));
+            assert_eq!(terminal(&lab, &job.job_id).await?.exit_code(), Some(0));
             cfg.remote_access_paused = false;
             cfg.deny_from.clear();
             config::write(&cfg_path, &cfg)?;
@@ -610,7 +615,7 @@ async fn local_confirmation_failure_preserves_the_remote_acknowledgement() -> Re
             .unwrap()
             .contains(&accepted.job_id)
     );
-    assert_eq!(terminal(&lab, &accepted.job_id).await?.exit_code, Some(0));
+    assert_eq!(terminal(&lab, &accepted.job_id).await?.exit_code(), Some(0));
     let record: String = local.query_row(
         "SELECT json_extract(data, '$.status') FROM submissions WHERE id='confirmed-remotely'",
         [],
@@ -638,8 +643,8 @@ async fn unsavable_result_stops_daemon_cleans_other_jobs_and_recovers_as_lost() 
         pids.push(pid_file(&dir.join("pid")).await?);
     }
     db.execute_batch(
-        "CREATE TRIGGER fail_result BEFORE UPDATE OF data ON jobs
-         WHEN NEW.state NOT IN ('starting','running')
+        "CREATE TRIGGER fail_result BEFORE UPDATE OF process_json,state ON jobs
+         WHEN NEW.state NOT IN ('accepted','running')
          BEGIN SELECT RAISE(FAIL, 'test result write failure'); END;",
     )?;
     std::fs::write(lab.root.path().join("finishing/release"), b"")?;
@@ -662,7 +667,7 @@ async fn unsavable_result_stops_daemon_cleans_other_jobs_and_recovers_as_lost() 
     for job in &jobs {
         let recovered = store(&lab)?.get(&job.job_id)?.unwrap();
         assert_eq!(recovered.state, JobState::Lost);
-        assert!(recovered.error.unwrap().contains("RESULT_LOST"));
+        assert!(recovered.error_message.unwrap().contains("RESULT_LOST"));
     }
     for name in ["finishing", "still-running"] {
         assert_eq!(
@@ -692,22 +697,22 @@ async fn log_quota_and_write_failure_preserve_exit_status_and_report_incomplete_
         if quota {
             store(&lab)?.append(&job.job_id, "stdout", b"retained")?;
             db.execute(
-                "UPDATE log_sizes SET bytes=?2 WHERE job=?1",
+                "UPDATE jobs SET log_bytes=?2 WHERE job_id=?1",
                 rusqlite::params![job.job_id, MAX_FILE as i64],
             )?;
             db.execute(
-                "UPDATE meta SET value=(SELECT SUM(bytes) FROM log_sizes) WHERE key='log_bytes'",
+                "UPDATE meta SET value=(SELECT SUM(log_bytes) FROM jobs) WHERE key='log_bytes'",
                 [],
             )?;
         } else {
-            db.execute_batch("CREATE TRIGGER fail_logs BEFORE INSERT ON logs BEGIN SELECT RAISE(ABORT, 'test capture write failure'); END;")?;
+            db.execute_batch("CREATE TRIGGER fail_logs BEFORE INSERT ON job_logs BEGIN SELECT RAISE(ABORT, 'test capture write failure'); END;")?;
         }
         std::fs::write(dir.join("release"), b"")?;
         let finished = terminal(&lab, &job.job_id).await?;
-        assert_eq!(finished.state, JobState::Exited);
-        assert_eq!(finished.exit_code, Some(0));
-        assert!(!finished.output_complete);
-        assert!(finished.incomplete_reason.unwrap().contains(reason));
+        assert_eq!(finished.state, JobState::Succeeded);
+        assert_eq!(finished.exit_code(), Some(0));
+        assert_eq!(finished.output_complete, Some(false));
+        assert!(finished.output_loss_reason.unwrap().contains(reason));
         let logs = store(&lab)?.logs(&job.job_id, 0)?;
         assert_eq!(logs.len(), usize::from(quota));
         if quota {
@@ -747,11 +752,11 @@ async fn escaped_process_holding_output_does_not_keep_the_job_running() -> Resul
         alive(pid),
         "fixture did not retain its inherited output pipe"
     );
-    assert_eq!(finished.state, JobState::Exited);
-    assert_eq!(finished.exit_code, Some(0));
-    assert!(!finished.output_complete);
+    assert_eq!(finished.state, JobState::Succeeded);
+    assert_eq!(finished.exit_code(), Some(0));
+    assert_eq!(finished.output_complete, Some(false));
     assert_eq!(
-        finished.incomplete_reason.as_deref(),
+        finished.output_loss_reason.as_deref(),
         Some("DETACHED_OUTPUT")
     );
     assert_eq!(store(&lab)?.active_count()?, 0);

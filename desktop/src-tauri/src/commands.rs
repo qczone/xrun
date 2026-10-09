@@ -97,22 +97,11 @@ async fn devices() -> Result<xrun::client::Status, CommandError> {
 }
 
 #[tauri::command]
-async fn task_history(
-    before: Option<i64>,
-    filter: String,
-) -> Result<xrun::client::history::TaskPage, CommandError> {
-    tauri::async_runtime::spawn_blocking(move || xrun::client::history::tasks(before, &filter))
-        .await
-        .map_err(CommandError::from_error)?
-        .map_err(CommandError::from_error)
-}
-
-#[tauri::command]
-async fn task_output(
+async fn job_output(
     db_id: String,
     job: String,
     after: Option<u64>,
-) -> Result<xrun::client::history::TaskOutput, CommandError> {
+) -> Result<xrun::client::history::JobOutput, CommandError> {
     tauri::async_runtime::spawn_blocking(move || xrun::client::history::output(&db_id, &job, after))
         .await
         .map_err(CommandError::from_error)?
@@ -120,13 +109,79 @@ async fn task_output(
 }
 
 #[tauri::command]
-async fn file_history(
-    before: Option<i64>,
-) -> Result<xrun::client::history::FilePage, CommandError> {
-    tauri::async_runtime::spawn_blocking(move || xrun::client::history::files(before))
+async fn activity_job(db_id: String, id: String) -> Result<xrun::protocol::Job, CommandError> {
+    tauri::async_runtime::spawn_blocking(move || xrun::client::history::job(&db_id, &id))
         .await
         .map_err(CommandError::from_error)?
         .map_err(CommandError::from_error)
+}
+#[tauri::command]
+async fn activity_history(
+    before: Option<String>,
+    filter: String,
+) -> Result<xrun::client::history::ActivityPage, CommandError> {
+    tauri::async_runtime::spawn_blocking(move || {
+        xrun::client::history::activity(before.as_deref(), &filter)
+    })
+    .await
+    .map_err(CommandError::from_error)?
+    .map_err(CommandError::from_error)
+}
+
+#[tauri::command]
+async fn activity_attachment(
+    id: String,
+) -> Result<xrun::client::history::AttachmentPreview, CommandError> {
+    tauri::async_runtime::spawn_blocking(move || xrun::client::history::attachment(&id))
+        .await
+        .map_err(CommandError::from_error)?
+        .map_err(CommandError::from_error)
+}
+
+#[tauri::command]
+async fn save_activity_attachment<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    id: String,
+) -> Result<Option<String>, CommandError> {
+    let attachment_id = id.clone();
+    let preview = tauri::async_runtime::spawn_blocking(move || {
+        xrun::client::history::attachment(&attachment_id)
+    })
+    .await
+    .map_err(CommandError::from_error)?
+    .map_err(CommandError::from_error)?;
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    app.dialog()
+        .file()
+        .set_file_name(&preview.attachment.metadata.name)
+        .save_file(move |path| {
+            let _ = tx.send(path);
+        });
+    let Some(path) = rx.await.map_err(CommandError::from_error)? else {
+        return Ok(None);
+    };
+    let destination = path.into_path().map_err(CommandError::from_error)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        xrun::client::history::save_attachment(&id, &destination)
+    })
+    .await
+    .map_err(CommandError::from_error)?
+    .map(|path| Some(path.to_string_lossy().into_owned()))
+    .map_err(CommandError::from_error)
+}
+
+#[tauri::command]
+async fn save_attachment_retention<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    state: State<'_, Desktop>,
+    days: u16,
+) -> Result<(), CommandError> {
+    let _guard = state.action.lock().await;
+    let result =
+        tauri::async_runtime::spawn_blocking(move || xrun::client::save_attachment_retention(days))
+            .await
+            .map_err(CommandError::from_error)?;
+    record(&app, result)
 }
 
 #[tauri::command]
@@ -284,9 +339,12 @@ pub(super) fn register<R: tauri::Runtime>(builder: tauri::Builder<R>) -> tauri::
             set_language,
             status,
             devices,
-            task_history,
-            task_output,
-            file_history,
+            job_output,
+            activity_history,
+            activity_job,
+            activity_attachment,
+            save_activity_attachment,
+            save_attachment_retention,
             invite,
             revoke,
             copy_invitation,
@@ -859,22 +917,80 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn activity_retention_is_local_and_previews_recorded_copies() -> Result<()> {
+        isolated(
+            "activity_retention_is_local_and_previews_recorded_copies",
+            || {
+                use xrun::testing::{protocol::*, store::JobStore};
+                let (_app, window) = build_app();
+                let dir = config::device_dir()?;
+                assert!(!dir.join("identity.toml").exists());
+                invoke(&window, "save_attachment_retention", json!({"days":7})).unwrap();
+                assert_eq!(
+                    invoke(&window, "settings", json!({})).unwrap()["attachment_retention_days"],
+                    7
+                );
+                let tasks = JobStore::open(&dir.join("daemon.db"), true)?;
+                let time = now_ms();
+                let bytes = b"retained file contents";
+                let mut job = Job::accepted(
+                    "source",
+                    "target",
+                    &JobContext::new(&tasks.db_id),
+                    "hash".into(),
+                    JobDetails::Pull(PullParams {
+                        path: "original.txt".into(),
+                        cwd: None,
+                    }),
+                );
+                job.state = JobState::Succeeded;
+                job.finished_at_ms = Some(time);
+                job.result = Some(JobResult::File(FileResult {
+                    path: "original.txt".into(),
+                    size: bytes.len() as u64,
+                    sha256: sha256(bytes),
+                    attachment_error: None,
+                }));
+                tasks.insert(&job)?;
+                let id = tauri::async_runtime::block_on(xrun::testing::retain_attachment_fixture(
+                    &tasks,
+                    &job.job_id,
+                    "original.txt",
+                    bytes,
+                ))?;
+                let preview = invoke(&window, "activity_attachment", json!({"id":id})).unwrap();
+                assert_eq!(preview["text"], "retained file contents");
+                assert_eq!(preview["attachment"]["status"], "available");
+                assert!(
+                    invoke(&window, "activity_attachment", json!({"id":"unrecorded"})).is_err()
+                );
+                let before = config::DaemonConfig::load()?;
+                assert!(
+                    invoke(&window, "save_attachment_retention", json!({"days":3651})).is_err()
+                );
+                assert_eq!(
+                    config::DaemonConfig::load()?.attachment_retention_days,
+                    before.attachment_retention_days
+                );
+                assert!(!dir.join("identity.toml").exists());
+                Ok(())
+            },
+        )
+    }
+
+    #[test]
     fn history_ipc_preserves_cursors_binary_logs_and_database_errors() -> Result<()> {
         isolated(
             "history_ipc_preserves_cursors_binary_logs_and_database_errors",
             || {
-                use xrun::testing::{protocol::*, store::TaskStore};
+                use xrun::testing::{protocol::*, store::JobStore};
                 let (_app, window) = build_app();
                 let path = config::device_dir()?.join("daemon.db");
-                let empty = invoke(&window, "task_history", json!({"filter":"all"})).unwrap();
-                assert_eq!(empty["jobs"], json!([]));
+                let empty = invoke(&window, "activity_history", json!({"filter":"all"})).unwrap();
+                assert_eq!(empty["entries"], json!([]));
                 assert!(empty["db_id"].is_null());
-                assert_eq!(
-                    invoke(&window, "file_history", json!({})).unwrap()["entries"],
-                    json!([])
-                );
                 assert!(!path.exists(), "opening history created a task database");
-                let tasks = TaskStore::open(&path, true)?;
+                let tasks = JobStore::open(&path, true)?;
                 for n in 1..=55 {
                     tasks.insert(&Job {
                         job_id: format!("{n:06}"),
@@ -883,45 +999,109 @@ pub(crate) mod tests {
                         source_device_id: "source".into(),
                         target_device_id: "target".into(),
                         db_id: tasks.db_id.clone(),
-                        program: "program".into(),
-                        args: vec!["argument".into()],
-                        cwd: config::home_dir()?.to_string_lossy().into(),
                         state: if n == 55 {
                             JobState::Failed
                         } else {
                             JobState::Running
                         },
-                        exit_code: None,
-                        signal: None,
-                        duration_ms: None,
-                        last_seq: 0,
-                        output_complete: true,
-                        incomplete_reason: None,
-                        error: None,
-                        created_at_ms: now_ms(),
+                        last_log_seq: 0,
+                        output_loss_reason: None,
+                        created_at_ms: n as i64 * 2,
                         updated_at_ms: now_ms(),
                         leftover_possible: false,
                         process: None,
+                        details: JobDetails::Exec(CommandParams {
+                            program: "program".into(),
+                            args: vec!["argument".into()],
+                            cwd: config::home_dir()?.to_string_lossy().into(),
+                            timeout: 0,
+                            shell: None,
+                            input_size: None,
+                            input_sha256: None,
+                        }),
+                        result: None,
+                        output_complete: Some(true),
+                        error_code: None,
+                        error_message: None,
+                        log_bytes: 0,
+                        attachments: vec![],
+                        started_at_ms: None,
+                        finished_at_ms: if (if n == 55 {
+                            JobState::Failed
+                        } else {
+                            JobState::Running
+                        })
+                        .terminal()
+                        {
+                            Some(now_ms())
+                        } else {
+                            None
+                        },
                     })?;
-                    tasks.audit(json!({"source_device_id":"source","op":"pull","path":format!("file-{n}"),"size":2,"result":"ok"}))?;
+                    let mut file = Job::accepted(
+                        "source",
+                        "target",
+                        &JobContext::new(&tasks.db_id),
+                        "hash".into(),
+                        JobDetails::Pull(PullParams {
+                            path: format!("file-{n}"),
+                            cwd: None,
+                        }),
+                    );
+                    file.created_at_ms = n as i64 * 2 + 1;
+                    file.state = JobState::Succeeded;
+                    file.finished_at_ms = Some(now_ms());
+                    file.result = Some(JobResult::File(FileResult {
+                        path: format!("file-{n}"),
+                        size: 2,
+                        sha256: sha256(b"ok"),
+                        attachment_error: None,
+                    }));
+                    tasks.insert(&file)?;
                 }
-                let page = invoke(&window, "task_history", json!({"filter":"all"})).unwrap();
+                let page = invoke(&window, "activity_history", json!({"filter":"all"})).unwrap();
                 assert_eq!(page["db_id"], tasks.db_id);
-                assert_eq!(page["jobs"].as_array().unwrap().len(), 50);
+                assert_eq!(page["entries"].as_array().unwrap().len(), 50);
+                let detail = invoke(
+                    &window,
+                    "activity_job",
+                    json!({"dbId":tasks.db_id,"id":page["entries"][0]["job_id"]}),
+                )
+                .unwrap();
+                assert_eq!(detail["kind"], "pull");
+                assert_eq!(detail["job_id"], page["entries"][0]["job_id"]);
+                assert_eq!(
+                    invoke(
+                        &window,
+                        "activity_job",
+                        json!({"dbId":"previous","id":detail["job_id"]})
+                    )
+                    .unwrap_err()["code"],
+                    "DB_RESET"
+                );
                 let older = invoke(
                     &window,
-                    "task_history",
+                    "activity_history",
                     json!({"filter":"all","before":page["next_cursor"]}),
                 )
                 .unwrap();
-                assert_eq!(older["jobs"].as_array().unwrap().len(), 5);
-                assert_eq!(older["jobs"][0]["job_id"], "000005");
-                assert!(older["next_cursor"].is_null());
-                let failed = invoke(&window, "task_history", json!({"filter":"failed"})).unwrap();
-                assert_eq!(failed["jobs"].as_array().unwrap().len(), 1);
-                assert_eq!(failed["jobs"][0]["job_id"], "000055");
+                assert_eq!(older["entries"].as_array().unwrap().len(), 50);
+                assert_eq!(older["entries"][0]["params"]["path"], "file-30");
+                let oldest = invoke(
+                    &window,
+                    "activity_history",
+                    json!({"filter":"all","before":older["next_cursor"]}),
+                )
+                .unwrap();
+                assert_eq!(oldest["entries"].as_array().unwrap().len(), 10);
+                assert_eq!(oldest["entries"][0]["params"]["path"], "file-5");
+                assert!(oldest["next_cursor"].is_null());
+                let failed =
+                    invoke(&window, "activity_history", json!({"filter":"failed"})).unwrap();
+                assert_eq!(failed["entries"].as_array().unwrap().len(), 1);
+                assert_eq!(failed["entries"][0]["job_id"], "000055");
                 assert!(
-                    invoke(&window, "task_history", json!({"filter":"invalid"})).unwrap_err()["code"]
+                    invoke(&window, "activity_history", json!({"filter":"invalid"})).unwrap_err()["code"]
                         == "INVALID_FILTER"
                 );
                 for _ in 0..40 {
@@ -930,7 +1110,7 @@ pub(crate) mod tests {
                 tasks.append("000001", "stderr", &[0xff, 0])?;
                 let output = invoke(
                     &window,
-                    "task_output",
+                    "job_output",
                     json!({"dbId":tasks.db_id,"job":"000001"}),
                 )
                 .unwrap();
@@ -938,7 +1118,7 @@ pub(crate) mod tests {
                 assert_eq!(output["events"][0]["seq"], 10);
                 let next = invoke(
                     &window,
-                    "task_output",
+                    "job_output",
                     json!({"dbId":tasks.db_id,"job":"000001","after":40}),
                 )
                 .unwrap();
@@ -954,23 +1134,12 @@ pub(crate) mod tests {
                 ] {
                     let error = invoke(
                         &window,
-                        "task_output",
+                        "job_output",
                         json!({"dbId":db,"job":job,"after":after}),
                     )
                     .unwrap_err();
                     assert!(error["code"] == code.trim_end_matches(':'), "{error}");
                 }
-                let files = invoke(&window, "file_history", json!({})).unwrap();
-                assert_eq!(files["entries"].as_array().unwrap().len(), 50);
-                let older = invoke(
-                    &window,
-                    "file_history",
-                    json!({"before":files["next_cursor"]}),
-                )
-                .unwrap();
-                assert_eq!(older["entries"].as_array().unwrap().len(), 5);
-                assert_eq!(older["entries"][0]["path"], "file-5");
-                assert!(older["next_cursor"].is_null());
                 Ok(())
             },
         )

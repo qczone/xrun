@@ -72,6 +72,7 @@ pub(super) async fn run(id: &Identity, target: &str, command: Remote, json: bool
             let operation = async {
                 sent.store(true, std::sync::atomic::Ordering::SeqCst);
                 s.send_request(Request::Push {
+                    context: JobContext::new(&s.db_id),
                     path,
                     cwd,
                     size,
@@ -81,8 +82,9 @@ pub(super) async fn run(id: &Identity, target: &str, command: Remote, json: bool
                     expect,
                 })
                 .await?;
+                let job = s.accept_operation().await?;
                 net::send_file(&mut s.ws, &file).await?;
-                response(&mut s.ws).await
+                Ok::<_, anyhow::Error>((response(&mut s.ws).await?, job))
             };
             let result = tokio::select! {
                 r=operation=>r,
@@ -90,11 +92,16 @@ pub(super) async fn run(id: &Identity, target: &str, command: Remote, json: bool
                 _=termination()=>{return Ok(if sent.load(std::sync::atomic::Ordering::SeqCst){75}else{125});},
             };
             match result {
-                Ok(Data::File { path, .. }) => {
+                Ok((Data::File { path, .. }, job)) => {
                     s.finish().await;
                     print(
                         json,
-                        &serde_json::json!({"device_id":target,"remote_path":path,"size":size,"sha256":hash}),
+                        &serde_json::json!({"device_id":target,
+                        "remote_path":path,
+                        "size":size,
+                        "sha256":hash,
+                        "job":job_ref(&job),
+                        "request_id":job.request_id}),
                         || println!("{path}"),
                     );
                     Ok(0)
@@ -117,7 +124,13 @@ pub(super) async fn run(id: &Identity, target: &str, command: Remote, json: bool
         Remote::Pull { remote, local, cwd } => {
             let mut s = session(id, target).await?;
             let path = remote.clone();
-            s.send_request(Request::Pull { path, cwd }).await?;
+            s.send_request(Request::Pull {
+                context: JobContext::new(&s.db_id),
+                path,
+                cwd,
+            })
+            .await?;
+            let job = s.accept_operation().await?;
             let Data::File {
                 path, size, sha256, ..
             } = response(&mut s.ws).await?
@@ -143,14 +156,24 @@ pub(super) async fn run(id: &Identity, target: &str, command: Remote, json: bool
             };
             print(
                 json,
-                &serde_json::json!({"path":local,"device_id":target,"remote_path":path,"size":size,"sha256":sha256}),
+                &serde_json::json!({"path":local,
+                        "device_id":target,
+                        "remote_path":path,
+                        "size":size,
+                        "sha256":sha256,
+                        "job":job_ref(&job),
+                        "request_id":job.request_id}),
                 || println!("{}", local.display()),
             );
             Ok(0)
         }
         Remote::Screenshot { local } => {
             let mut s = session(id, target).await?;
-            s.send_request(Request::Screenshot).await?;
+            s.send_request(Request::Screenshot {
+                context: JobContext::new(&s.db_id),
+            })
+            .await?;
+            let job = s.accept_operation().await?;
             let Data::File {
                 size,
                 sha256,
@@ -167,7 +190,13 @@ pub(super) async fn run(id: &Identity, target: &str, command: Remote, json: bool
             let path = save_download(&bytes, local, "xrun-screen-", ".png")?;
             print(
                 json,
-                &serde_json::json!({"path":path,"device_id":target,"width":width,"height":height,"captured_at":captured_at}),
+                &serde_json::json!({"path":path,
+                        "device_id":target,
+                        "width":width,
+                        "height":height,
+                        "captured_at":captured_at,
+                        "job":job_ref(&job),
+                        "request_id":job.request_id}),
                 || println!("{}", path.display()),
             );
             Ok(0)

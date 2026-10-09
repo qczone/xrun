@@ -21,6 +21,8 @@ pub struct ExecutionSettings {
 pub struct Settings {
     /// Editable execution policy.
     pub execution: ExecutionSettings,
+    /// Days to keep attachment snapshots; zero retains them indefinitely.
+    pub attachment_retention_days: u16,
     /// Home directory used when no working directory is configured.
     pub home_dir: PathBuf,
     /// Private xrun data directory.
@@ -34,6 +36,7 @@ pub struct Settings {
 pub fn settings() -> Result<Settings> {
     let policy = config::DaemonConfig::load()?;
     Ok(Settings {
+        attachment_retention_days: policy.attachment_retention_days,
         execution: ExecutionSettings {
             default_cwd: policy.default_cwd,
             max_concurrent_jobs: policy.max_concurrent_jobs,
@@ -65,4 +68,18 @@ pub fn save_settings(execution: ExecutionSettings) -> Result<()> {
         execution.max_concurrent_jobs,
         execution.path,
     )
+}
+
+/// Save local attachment retention without requiring network membership. Shortening
+/// retention removes expired cache copies immediately, while preserving summaries.
+/// Permission and execution settings are retained, and original files are untouched.
+pub fn save_attachment_retention(days: u16) -> Result<()> {
+    let dir = config::device_dir()?;
+    std::fs::create_dir_all(&dir)?;
+    config::restrict_dir(&dir)?;
+    config::update_daemon_config(&dir, |policy| {
+        policy.attachment_retention_days = days;
+        Ok(())
+    })?;
+    crate::attachments::Cache::new(&dir).prune()
 }

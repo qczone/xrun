@@ -43,6 +43,7 @@ export interface ExecutionSettings {
 
 export interface Settings {
   execution: ExecutionSettings;
+  attachment_retention_days: number;
   home_dir: string;
   data_dir: string;
   os: string;
@@ -57,33 +58,102 @@ export interface Device {
   os: string | null;
 }
 
-export interface Job {
+export interface JobCommon {
   job_id: string;
   db_id: string;
+  request_id: string;
+  request_hash: string;
   source_device_id: string;
   target_device_id: string;
-  program: string;
-  args: string[];
-  cwd: string;
   state:
-    | "starting"
+    | "accepted"
     | "running"
-    | "exited"
+    | "succeeded"
     | "failed"
     | "canceled"
     | "timed_out"
     | "lost";
-  exit_code: number | null;
-  signal: number | null;
-  duration_ms: number | null;
-  last_seq: number;
-  output_complete: boolean;
-  incomplete_reason: string | null;
-  error: string | null;
+  last_log_seq: number;
+  log_bytes: number;
+  output_complete: boolean | null;
+  output_loss_reason: string | null;
+  error_code: string | null;
+  error_message: string | null;
   created_at_ms: number;
+  started_at_ms: number | null;
+  finished_at_ms: number | null;
   updated_at_ms: number;
   leftover_possible: boolean;
+  process: { pid: number; boot_id: string; start: string | null } | null;
+  attachments: Attachment[];
 }
+export interface CommandParams {
+  program: string;
+  args: string[];
+  cwd: string;
+  timeout: number;
+  shell: string | null;
+  input_size: number | null;
+  input_sha256: string | null;
+}
+export interface CommandResult {
+  exit_code: number | null;
+  signal: number | null;
+  duration_ms: number;
+  input_bytes: number | null;
+  stdout_bytes: number | null;
+  stderr_bytes: number | null;
+}
+export type CommandJob = JobCommon & {
+  kind: "exec" | "stream_exec";
+  params: CommandParams;
+  result: CommandResult | null;
+};
+export interface FileResult {
+  path: string;
+  size: number;
+  sha256: string;
+  attachment_error: string | null;
+}
+export interface PullParams {
+  path: string;
+  cwd: string | null;
+}
+export interface PushParams extends PullParams {
+  size: number;
+  sha256: string;
+  mkdir: boolean;
+  no_overwrite: boolean;
+  expect: string | null;
+}
+export type FileJob = JobCommon &
+  (
+    | { kind: "push"; params: PushParams; result: FileResult | null }
+    | { kind: "pull"; params: PullParams; result: FileResult | null }
+  );
+export type ScreenshotJob = JobCommon & {
+  kind: "screenshot";
+  params: Record<string, never>;
+  result: {
+    captured_at: string;
+    width: number;
+    height: number;
+    size: number;
+    sha256: string;
+    attachment_error: string | null;
+  } | null;
+};
+export type ForwardJob = JobCommon & {
+  kind: "forward";
+  params: { port: number };
+  result: {
+    port: number;
+    duration_ms: number;
+    input_bytes: number;
+    output_bytes: number;
+  } | null;
+};
+export type Job = CommandJob | FileJob | ScreenshotJob | ForwardJob;
 
 export interface LogEvent {
   seq: number;
@@ -91,19 +161,26 @@ export interface LogEvent {
   data_base64: string;
 }
 
-export interface TaskOutput {
-  job: Job;
+export interface JobOutput {
+  job: CommandJob;
   events: LogEvent[];
   has_more: boolean;
 }
 
-export interface FileRecord {
-  time_ms: number;
-  source_device_id: string;
-  op: string;
-  path: string | null;
-  size: number | null;
-  result: string;
+export interface Attachment {
+  id: string;
+  name: string;
+  size: number;
+  sha256: string;
+  created_at_ms: number;
+  status: "available" | "expired" | "missing";
+  expires_at_ms: number | null;
+}
+
+export interface AttachmentPreview {
+  attachment: Attachment;
+  image: string | null;
+  text: string | null;
 }
 
 export type TaskFilter = "all" | "running" | "failed";
@@ -114,6 +191,7 @@ export type ActionRequest =
   | { command: "permission"; args: { device: string; allow: boolean } }
   | { command: "all_permissions"; args: { allow: boolean } }
   | { command: "pause_access"; args: { paused: boolean } }
+  | { command: "save_attachment_retention"; args: { days: number } }
   | { command: "save_settings"; args: { execution: ExecutionSettings } };
 export type Action = (request: ActionRequest) => Promise<boolean>;
 export interface ConfirmOptions {
@@ -161,16 +239,17 @@ export const api = {
   chooseDirectory: () => invoke<string | null>("choose_directory"),
   action: (request: ActionRequest) =>
     invoke<void>(request.command, "args" in request ? request.args : {}),
-  tasks: (before: number | null, filter: TaskFilter) =>
-    invoke<{ db_id: string | null; jobs: Job[]; next_cursor: number | null }>(
-      "task_history",
-      { before, filter },
-    ),
-  files: (before: number | null) =>
-    invoke<{ entries: FileRecord[]; next_cursor: number | null }>(
-      "file_history",
-      { before },
-    ),
+  activity: (before: string | null, filter: TaskFilter) =>
+    invoke<{
+      db_id: string | null;
+      entries: Job[];
+      next_cursor: string | null;
+    }>("activity_history", { before, filter }),
+  job: (dbId: string, id: string) => invoke<Job>("activity_job", { dbId, id }),
+  attachment: (id: string) =>
+    invoke<AttachmentPreview>("activity_attachment", { id }),
+  saveAttachment: (id: string) =>
+    invoke<string | null>("save_activity_attachment", { id }),
   output: (dbId: string, job: string, after: number | null) =>
-    invoke<TaskOutput>("task_output", { dbId, job, after }),
+    invoke<JobOutput>("job_output", { dbId, job, after }),
 };

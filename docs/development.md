@@ -133,11 +133,11 @@ XRUN_TEST_CF_LINK_FILE=/绝对路径/私有地址文件 \
 
 测试用正式 CLI / daemon 创建隔离网络，覆盖任务、64 MiB 文件、流式执行、转发、管理设备离线、空闲恢复和撤销。本地 workerd 不能代替真实 Cloudflare 休眠验证。`cloudflare/tests/workerd/deployed-probe.ts` 仅用于临时部署；`cloudflare/scripts/hibernation.ts` 用静默前后的实例标识变化直接证明重建，并校验附件中的额度、期限和恢复后的 ACK。验收结束后清理临时 Worker / DO；探针不进入生产入口。子项目说明见 [cloudflare/README.md](../cloudflare/README.md)。
 
-## 版本与兼容性
+## 版本与协议
 
-只修复实现或增加可安全忽略的诊断字段，提升发布版本即可。改变操作或执行选项的语义时，提升 `PROTOCOL`，实际实现相邻旧协议后调整支持范围；发送端通过 `Request::minimum_protocol` 与 `Session::send_request` 检查协商结果，接收端也检查。改变签名结构或编码时，提升 `SIGNATURE_FORMAT` 并明确重签 / 过渡方案，禁止因修改字段顺序而无意改变签名字节。固定测试向量位于 `tests/fixtures/signatures.json`，Rust 与 Cloudflare 的测试共同约束它。
+正式发布前直接更新业务协议与表结构，不维护历史 Job 消息、旧表迁移或混合版本运行。外层传输仍协商能力范围，发送端通过 `Request::minimum_protocol` 与 `Session::send_request` 检查协商结果，接收端也检查；这不是历史业务接口的兼容承诺。改变签名结构或编码时，必须明确新的签名格式，禁止因修改字段顺序而无意改变签名字节。固定测试向量位于 `tests/fixtures/signatures.json`，Rust 与 Cloudflare 的测试共同约束它。
 
-Linux CI 的 `bun scripts/test-compatibility.ts` 按 SemVer 选择早于当前版本的最近兼容 tag，正式版优先于同版本预发布版。脚本构建真实历史 CLI 与 Worker，在两种来源 / 目标组合和两套中转上验证加入、执行、文件传输、清单同步和撤销。没有兼容 tag 时，固定使用 `bc97f764b4c96e07fab2736ee029349389eb0c03` 的协议 1 开发快照，并在日志中明确标为未发布快照，仍完整执行测试；缺失基线或损坏的协议定义会失败，不能跳过后报成功。beta.3 及更早版本不属于兼容范围。也可以显式传入兼容的 Git ref 做开发验收；开发快照验证不等于已发布版本兼容证据。
+Linux CI 使用当前源码的 CLI、daemon 与 Worker，在 Rust 中转及 Cloudflare workerd 中验证加入、执行、统一 Job、文件传输、清单同步和撤销，不构建历史二进制。参与业务操作的端点统一更新；daemon 与 submissions schema 2 的最新设计见 [统一 Job 存储](job-storage.md)。旧库明确返回 DB_SCHEMA_MISMATCH，停止服务后显式重建。
 
 ## 性能测量
 

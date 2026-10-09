@@ -124,7 +124,8 @@ pub(super) async fn run(
         ca_pin: crypto::ca_spki_pin(&id.ca_pem)?,
         db_id: execution.db_id.clone(),
         request_hash: hash,
-        program: execution.program.clone(),
+        kind: JobKind::Exec,
+        label: execution.program.clone(),
         created_at_ms: now_ms(),
         job_id: None,
         status: "not_accepted".into(),
@@ -258,7 +259,11 @@ pub(super) async fn run(
         };
         match result {
             Ok(result) => {
-                if let Some(error) = result.error.as_ref().or(result.incomplete_reason.as_ref()) {
+                if let Some(error) = result
+                    .error_message
+                    .as_ref()
+                    .or(result.output_loss_reason.as_ref())
+                {
                     eprintln!("[xrun] {error}")
                 }
                 return Ok(job_code(&result));
@@ -399,7 +404,12 @@ pub(super) async fn stream(id: &Identity, target: &str, e: Execute) -> Result<i3
         env: e.env.into_iter().collect(),
         timeout: e.timeout.unwrap_or(1800),
     };
-    s.send_request(Request::StreamExec { execution }).await?;
+    s.send_request(Request::StreamExec {
+        context: JobContext::new(&s.db_id),
+        execution,
+    })
+    .await?;
+    s.accept_operation().await?;
     if !matches!(response(&mut s.ws).await?, Data::StreamReady) {
         bail!(ErrorCode::InvalidMessage.error("expected stream acknowledgement"))
     }
@@ -408,7 +418,9 @@ pub(super) async fn stream(id: &Identity, target: &str, e: Execute) -> Result<i3
         _ = tokio::signal::ctrl_c() => return Ok(130),
         _ = termination() => return Ok(125),
     };
-    Ok(if result.timed_out {
+    Ok(if result.canceled {
+        130
+    } else if result.timed_out {
         124
     } else if let Some(signal) = result.signal {
         128 + signal

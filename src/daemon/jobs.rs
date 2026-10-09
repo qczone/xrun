@@ -67,7 +67,10 @@ pub(super) async fn serve(
                 let job = rt.owned_job(source, &id).await?;
                 let _gate = rt.gate.lock().unwrap();
                 if !job.state.terminal() {
-                    rt.canceled.lock().unwrap().insert(id.clone());
+                    let mut canceled = rt.canceled.lock().unwrap();
+                    if rt.store.get(&id)?.is_some_and(|job| !job.state.terminal()) {
+                        canceled.insert(id.clone());
+                    }
                 }
             }
             follow(&rt, source, ws, &id, 0, false, true)
@@ -91,12 +94,27 @@ pub(super) async fn serve(
             follow: following,
             tail,
         } => {
+            if rt.owned_job(source, &id).await?.kind() != JobKind::Exec {
+                bail!(ErrorCode::LogUnavailable.error("this job does not retain command output"));
+            }
             if let Some(lines) = tail {
                 let job = rt.owned_job(source, &id).await?;
-                let events = rt.store.tail_async(&id, after, job.last_seq, lines).await?;
+                let events = rt
+                    .store
+                    .tail_async(&id, after, job.last_log_seq, lines)
+                    .await?;
                 send_logs(ws, events, &job).await?;
                 if following {
-                    follow(&rt, source, ws, &id, after.max(job.last_seq), true, true).await?;
+                    follow(
+                        &rt,
+                        source,
+                        ws,
+                        &id,
+                        after.max(job.last_log_seq),
+                        true,
+                        true,
+                    )
+                    .await?;
                 } else {
                     net::send(ws, &Data::End).await?;
                 }
@@ -123,7 +141,7 @@ async fn follow(
     let snapshot = if following {
         None
     } else {
-        Some(rt.owned_job(source, id).await?.last_seq)
+        Some(rt.owned_job(source, id).await?.last_log_seq)
     };
     loop {
         // Mark the notification before reading so a concurrent write cannot
@@ -144,9 +162,9 @@ async fn follow(
             after = e.seq;
         }
         let state = (
-            job.state.clone(),
+            job.state,
             job.output_complete,
-            job.incomplete_reason.clone(),
+            job.output_loss_reason.clone(),
         );
         if logs && (count > 0 || previous.as_ref() != Some(&state)) {
             send_logs(ws, events, &job).await?;

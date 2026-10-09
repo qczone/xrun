@@ -31,7 +31,7 @@ pub(super) fn log_error(job: &Job) -> Option<String> {
     log_failure(job).map(|error| error.to_string())
 }
 fn log_failure(job: &Job) -> Option<CodedError> {
-    job.incomplete_reason.as_ref().map(|reason| {
+    job.output_loss_reason.as_ref().map(|reason| {
         let code = match reason.as_str() {
             "TRUNCATED" => ErrorCode::LogTruncated,
             "LOG_EXPIRED" => ErrorCode::LogUnavailable,

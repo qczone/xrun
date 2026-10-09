@@ -198,11 +198,10 @@ async fn loopback_forwarding_handles_http_half_close_concurrency_and_pause() -> 
         stop_daemon(&lab.source, &mut lab.source_daemon).await?;
 
         let db = rusqlite::Connection::open(lab.target.join(".xrun/daemon.db"))?;
-        let count: i64 = db.query_row(
-            "SELECT count(*) FROM audit WHERE json_extract(data,'$.op')='forward'",
-            [],
-            |r| r.get(0),
-        )?;
+        let count: i64 =
+            db.query_row("SELECT count(*) FROM jobs WHERE kind='forward'", [], |r| {
+                r.get(0)
+            })?;
         assert!(count >= 4);
         Ok::<_, anyhow::Error>(())
     })

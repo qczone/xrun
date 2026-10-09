@@ -1,20 +1,18 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { api, type FileRecord, type Job, type TaskFilter } from "../../api";
+import { api, type Job, type TaskFilter } from "../../api";
 import { errorText } from "../../errors";
 export function useRecordHistory(
   active: boolean,
   paused: boolean,
   selected: boolean,
 ) {
-  const [tab, setTab] = useState<"tasks" | "files">("tasks");
   const [filter, setFilter] = useState<TaskFilter>("all");
   const [pagination, setPagination] = useState<{
-    cursors: (number | null)[];
+    cursors: (string | null)[];
     index: number;
   }>({ cursors: [null], index: 0 });
-  const [next, setNext] = useState<number | null>(null);
-  const [jobs, setJobs] = useState<Job[]>([]);
-  const [files, setFiles] = useState<FileRecord[]>([]);
+  const [next, setNext] = useState<string | null>(null);
+  const [entries, setEntries] = useState<Job[]>([]);
   const [dbId, setDbId] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -32,18 +30,11 @@ export function useRecordHistory(
       const token = ++request.current;
       setLoading(true);
       try {
-        if (tab === "tasks") {
-          const result = await api.tasks(cursor, filter);
-          if (disposed || token !== request.current) return;
-          setJobs(result.jobs);
-          setDbId(result.db_id);
-          setNext(result.next_cursor);
-        } else {
-          const result = await api.files(cursor);
-          if (disposed || token !== request.current) return;
-          setFiles(result.entries);
-          setNext(result.next_cursor);
-        }
+        const result = await api.activity(cursor, filter);
+        if (disposed || token !== request.current) return;
+        setEntries(result.entries);
+        setDbId(result.db_id);
+        setNext(result.next_cursor);
         setError(null);
       } catch (e) {
         if (!disposed && token === request.current) setError(errorText(e));
@@ -59,17 +50,13 @@ export function useRecordHistory(
       request.current++;
       clearInterval(timer);
     };
-  }, [active, paused, selected, tab, filter, cursor, refresh]);
+  }, [active, paused, selected, filter, cursor, refresh]);
 
   const reset = useCallback(() => {
     setPagination({ cursors: [null], index: 0 });
     setNext(null);
     setError(null);
   }, []);
-  const selectTab = (value: "tasks" | "files") => {
-    setTab(value);
-    reset();
-  };
   const selectFilter = (value: TaskFilter) => {
     setFilter(value);
     reset();
@@ -84,17 +71,14 @@ export function useRecordHistory(
       }));
   };
   return {
-    tab,
     filter,
     pagination,
     next,
-    jobs,
-    files,
+    entries,
     dbId,
     loading,
     error,
     refresh,
-    selectTab,
     selectFilter,
     previousPage,
     nextPage,

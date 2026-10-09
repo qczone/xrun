@@ -63,7 +63,8 @@ async fn input(home: &Path, args: &[&str], bytes: &[u8]) -> Result<std::process:
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn streaming_preserves_binary_eof_stderr_exit_and_environment_without_jobs() -> Result<()> {
+async fn streaming_preserves_binary_eof_stderr_exit_and_records_jobs_without_environment_values()
+-> Result<()> {
     tokio::time::timeout(Duration::from_secs(40), async {
         let lab = Lab::new().await?;
         let child = fixture(&lab).await?;
@@ -89,9 +90,11 @@ async fn streaming_preserves_binary_eof_stderr_exit_and_environment_without_jobs
         assert_eq!(result.stdout,b"early exit"); drop(stdin);
         let output=input(&lab.source,&["target1","-i","--env","XRUN_STREAM_ENV=explicit","--",&child,"env"], b"").await?;
         assert_eq!(ok(output),"explicit");
-        assert_eq!(json(cli(&lab.source,&["target1","jobs","--json"]).await),serde_json::json!([]));
+        let jobs = json(cli(&lab.source,&["target1","jobs","--json"]).await);
+        assert!(jobs.as_array().unwrap().iter().all(|job| job["kind"] == "stream_exec"));
+        assert!(!jobs.as_array().unwrap().is_empty());
         let db=rusqlite::Connection::open(lab.target.join(".xrun/daemon.db"))?;
-        let record:String=db.query_row("SELECT data FROM audit WHERE json_extract(data,'$.op')='stream_exec' AND json_extract(data,'$.outcome.stdout_bytes')=3000000 LIMIT 1",[],|r|r.get(0))?;
+        let record:String=db.query_row("SELECT params_json || result_json FROM jobs WHERE kind='stream_exec' AND json_extract(result_json,'$.stdout_bytes')=3000000 LIMIT 1",[],|r|r.get(0))?;
         assert!(!record.contains("explicit"));
         Ok::<_, anyhow::Error>(())
     }).await??;

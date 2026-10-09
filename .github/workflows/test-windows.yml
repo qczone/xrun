@@ -58,6 +58,8 @@ jobs:
           $PSNativeCommandUseErrorActionPreference = $true
           cargo fmt --all -- --check
           cargo clippy --locked --target '${{ matrix.target }}' --all-targets -- -D warnings
+          # Integration tests launch the CLI; build it after clippy to refresh cached binaries.
+          cargo build --locked --target '${{ matrix.target }}' --bin xrun
           cargo test --locked --target '${{ matrix.target }}'
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
         with:

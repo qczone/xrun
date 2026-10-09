@@ -9,7 +9,8 @@
 }
 
 .history-list,
-#task-detail {
+#task-detail,
+#job-detail {
   min-width: 0;
 }
 
@@ -35,28 +36,6 @@
   padding: 6px 8px;
 }
 
-.segmented {
-  display: flex;
-  padding: 3px;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  background: var(--sidebar);
-}
-
-.segmented button {
-  background: transparent;
-  border-color: transparent;
-  min-height: 30px;
-  font-size: 13px;
-  padding: 5px 10px;
-}
-
-.segmented button.selected {
-  background: var(--card);
-  border-color: var(--border);
-  color: var(--accent);
-}
-
 .history-record-panel {
   max-height: max(220px, calc(100vh - 280px));
   overflow: auto;
@@ -79,8 +58,7 @@
   font-weight: 400;
 }
 
-.task-record:last-child,
-.file-record:last-child {
+.task-record:last-child {
   border-bottom: 0;
 }
 
@@ -113,8 +91,9 @@
   white-space: pre-wrap;
 }
 
-.task-record .record-command {
+.journey-record .record-command {
   margin: 0;
+  margin-top: 8px;
   display: -webkit-box;
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 2;
@@ -149,10 +128,6 @@
   gap: 7px;
 }
 
-.has-selection .task-record .record-command {
-  flex-basis: 100%;
-}
-
 .task-state {
   display: inline-flex;
   align-items: center;
@@ -177,11 +152,156 @@
   color: var(--danger);
 }
 
-.file-record {
-  padding: 16px 18px;
+.journey-order {
+  font-size: 12px;
+  color: var(--muted);
+}
+.journey-day h2 {
+  margin: 0;
+  padding: 12px 18px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--muted);
+  background: var(--sidebar);
   border-bottom: 1px solid var(--border);
 }
-
+.journey-timeline {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+.journey-timeline li {
+  position: relative;
+}
+.journey-timeline li::before {
+  content: "";
+  position: absolute;
+  left: 31px;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  background: var(--border);
+  pointer-events: none;
+  z-index: 1;
+}
+.journey-record {
+  position: relative;
+  padding: 16px 18px 16px 60px;
+}
+.journey-node {
+  position: absolute;
+  left: 18px;
+  top: 16px;
+  width: 27px;
+  height: 27px;
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--border);
+  border-radius: 50%;
+  background: var(--card);
+  color: var(--muted);
+  z-index: 2;
+}
+.journey-node .icon {
+  width: 14px;
+  height: 14px;
+}
+.journey-record.selected .journey-node {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+.attachment-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  margin-top: 9px;
+  padding: 4px 8px;
+  font-size: 12px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--muted);
+}
+.attachment-tag.available {
+  color: var(--accent);
+}
+.attachment-tag .icon {
+  width: 13px;
+  height: 13px;
+  flex-shrink: 0;
+}
+.attachment-panel {
+  margin-top: 14px;
+  overflow: hidden;
+}
+.attachment-heading {
+  display: flex;
+  align-items: start;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 16px 18px 0;
+}
+.attachment-heading h2 {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+}
+.attachment-heading p {
+  margin: 6px 0;
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+.attachment-heading button {
+  flex-shrink: 0;
+  font-size: 12px;
+}
+.attachment-retention {
+  font-size: 12px;
+  margin: 0;
+  padding: 4px 18px 14px;
+}
+.attachment-image {
+  background: var(--bg);
+  padding: 14px;
+  text-align: center;
+}
+.attachment-image img {
+  display: block;
+  max-width: 100%;
+  max-height: 480px;
+  object-fit: contain;
+  margin: auto;
+  border-radius: 4px;
+}
+.attachment-text {
+  margin: 0;
+  padding: 16px 18px;
+  max-height: 420px;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-size: 12px;
+  background: var(--log-bg);
+  color: var(--log-text);
+}
+.attachment-facts {
+  padding: 12px 18px;
+  border-top: 1px solid var(--border);
+  color: var(--muted);
+  font-size: 12px;
+}
+.attachment-facts code {
+  display: block;
+  margin-top: 8px;
+  overflow-wrap: anywhere;
+}
+.attachment-saved {
+  padding: 0 18px;
+  color: var(--accent);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
 .history-pagination {
   display: flex;
   align-items: center;

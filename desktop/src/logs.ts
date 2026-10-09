@@ -1,4 +1,4 @@
-import type { TaskOutput } from "./api";
+import type { JobOutput } from "./api";
 import { isRunning } from "./format";
 
 export type Stream = "stdout" | "stderr";
@@ -18,7 +18,7 @@ export class OutputBuffer {
   private nextId = 0;
   private flushed = false;
 
-  consume(result: TaskOutput) {
+  consume(result: JobOutput) {
     if (this.after === null && result.events[0]?.seq > 1) this.truncated = true;
     for (const event of result.events) {
       if (this.after !== null && event.seq <= this.after) continue;
@@ -34,7 +34,7 @@ export class OutputBuffer {
       this.append(stream, decoder.decode(bytes, { stream: true }));
       this.after = event.seq;
     }
-    if (this.after === null) this.after = result.job.last_seq;
+    if (this.after === null) this.after = result.job.last_log_seq;
     if (!isRunning(result.job) && !result.has_more && !this.flushed) {
       for (const [stream, decoder] of this.decoders)
         this.append(stream, decoder.decode());

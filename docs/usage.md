@@ -22,7 +22,7 @@
 
 ## 安装
 
-CLI 和 daemon 是同一个 Rust 二进制，运行已构建程序不需要 Rust、Node.js 或 Bun。桌面 App 管理网络、授权与服务，远程执行和文件传输使用 CLI。当前版本为 `0.1.0-rc.2`；本机 CLI 与 daemon 要求发布版本一致，设备与中转按协议范围协商互通。
+CLI 和 daemon 是同一个 Rust 二进制，运行已构建程序不需要 Rust、Node.js 或 Bun。桌面 App 管理网络、授权与服务，远程执行和文件传输使用 CLI。当前版本为 `0.1.0-rc.3`；本机 CLI 与 daemon 要求发布版本一致，设备与中转按协议范围协商互通。
 
 | 平台 | 安装方式 |
 | --- | --- |
@@ -45,25 +45,25 @@ Windows EXE 安装器同时安装桌面 App 和终端 CLI，并自动将安装�
 从相应版本的 Release 下载安装脚本。例如 macOS / Linux：
 
 ```bash
-curl -fL https://github.com/qczone/xrun/releases/download/v0.1.0-rc.2/install.sh -o install.sh
-bash install.sh --version 0.1.0-rc.2
+curl -fL https://github.com/qczone/xrun/releases/download/v0.1.0-rc.3/install.sh -o install.sh
+bash install.sh --version 0.1.0-rc.3
 ```
 
 ```powershell
-Invoke-WebRequest https://github.com/qczone/xrun/releases/download/v0.1.0-rc.2/install.ps1 -OutFile install.ps1
-powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File .\install.ps1 -Version 0.1.0-rc.2
+Invoke-WebRequest https://github.com/qczone/xrun/releases/download/v0.1.0-rc.3/install.ps1 -OutFile install.ps1
+powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File .\install.ps1 -Version 0.1.0-rc.3
 ```
 
 整个过程通过 stdout 返回一条 JSON，失败时 `ok` 为 `false`、包含 `error.code` 和 `error.message`，进程退出码为 1；成功返回版本、安装路径、终端 CLI 的 `executable` 路径、`changed` 和自检结果。Windows 另返回 `helper_executable` 供检查后台 helper。重复安装相同产物时返回 `changed: false`。源码中的安装脚本位于 `scripts/`，也可直接从项目根目录执行。
 
-macOS 默认识别设备的真实架构，即使终端通过 Rosetta 运行也会选择 arm64 包。已安装 Rosetta 的 Apple Silicon Mac 可用 `--arch x86_64` 安装 Intel 版，例如 `bash install.sh --version 0.1.0-rc.2 --arch x86_64`；Intel Mac 不支持安装 arm64 版。Windows 和 Linux 按系统架构自动选择原生包。
+macOS 默认识别设备的真实架构，即使终端通过 Rosetta 运行也会选择 arm64 包。已安装 Rosetta 的 Apple Silicon Mac 可用 `--arch x86_64` 安装 Intel 版，例如 `bash install.sh --version 0.1.0-rc.3 --arch x86_64`；Intel Mac 不支持安装 arm64 版。Windows 和 Linux 按系统架构自动选择原生包。
 
 默认下载地址是 `https://github.com/qczone/xrun/releases/download/v<完整版本>/`。`--base-url`／`-BaseUrl` 可指定其他 HTTPS 产物目录。每个目录需包含对应的 `xrun-<系统>-<架构>.json` 清单及其引用的文件，系统为 `darwin`、`windows` 或 `linux`，架构为 `x86_64` 或 `arm64`。安装时不需要 Bun；产物准备见 [开发与发布](development.md#发布与内置文档)。
 
 离线安装或验收本地打包产物时，用 `--source-dir`／`-SourceDir` 指定产物目录。例如 macOS：
 
 ```bash
-bash scripts/install.sh --version 0.1.0-rc.2 --source-dir ./dist
+bash scripts/install.sh --version 0.1.0-rc.3 --source-dir ./dist
 ```
 
 默认 macOS App 安装到 `~/Applications/xrun.app`，CLI 入口为 `~/.local/bin/xrun`；Windows App 安装到 `%LOCALAPPDATA%\Programs\xrun`，CLI 位于其 `cli` 子目录；Linux CLI 安装到 `~/.local/bin/xrun`。`--install-dir`／`-InstallDir` 可指定父目录，AI 可直接使用 JSON 返回的 `executable` 路径调用程序。脚本安装程序并配置当前用户的终端 PATH；网络加入、设备授权和后台服务的启用继续使用现有 App 或 CLI 命令。
@@ -191,9 +191,9 @@ xrun linux1 wait ABC123 --timeout 60
 xrun linux1 kill ABC123
 ```
 
-`jobs` 查询目标设备上由本机身份提交的可靠任务，默认每页 50 条，可用 `--limit`、`--offset` 分页；`recent` 只列本机最近 24 小时的提交记录，不代表远端任务当前状态。App 的「活动记录」读取本机作为目标执行的记录。
+`jobs` 查询目标设备上由本机身份提交的所有操作 Job，默认每页 50 条，可用 `--limit`、`--offset` 分页；`recent` 只列本机最近 24 小时的提交记录，不代表远端任务当前状态。App 的「活动旅程」读取本机作为目标执行的记录。
 
-`jobs` 指定 ID 时不能同时用 `--running` 或 `--request-id` 列表过滤条件。`logs` 默认读快照，`--follow` 补读后跟随，`--after N` 从日志序号之后读，`--tail N` 由目标端截取末尾行，避免下载整份日志；`--after` 与 `--tail` 互斥。缺失、截断、过期或不完整日志会提示。
+`jobs` 指定 ID 时不能同时用 `--running` 或 `--request-id` 列表过滤条件。`logs` 只适用于普通可靠 exec，流式命令、文件、截图和转发没有命令输出日志。`logs` 默认读快照，`--follow` 补读后跟随，`--after N` 从日志序号之后读，`--tail N` 由目标端截取末尾行，避免下载整份日志；`--after` 与 `--tail` 互斥。缺失、截断、过期或不完整日志会提示。
 
 `wait` 默认不限等待时间，显示最后 40 行；`--timeout` 同时限制任务等待和尾部日志读取，不取消任务。任务结果未确认时返回 75；任务结果已经确认、只有日志读取失败或超时时，保留任务退出码，并在 `logs_error` 或 stderr 说明。`kill` 请求取消并等待确认。可靠任务不随 CLI / 中转断线结束；daemon 正常停止会取消本机任务，崩溃重启后未完成任务，以及启动后无法保存最终结果的任务标记 lost，不自动重跑。
 
@@ -243,7 +243,7 @@ xrun linux1 -i -- cat < ./large.bin > ./copy.bin
 xrun linux1 -i -C /repo --timeout 600 -- tar -cf - artifacts > ./artifacts.tar
 ```
 
-这是非终端流式执行，不提供 PTY 或交互 Shell。stdin 结束后仍可接收输出；Ctrl+C 或连接断开会清理远端受管理进程，不自动重跑。它不创建持久任务，不能通过 jobs/wait/logs/kill 恢复，也不提供文件摘要校验；与 `start`、`--json`、`--stdin`、`--script`、`--request-id` 互斥。需要断线后继续运行时使用普通执行或 `start`。
+这是非终端流式执行，不提供 PTY 或交互 Shell。stdin 结束后仍可接收输出；Ctrl+C 或连接断开会清理远端受管理进程，不自动重跑。它创建 stream_exec Job，可以通过 jobs/wait 查询、kill 取消，日志不留存；logs 返回 LOG_UNAVAILABLE，也不提供文件摘要校验；与 `start`、`--json`、`--stdin`、`--script`、`--request-id` 互斥。需要断线后继续运行时使用普通执行或 `start`。
 
 ## 端口转发
 
@@ -263,7 +263,9 @@ xrun linux1 forward 0:3000 --json
 
 macOS 13 及以上解压 App ZIP 后打开 `xrun.app`，长期使用建议先放到“应用程序”目录；Windows 运行安装 EXE，安装到当前用户的目录。两者自带 CLI。打开 App 后可以用中转地址创建网络，或粘贴成员邀请加入网络，也可以查看连接状态、控制后台服务，以及允许其他设备访问本机。已有 CLI 身份和配置会直接复用。
 
-App 分为本机、设备、活动、设置四个页面。本机概览分别显示后台服务、中转连接和远程访问状态；设备页管理其他设备对本机的访问，管理设备可通过页头入口生成邀请。「活动」展示在本机执行的任务，可以按状态筛选，查看来源设备、命令、工作目录、耗时、退出结果和 stdout/stderr；宽窗口并排显示列表与详情。窗口可见时，运行中的输出每 3 秒刷新；隐藏或最小化窗口会暂停页面查询，重新显示时刷新。向上滚动会暂停自动滚动，可点击“回到最新输出”继续跟随。其中「文件与截图」标签展示 push、pull 和 screenshot 的已有操作记录。App 只读本机 daemon 数据库，服务停止或网络断开后仍可查询，不会查询其他设备上执行的任务。
+App 分为本机、设备、活动旅程、设置四个页面。本机概览显示后台服务、中转连接和远程访问状态；设备页管理其他设备对本机的访问，管理设备可生成邀请。「活动旅程」将其他设备在本机执行的命令、流式命令、文件传输、截图和端口转发按受理时间倒序排列，可以按运行中或失败筛选。每条操作都是 Job，从受理开始可见；命令详情显示工作目录、耗时、退出结果和 stdout/stderr，其他操作显示对应结果和附件。文件与截图附件保留独立副本，支持预览和另存为，期限默认 30 天，可在设置修改。
+
+窗口可见时，运行中的详情每 3 秒刷新；隐藏或最小化时暂停，重新显示时刷新。向上滚动会暂停输出自动滚动，可点击“回到最新输出”继续。活动查询只读取本机数据库，服务停止或网络断开仍可查看。
 
 设置中可以选择默认工作目录、修改同时运行的任务数和工具搜索路径 PATH；保存后对新任务生效，无需重启。其他环境变量和已有权限保留。
 
@@ -340,6 +342,7 @@ xrun daemon
 allow_from = ["dev_来源设备ID"]
 default_cwd = "/path/to/repo"
 max_concurrent_jobs = 4
+attachment_retention_days = 30
 
 [env]
 PATH = "/home/user/.cargo/bin:/home/user/.local/bin:/usr/local/bin:/usr/bin:/bin"
@@ -348,6 +351,10 @@ PATH = "/home/user/.cargo/bin:/home/user/.local/bin:/usr/local/bin:/usr/bin:/bin
 远端命令保留符号链接入口，支持 rustup 的 cargo、rustc 等按启动名称分派的工具。任务继承 daemon 的正常环境，但过滤隐式的 `CARGO_TARGET_DIR`、`CARGO_BUILD_TARGET`、`RUSTUP_TOOLCHAIN`、`RUST_RECURSION_COUNT`、`RUSTC`、`RUSTDOC`、`RUSTC_WRAPPER`、`RUSTC_WORKSPACE_WRAPPER`、`RUSTFLAGS`、`CARGO_ENCODED_RUSTFLAGS`；工具目录、PATH 和代理等配置保留。需要指定构建目录、工具链或编译参数时，写入 `[env]` 或通过 `--env` 显式传入，请求值优先。开发版和发布版采用相同规则。
 
 配置热更新对新任务生效。修改原文件中的所需字段，保留其他环境、允许 / 拒绝记录与暂停状态。PATH 使用目标系统格式，Windows 用分号分隔；确认目标工具目录如 `~/.cargo/bin`、`~/.local/bin` 在 PATH 中。上面的 `/home/user` 应替换为目标用户的实际主目录，配置中的 `~` 不会自动展开。
+
+桌面端的“活动旅程”按时间倒序统一展示其他设备在本机执行的命令、文件传输、截图、流式命令和端口转发，点击记录可查看详情、命令输出或留存附件。文件与截图保存独立副本，修改或删除原文件不会影响副本。PNG/JPEG 和小型 UTF-8 文本支持直接预览，其他附件可“另存为”后查看。
+
+在设置的“活动与附件”中配置保留天数，默认 30 天；0 表示长期保留，最大 3650 天。缩短时间立即清理到期附件，之后每 10 分钟检查。清理只删除附件副本，活动摘要和原文件保留，已清理附件无法恢复。后台服务与 App 都未运行时，下次运行再清理。手动编辑 `attachment_retention_days` 会在下一次清理时生效；无需重启服务。
 
 服务输出与任务 `logs` 不同。macOS 纯 CLI 服务日志在 `~/.xrun/daemon-service.log`；Linux 可用 `journalctl --user -u xrun-daemon.service` 查看；无 systemd 使用外部管理器日志或启动时重定向输出。
 
@@ -399,9 +406,9 @@ xrun win1 jobs --request-id '<request_id>'
 
 ## 升级与移除
 
-设备与中转按支持的协议范围选择共同版本，发布号不同也可以互通。本机 CLI、App helper 与 daemon 仍需使用相同发布版本，替换程序后重启 daemon。
+正式发布前不维护历史业务协议兼容。参与操作的设备统一更新 CLI、App helper 与 daemon，替换程序后重启 daemon。中转协商的协议范围只表示外层传输能力。
 
-协议、签名格式与数据库结构兼容的升级可以复用身份和记录：等待任务结束、停止本机服务，替换固定位置程序，启动并检查。
+更新前等待任务结束、停止本机服务，替换固定位置程序，启动并检查。
 
 ```bash
 xrun daemon stop
@@ -411,11 +418,9 @@ xrun daemon start
 xrun status
 ```
 
-beta.4 开始使用协议 1 和独立签名格式 1，不兼容旧 beta；从 beta.3 或更早版本升级需要重新创建网络、加入并授权。这次切换之后，普通发布号变化不会使已保存的签名失效；未来协议、签名或数据库格式变化以对应发布说明为准。清理数据会删除身份、任务与日志，应在明确不需要这些数据后进行，不能当作普通重启。
+本次统一 Job 使用 daemon 与 submissions schema 2，直接替换旧结构，不迁移历史记录。遇到 `DB_SCHEMA_MISMATCH`，先停止服务。开发环境若放弃旧活动记录，可用 `xrun daemon reset` 重建 Job 数据库；旧任务、日志及附件引用丢失，设备身份保留。旧提交记录库 `submissions.sqlite` 没有独立重建命令，在没有 CLI 进程运行时显式移走该库及其 `-wal`、`-shm` 文件，后续提交自动建立新库。
 
-beta.5 新增中转缓存握手，支持协议 1–2，签名格式 1、数据库结构 1 不变。从 beta.4 升级可保留身份、任务和日志；连接旧中转时正常执行，但新版 daemon 不缓存空闲连接。要解决旧客户端缓存占满名额的问题，需要同时升级中转和持有缓存的 daemon。
-
-遇到 `DB_SCHEMA_MISMATCH`，先停止服务，优先使用与现有数据库匹配的程序；本次升级不要求重建。若确实放弃数据，任务库可用 `xrun daemon reset` 重建，原任务和日志丢失，身份及提交记录保留。提交记录库 `submissions.sqlite` 与成员清单库 `roster.db` 没有独立重建命令；成员清单包含最高已知撤销状态，不能当缓存删除。需要彻底重新初始化本机时，执行下面的 `xrun down --purge`，它也会删除身份、提交记录和管理设备的网络权威数据；管理设备随后重新创建网络，成员重新加入并授权。
+成员清单库 `roster.db` 包含最高已知撤销状态，重构 Job 时保留它。需要彻底重新初始化本机时，执行下面的 `xrun down --purge`；它也会删除身份、提交记录和管理设备的网络权威数据，管理设备随后重新创建网络，成员重新加入并授权。
 
 移除本机服务保留数据使用 `down`，清理本机数据使用 `down --purge`，需要交互终端确认：
 

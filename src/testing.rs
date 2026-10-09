@@ -71,9 +71,9 @@ pub mod secure {
 pub mod server {
     pub use crate::server::run;
 }
-/// Query and seed isolated task databases for quota, recovery and failure assertions.
+/// Query and seed isolated job databases for quota, recovery and failure assertions.
 pub mod store {
-    pub use crate::store::TaskStore;
+    pub use crate::store::JobStore;
 }
 /// Check local file replacement and streaming upload with real filesystem paths.
 pub mod transfer {
@@ -91,8 +91,23 @@ pub fn relay_proof(
     protocol::Proof::create(id, network, path, nonce, manager)
 }
 
-/// Replace an isolated task snapshot to construct otherwise unreachable states.
-/// Production lifecycle mutations must use TaskStore's constrained operations.
-pub fn replace_task_fixture(store: &store::TaskStore, job: &protocol::Job) -> anyhow::Result<()> {
+/// Replace an isolated job snapshot to construct otherwise unreachable states.
+/// Production lifecycle mutations must use JobStore's constrained operations.
+pub fn replace_job_fixture(store: &store::JobStore, job: &protocol::Job) -> anyhow::Result<()> {
     store.replace_fixture(job)
+}
+
+/// Retain a file copy and attach its metadata to a job in an isolated fixture.
+pub async fn retain_attachment_fixture(
+    store: &store::JobStore,
+    job_id: &str,
+    name: &str,
+    bytes: &[u8],
+) -> anyhow::Result<String> {
+    let metadata = store
+        .attachments()
+        .save(std::io::Cursor::new(bytes), name)?;
+    let id = metadata.id.clone();
+    store.attach(job_id, metadata).await?;
+    Ok(id)
 }

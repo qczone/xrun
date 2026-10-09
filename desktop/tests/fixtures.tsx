@@ -9,7 +9,15 @@ import {
 import { mockIPC } from "@tauri-apps/api/mocks";
 import { StrictMode } from "react";
 import { App } from "../src/App";
-import type { Device, Job, Settings, Status } from "../src/api";
+import type {
+  Job,
+  CommandJob,
+  JobCommon,
+  Attachment,
+  Device,
+  Settings,
+  Status,
+} from "../src/api";
 import {
   initializeLanguage,
   resolveLanguage,
@@ -25,6 +33,12 @@ export async function fixture(
   joined = true,
   locale = "zh-CN",
 ) {
+  const jobs = new Map<string, Job>();
+  const remember = (value: unknown) => {
+    const page = value as { entries?: Job[] };
+    for (const job of page?.entries || []) jobs.set(job.job_id, job);
+    return value;
+  };
   const calls: { command: string; args: Args }[] = [];
   let languageSettings = {
     preference: "system" as LanguagePreference,
@@ -35,7 +49,7 @@ export async function fixture(
       joined,
       device_id: "self",
       name: "mac1",
-      version: "0.1.0-rc.2",
+      version: "0.1.0-rc.3",
       daemon_running: true,
       daemon_connected: true,
       remote_access_paused: false,
@@ -64,6 +78,7 @@ export async function fixture(
   };
   const settings: Settings = {
     execution: { default_cwd: null, max_concurrent_jobs: 4, path: null },
+    attachment_retention_days: 30,
     home_dir: "/Users/test",
     data_dir: "/Users/test/.xrun",
     os: "macos",
@@ -106,7 +121,12 @@ export async function fixture(
     (command, payload) => {
       const args = (payload || {}) as Args;
       calls.push({ command, args });
-      if (handlers[command]) return handlers[command](args);
+      if (handlers[command]) {
+        const value = handlers[command](args);
+        return command === "activity_history"
+          ? Promise.resolve(value).then(remember)
+          : value;
+      }
       switch (command) {
         case "window_visible":
           return true;
@@ -130,6 +150,9 @@ export async function fixture(
         case "save_settings":
           settings.execution = args.execution as Settings["execution"];
           return null;
+        case "save_attachment_retention":
+          settings.attachment_retention_days = args.days as number;
+          return null;
         case "join":
           status.local.joined = true;
           return null;
@@ -146,10 +169,10 @@ export async function fixture(
         case "autostart":
           status.service.app_at_login = args.enabled as boolean;
           return null;
-        case "task_history":
-          return { db_id: null, jobs: [], next_cursor: null };
-        case "file_history":
-          return { entries: [], next_cursor: null };
+        case "activity_job":
+          return structuredClone(jobs.get(args.id as string));
+        case "activity_history":
+          return { db_id: null, entries: [], next_cursor: null };
         default:
           return null;
       }
@@ -189,26 +212,48 @@ export function openMemberActions(name: string) {
   if (!summary.closest("details")!.open) fireEvent.click(summary);
 }
 
-export function task(id = "ABC123", changes: Partial<Job> = {}): Job {
+function common(id: string): JobCommon {
   return {
     job_id: id,
     db_id: "db-original",
+    request_id: `request-${id}`,
+    request_hash: `hash-${id}`,
     source_device_id: "unsafe-label",
     target_device_id: "self",
-    program: "echo",
-    args: ['<img id="command-injected" src=x>'],
-    cwd: "/repo",
     state: "running",
-    exit_code: null,
-    signal: null,
-    duration_ms: null,
-    last_seq: 3,
-    output_complete: true,
-    incomplete_reason: null,
-    error: null,
+    last_log_seq: 3,
+    log_bytes: 0,
+    output_complete: null,
+    output_loss_reason: null,
+    error_code: null,
+    error_message: null,
     created_at_ms: Date.now() - 1000,
+    started_at_ms: Date.now() - 900,
+    finished_at_ms: null,
     updated_at_ms: Date.now(),
     leftover_possible: false,
+    process: null,
+    attachments: [],
+  };
+}
+export function task(
+  id = "ABC123",
+  changes: Partial<CommandJob> = {},
+): CommandJob {
+  return {
+    ...common(id),
+    kind: "exec",
+    output_complete: true,
+    params: {
+      program: "echo",
+      args: ['<img id="command-injected" src=x>'],
+      cwd: "/repo",
+      timeout: 60,
+      shell: null,
+      input_size: 0,
+      input_sha256: "a".repeat(64),
+    },
+    result: null,
     ...changes,
   };
 }
@@ -224,3 +269,74 @@ export const event = (
     typeof bytes === "string" ? bytes : new Uint8Array(bytes),
   ).toString("base64"),
 });
+
+export function operation(
+  kind: "push" | "pull" | "screenshot" | "stream_exec" | "forward",
+  changes: Partial<JobCommon> & {
+    path?: string;
+    size?: number;
+    attachment?: Attachment;
+  } = {},
+): Job {
+  const {
+    path = "/repo/report.txt",
+    size = 68,
+    attachment,
+    ...overrides
+  } = changes;
+  const base = {
+    ...common(attachment?.id || kind),
+    state: "succeeded" as const,
+    finished_at_ms: Date.now(),
+    ...overrides,
+    attachments: attachment ? [attachment] : overrides.attachments || [],
+  };
+  const file = { path, size, sha256: "a".repeat(64), attachment_error: null };
+  switch (kind) {
+    case "push":
+      return {
+        ...base,
+        kind,
+        params: {
+          path,
+          cwd: null,
+          size,
+          sha256: file.sha256,
+          mkdir: false,
+          no_overwrite: false,
+          expect: null,
+        },
+        result: file,
+      };
+    case "pull":
+      return { ...base, kind, params: { path, cwd: null }, result: file };
+    case "screenshot":
+      return {
+        ...base,
+        kind,
+        params: {},
+        result: {
+          captured_at: new Date().toISOString(),
+          width: 1,
+          height: 1,
+          size,
+          sha256: file.sha256,
+          attachment_error: null,
+        },
+      };
+    case "forward":
+      return {
+        ...base,
+        kind,
+        params: { port: 8080 },
+        result: {
+          port: 8080,
+          duration_ms: 100,
+          input_bytes: 10,
+          output_bytes: 20,
+        },
+      };
+    case "stream_exec":
+      return { ...task(base.job_id, base), kind };
+  }
+}

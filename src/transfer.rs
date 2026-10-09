@@ -180,24 +180,60 @@ fn check_canceled(canceled: &AtomicBool) -> Result<()> {
 }
 
 static LOCKS: OnceLock<Mutex<HashMap<PathBuf, Weak<AsyncMutex<()>>>>> = OnceLock::new();
+type PushCallback = Box<dyn FnOnce(&Path, bool, Option<&anyhow::Error>) -> Result<()> + Send>;
+struct PushCompletion {
+    path: PathBuf,
+    callback: Option<PushCallback>,
+}
+impl PushCompletion {
+    fn complete(&mut self, published: bool, error: Option<&anyhow::Error>) -> Result<()> {
+        self.callback.take().expect("push completion runs once")(&self.path, published, error)
+    }
+}
+impl Drop for PushCompletion {
+    fn drop(&mut self) {
+        if let Some(callback) = self.callback.take() {
+            let error = ErrorCode::ConnectionClosed
+                .error("push interrupted before completion")
+                .into();
+            if let Err(error) = callback(&self.path, false, Some(&error)) {
+                tracing::error!(%error, "interrupted push result could not be recorded");
+            }
+        }
+    }
+}
 pub(crate) async fn push(
     path: PathBuf,
     mut contents: tempfile::NamedTempFile,
     mkdir: bool,
     no_overwrite: bool,
     expect: Option<String>,
-    finished: impl FnOnce(&Path, bool) -> Result<()> + Send + 'static,
+    finished: impl FnOnce(&Path, bool, Option<&anyhow::Error>) -> Result<()> + Send + 'static,
 ) -> Result<PathBuf> {
-    if contents.as_file().metadata()?.len() > MAX_FILE {
-        bail!(ErrorCode::FileTooLarge.error(format!("maximum {MAX_FILE} bytes")))
-    }
-    if expect.as_ref().is_some_and(|s| !valid_hash(s)) {
-        bail!(ErrorCode::InvalidExpect.error("expected a full SHA-256"))
-    }
-    if no_overwrite && expect.is_some() {
-        bail!(ErrorCode::InvalidRequest.error("expect conflicts with no-overwrite"))
-    }
-    let path = destination(&path, mkdir)?;
+    let mut completion = PushCompletion {
+        path: path.clone(),
+        callback: Some(Box::new(finished)),
+    };
+    let prepared = (|| {
+        if contents.as_file().metadata()?.len() > MAX_FILE {
+            bail!(ErrorCode::FileTooLarge.error(format!("maximum {MAX_FILE} bytes")));
+        }
+        if expect.as_ref().is_some_and(|s| !valid_hash(s)) {
+            bail!(ErrorCode::InvalidExpect.error("expected a full SHA-256"));
+        }
+        if no_overwrite && expect.is_some() {
+            bail!(ErrorCode::InvalidRequest.error("expect conflicts with no-overwrite"));
+        }
+        destination(&path, mkdir)
+    })();
+    let path = match prepared {
+        Ok(path) => path,
+        Err(error) => {
+            completion.complete(false, Some(&error))?;
+            return Err(error);
+        }
+    };
+    completion.path = path.clone();
     let lock = {
         let mut locks = LOCKS.get_or_init(Default::default).lock().unwrap();
         locks.retain(|_, v| v.strong_count() > 0);
@@ -215,7 +251,7 @@ pub(crate) async fn push(
     let canceled = cancel.0.clone();
     let work = path.clone();
     tokio::task::spawn_blocking(move || {
-        // The worker owns admission (inside finished), path serialization and audit
+        // The worker owns admission (inside finished), path serialization and job completion
         // through actual completion, even when its async waiter has been dropped.
         let _guard = guard;
         let mut published = false;
@@ -231,9 +267,9 @@ pub(crate) async fn push(
                 &mut published,
             )
         })();
-        let audit_result = finished(&work, published);
+        let completion_result = completion.complete(published, result.as_ref().err());
         result?;
-        audit_result
+        completion_result
     })
     .await??;
     Ok(path)
@@ -438,7 +474,7 @@ mod tests {
             let (done_tx, done_rx) = tokio::sync::oneshot::channel();
             let target = path.clone();
             let task = tokio::spawn(async move {
-                push(target, input, false, false, None, move |_, published| {
+                push(target, input, false, false, None, move |_, published, _| {
                     let _permit = permit;
                     let _ = done_tx.send(published);
                     Ok(())

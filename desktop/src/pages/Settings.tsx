@@ -38,6 +38,7 @@ export function SettingsPage({ status, feedback }: Props) {
   const [cwd, setCwd] = useState("");
   const [concurrency, setConcurrency] = useState("4");
   const [path, setPath] = useState("");
+  const [retention, setRetention] = useState("30");
   const [loadError, setLoadError] = useState<string | null>(null);
   const loadRequest = useRef(0);
   const joined = !!status?.local.joined;
@@ -50,6 +51,7 @@ export function SettingsPage({ status, feedback }: Props) {
       setCwd(value.execution.default_cwd || "");
       setConcurrency(String(value.execution.max_concurrent_jobs));
       setPath(value.execution.path || "");
+      setRetention(String(value.attachment_retention_days));
       setLoadError(null);
     } catch (error) {
       if (request === loadRequest.current) setLoadError(errorText(error));
@@ -131,6 +133,83 @@ export function SettingsPage({ status, feedback }: Props) {
             </button>
           </div>
         </section>
+      </div>
+      <div className="settings-section">
+        <h2>{t("settings.activity")}</h2>
+        <form
+          className="panel padded"
+          id="retention-form"
+          onSubmit={async (event) => {
+            event.preventDefault();
+            const days = Number(retention);
+            if (
+              busy ||
+              !settings ||
+              days === settings.attachment_retention_days
+            )
+              return;
+            if (
+              await action({
+                command: "save_attachment_retention",
+                args: { days },
+              })
+            ) {
+              setSettings(
+                (previous) =>
+                  previous && { ...previous, attachment_retention_days: days },
+              );
+              notify("settings.retentionSaved");
+            }
+          }}
+        >
+          <div className="concurrency-row">
+            <div>
+              <label htmlFor="attachment-retention">
+                {t("settings.retentionDays")}
+              </label>
+              <p className="field-help">{t("settings.retentionHint")}</p>
+            </div>
+            <input
+              id="attachment-retention"
+              type="number"
+              min="0"
+              max="3650"
+              required
+              disabled={busy || !settings}
+              value={retention}
+              onChange={(event) => setRetention(event.target.value)}
+            />
+          </div>
+          <p className="field-help">{t("settings.retentionCleanupHint")}</p>
+          <div className="form-footer">
+            <span
+              className={
+                settings &&
+                Number(retention) !== settings.attachment_retention_days
+                  ? "dirty"
+                  : ""
+              }
+            >
+              {settings &&
+              Number(retention) !== settings.attachment_retention_days
+                ? t("settings.unsaved")
+                : t("settings.retentionSavedHint")}
+            </span>
+            <button
+              type="submit"
+              className="primary"
+              disabled={
+                busy ||
+                !settings ||
+                Number(retention) === settings.attachment_retention_days
+              }
+            >
+              {pending === "save_attachment_retention"
+                ? t("common.saving")
+                : t("settings.saveRetention")}
+            </button>
+          </div>
+        </form>
       </div>
       <div className="settings-section">
         <h2>{t("settings.execution")}</h2>

@@ -1,12 +1,61 @@
 /** English is the default and defines the complete set of message keys. */
 export const en = {
+  "operation.save_attachment_retention": "Saving attachment retention…",
+  "history.newestFirst": "Newest first",
+  "history.timeline": "Local activity timeline",
+  "history.today": "Today",
+  "history.yesterday": "Yesterday",
+  "history.activityState": "Activity status",
+  "history.allActivities": "All activities",
+  "history.command": "Run command",
+  "history.streamCommand": "Streaming command",
+  "history.forward": "Port forwarding",
+  "history.endedAt": "Ended at",
+  "history.empty":
+    "No activity yet. Commands, transfers and screenshots from other devices appear here.",
+  "attachment.title": "Retained attachment",
+  "attachment.notRetained": "No retained attachment",
+  "attachment.expired": "Attachment expired",
+  "attachment.missing": "Attachment unavailable",
+  "attachment.save": "Save as…",
+  "attachment.forever": "Kept indefinitely. Change this in Settings.",
+  "attachment.expiresAt": "Kept until {time}. Change this in Settings.",
+  "attachment.imageAlt": "Attachment preview: {name}",
+  "attachment.saveToView":
+    "This format or size has no built-in preview. Save a copy to view it.",
+  "attachment.loading": "Loading attachment…",
+  "attachment.expiredHint":
+    "The attachment reached its retention limit. The activity summary is still available.",
+  "attachment.missingHint":
+    "The cached copy is missing or unreadable. The activity summary is still available.",
+  "attachment.retainFailed":
+    "The operation was recorded, but its attachment could not be retained.",
+  "attachment.notRetainedHint":
+    "No attachment was retained for this operation.",
+  "attachment.saved": "Attachment saved to {path}",
+  "attachment.loadFailed":
+    "Could not read or save the attachment. Please retry.",
+  "attachment.details": "Attachment checksum",
+  "settings.activity": "Activity and attachments",
+  "settings.retentionDays": "Keep attachments (days)",
+  "settings.retentionHint":
+    "Default: 30 days. Use 0 to keep indefinitely; maximum: 3650 days.",
+  "settings.retentionCleanupHint":
+    "Screenshots and transferred files have independent copies. Shortening retention immediately removes expired copies. " +
+    "Summaries and original files are kept. Removed attachments cannot be restored.",
+  "settings.retentionSavedHint":
+    "Cleaned periodically while the service or activity page is running. No service restart needed.",
+  "settings.saveRetention": "Save retention",
+  "settings.retentionSaved": "Attachment retention saved",
+  "settings.retentionFailed":
+    "Could not save attachment retention. Please retry.",
   "language.title": "Language",
   "language.hint": "Changes apply immediately and are saved for next time.",
   "language.system": "Follow system",
   "language.saveFailed": "Could not save the language. Please retry.",
   "nav.overview": "This device",
   "nav.devices": "Devices",
-  "nav.history": "Activity",
+  "nav.history": "Activity journey",
   "nav.settings": "Settings",
   "nav.main": "Main navigation",
   "common.localDevice": "This device",
@@ -112,9 +161,9 @@ export const en = {
   "format.unknownOs": "Unknown OS",
   "format.seconds": "{seconds} s",
   "format.minutes": "{minutes} min {seconds} s",
-  "task.success": "Succeeded",
+  "task.success": "Completed",
   "task.nonzeroExit": "Abnormal exit",
-  "task.starting": "Starting",
+  "task.accepted": "Accepted",
   "task.failed": "Failed",
   "task.canceled": "Canceled",
   "task.timedOut": "Timed out",
@@ -295,20 +344,15 @@ export const en = {
   "overview.devicesShortcut": "View devices and manage access",
   "overview.environmentShortcut":
     "Working directory, tool paths and task limits",
-  "overview.historyShortcut": "View this device’s activity",
+  "overview.historyShortcut": "View activity journey",
   "overview.footnote":
     "The background service keeps running when you close the window or quit the app.",
-  "history.title": "Device activity",
+  "history.title": "Activity journey",
   "history.description":
-    "Tasks, file operations and screenshots on this device. Available even when the background service is stopped.",
-  "history.tasks": "Tasks",
-  "history.files": "Files and screenshots",
-  "history.recordType": "Record type",
+    "Operations performed here by other devices, from newest to oldest.",
   "history.state": "Status",
-  "history.allTasks": "All tasks",
   "history.running": "Running",
   "history.failed": "Unsuccessful",
-  "history.taskState": "Task status",
   "history.receiveFile": "Receive file",
   "history.sendFile": "Send file",
   "history.screenshot": "Screenshot",
@@ -317,17 +361,14 @@ export const en = {
   "history.source": "From: {name}",
   "history.duration": "Duration: {duration}",
   "history.viewOutput": "Click to view output",
-  "history.emptyFiltered": "No tasks match this status.",
-  "history.emptyTasks":
-    "No tasks yet. Tasks run on this device through xrun appear here.",
-  "history.emptyFiles": "No file operations or screenshots yet.",
+  "history.emptyFiltered": "No activities match this status.",
   "history.loading": "Loading records…",
   "history.previous": "Previous",
   "history.page": "Page {page}",
   "history.next": "Next",
   "history.loadFailed": "Could not load activity. Please retry.",
   "history.footnote":
-    "Task results are kept. Completed task output and file operation records are retained for 7 days.",
+    "Activity summaries are kept. Attachments follow your retention setting; completed command output is kept for 7 days.",
   "output.truncated": "Output was truncated.",
   "output.expired": "Output was removed under the retention policy.",
   "output.detached":
@@ -342,7 +383,7 @@ export const en = {
   "output.notFinished": "Still running",
   "output.exitCode": "Exit code {code}",
   "output.signal": "Signal {signal}",
-  "output.back": "← Back to tasks",
+  "output.back": "← Back to activity journey",
   "output.details": "Task {id} · View details",
   "output.sourceId": "Source device ID",
   "output.cwd": "Working directory",
@@ -363,7 +404,8 @@ export const en = {
   "output.finished": "Task finished",
   "output.catchingUp": "Loading remaining output…",
   "output.loadFailed": "Could not load output",
-  "settings.description": "Configure startup behavior and execution settings.",
+  "settings.description":
+    "Configure startup, activity attachments and this device’s execution environment.",
   "settings.startup": "Startup and appearance",
   "settings.showAtLogin": "Show the xrun icon at login",
   "settings.loginHint": "Show the menu bar or system tray icon when you log in",

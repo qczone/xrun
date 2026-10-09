@@ -95,12 +95,11 @@ pub(super) async fn check(suite: &mut Suite) -> Result<()> {
     .await
     .context("paused log subscription remained open after resume")??;
     ok(cli(target, &["daemon", "pause"]).await);
-    let local_tasks =
-        xrun::testing::store::TaskStore::open(&target.join(".xrun/daemon.db"), false)?;
+    let local_tasks = xrun::testing::store::JobStore::open(&target.join(".xrun/daemon.db"), false)?;
     assert!(!local_tasks.get(paused_job_id)?.unwrap().state.terminal());
     tokio::time::timeout(Duration::from_secs(5), async {
         loop {
-            if local_tasks.get(completed_id).unwrap().unwrap().state == JobState::Exited {
+            if local_tasks.get(completed_id).unwrap().unwrap().state == JobState::Succeeded {
                 break;
             }
             tokio::time::sleep(Duration::from_millis(50)).await;
@@ -130,7 +129,7 @@ pub(super) async fn check(suite: &mut Suite) -> Result<()> {
     ok(cli(target, &["daemon", "resume"]).await);
     assert_eq!(
         json(cli(source, &["runner1", "jobs", completed_id, "--json"]).await)["state"],
-        "exited"
+        "succeeded"
     );
     drop(local_tasks);
     ok(cli(target, &["deny-from", admin]).await);

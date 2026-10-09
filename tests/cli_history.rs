@@ -104,12 +104,12 @@ async fn history_text_json_tail_and_wait_timeouts_preserve_job_results() -> Resu
         .await;
         assert_eq!(out.status.code(), Some(7));
         let result: serde_json::Value = serde_json::from_slice(&out.stdout)?;
-        assert_eq!(result["job"]["exit_code"], 7);
+        assert_eq!(result["job"]["result"]["exit_code"], 7);
         assert_eq!(result["logs"], serde_json::json!([]));
         assert!(result["logs_error"].is_null());
         let jobs = ok(cli(&lab.source, &["target1", "jobs"]).await);
         assert!(jobs.contains(reference.split_once('/').unwrap().1));
-        assert!(jobs.contains("Exited"));
+        assert!(jobs.contains("Failed"));
         for follow in [false, true] {
             let mut args = vec!["target1", "logs", &reference, "--tail", "2"];
             if follow {
@@ -182,7 +182,7 @@ async fn history_text_json_tail_and_wait_timeouts_preserve_job_results() -> Resu
         let running = json(cli(&lab.source, &["target1", "jobs", &long, "--json"]).await);
         assert!(matches!(
             running["state"].as_str(),
-            Some("starting" | "running")
+            Some("accepted" | "running")
         ));
         ok(cli(&lab.source, &["target1", "kill", &long]).await);
         let stopped = cli(&lab.source, &["target1", "wait", &long, "--tail", "0"]).await;

@@ -8,7 +8,7 @@ use futures_util::{SinkExt, StreamExt};
 use std::{
     sync::{
         Arc,
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicBool, AtomicU64, Ordering},
     },
     time::Duration,
 };
@@ -42,8 +42,12 @@ pub(crate) async fn connect_loopback(port: u16) -> Result<TcpStream> {
 
 // Each direction advances independently, with at most eight 64-KiB messages
 // queued. End marks a TCP write-half close, not a WebSocket disconnect.
-pub(crate) async fn bridge(ws: &mut Ws, tcp: TcpStream) -> Result<()> {
+pub(crate) async fn bridge(ws: &mut Ws, tcp: TcpStream) -> Result<(u64, u64)> {
     tcp.set_nodelay(true)?;
+    let input_count = Arc::new(AtomicU64::new(0));
+    let output_count = Arc::new(AtomicU64::new(0));
+    let sent_count = output_count.clone();
+    let received_count = input_count.clone();
     let (mut socket_tx, mut socket_rx) = ws.split();
     let (mut input, mut output) = tcp.into_split();
     let (tx, mut rx) = mpsc::channel::<Message>(8);
@@ -55,6 +59,7 @@ pub(crate) async fn bridge(ws: &mut Ws, tcp: TcpStream) -> Result<()> {
         let mut buffer = vec![0; FILE_CHUNK];
         loop {
             let n = input.read(&mut buffer).await?;
+            sent_count.fetch_add(n as u64, Ordering::Relaxed);
             let message = if n == 0 {
                 sender_eof.store(true, Ordering::Relaxed);
                 Message::Text(serde_json::to_string(&Data::End)?.into())
@@ -80,7 +85,8 @@ pub(crate) async fn bridge(ws: &mut Ws, tcp: TcpStream) -> Result<()> {
         while let Some(message) = socket_rx.next().await {
             match message? {
                 Message::Binary(bytes) if !received_eof && bytes.len() <= FILE_CHUNK => {
-                    output.write_all(&bytes).await?
+                    output.write_all(&bytes).await?;
+                    received_count.fetch_add(bytes.len() as u64, Ordering::Relaxed);
                 }
                 Message::Text(text) => match serde_json::from_str::<Data>(&text)? {
                     Data::End if !received_eof => {
@@ -128,5 +134,8 @@ pub(crate) async fn bridge(ws: &mut Ws, tcp: TcpStream) -> Result<()> {
         }
     };
     tokio::try_join!(send, receive, writer)?;
-    Ok(())
+    Ok((
+        input_count.load(Ordering::Relaxed),
+        output_count.load(Ordering::Relaxed),
+    ))
 }
