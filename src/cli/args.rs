@@ -125,6 +125,18 @@ pub(super) enum Local {
     )
     )]
     Status,
+    /// Query relay ciphertext usage (manager: network; member: this device)
+    Traffic {
+        /// UTC calendar period: today, month or all
+        #[arg(long, default_value = "month")]
+        period: TrafficPeriod,
+        /// Maximum device rows (1-256)
+        #[arg(long, default_value_t = 50, value_parser = clap::value_parser!(u16).range(1..=256))]
+        limit: u16,
+        /// Skip device rows in device ID order
+        #[arg(long, default_value_t = 0)]
+        offset: u32,
+    },
     /// Show this CLI's submissions from the last 24 hours
     Recent,
     /// Remove local services; optionally purge local data

@@ -58,6 +58,21 @@ export interface Device {
   os: string | null;
 }
 
+export type TrafficPeriod = "today" | "month" | "all";
+export interface TrafficReport {
+  network_id: string;
+  device_id: string | null;
+  period: TrafficPeriod;
+  start_ms: number;
+  end_ms: number;
+  recorded_since_ms: number | null;
+  complete: boolean;
+  totals: { ingress_bytes: number; egress_bytes: number };
+  devices: { device_id: string; sent_bytes: number; received_bytes: number }[];
+  daily: { start_ms: number; ingress_bytes: number; egress_bytes: number }[];
+  next_offset: number | null;
+}
+
 export interface JobCommon {
   job_id: string;
   db_id: string;
@@ -228,6 +243,8 @@ export const api = {
   windowVisible: () => invoke<boolean>("window_visible"),
   status: () => invoke<Status>("status"),
   settings: () => invoke<Settings>("settings"),
+  traffic: (period: TrafficPeriod, offset = 0) =>
+    invoke<TrafficReport>("traffic", { query: { period, offset, limit: 50 } }),
   invite: (allow: boolean) => invoke<Invitation>("invite", { allow }),
   revoke: (device: string) => invoke<Revocation>("revoke", { device }),
   copyInvitation: (link: string) => invoke<void>("copy_invitation", { link }),

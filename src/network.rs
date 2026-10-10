@@ -3,7 +3,9 @@ mod bootstrap;
 mod links;
 mod pairing;
 mod peers;
+mod traffic;
 mod transport;
+pub(crate) use traffic::traffic;
 
 pub(crate) use bootstrap::create;
 #[cfg(test)]

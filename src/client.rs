@@ -16,6 +16,16 @@ pub use settings::{
 pub use status::{
     LocalSnapshot, LocalStatus, NetworkStatus, Status, local_snapshot, local_status, status,
 };
+/// Query the current relay's persisted ciphertext counters. Managers see their
+/// network, other members see only their own device. No service is started.
+pub async fn traffic(
+    query: crate::protocol::TrafficQuery,
+) -> Result<crate::protocol::TrafficReport> {
+    query.validate()?;
+    let mut id = Identity::load()?;
+    crate::net::renew_identity(&mut id).await?;
+    crate::network::traffic(&id, query).await
+}
 /// Local activity and task output. Reads never create or reset the database;
 /// activity reads can clean expired attachment cache copies.
 pub mod history {

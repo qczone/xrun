@@ -207,6 +207,15 @@ async fn public_relay_executes_transfers_streams_and_rejects_route_takeover() ->
         assert_eq!(result["sha256"], sha256(&content));
         assert_eq!(sha256(&std::fs::read(download)?), sha256(&content));
         println!("65 MiB file transfer in both directions: passed");
+        let usage = json(run(&lab.source, &["traffic", "--period", "all", "--json"]).await);
+        assert!(usage["device_id"].is_null());
+        assert_eq!(usage["complete"], true);
+        assert!(usage["totals"]["egress_bytes"].as_u64().unwrap() > 2 * FILE_BYTES);
+        let own = json(run(&lab.target, &["traffic", "--period", "all", "--json"]).await);
+        assert_eq!(own["device_id"], target.device_id);
+        assert_eq!(own["devices"].as_array().unwrap().len(), 1);
+        assert!(own["totals"]["egress_bytes"].as_u64().unwrap() > FILE_BYTES);
+        println!("relay network/device traffic interoperability: passed");
         let backend = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
         let port = backend.local_addr()?.port();
         let echo = tokio::spawn(async move {

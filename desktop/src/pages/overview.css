@@ -6,6 +6,93 @@
   padding: 20px;
 }
 
+.traffic-periods,
+.traffic-legend,
+.traffic-axis,
+.traffic-pagination {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+}
+.traffic-periods .selected {
+  color: var(--accent);
+  background: var(--soft);
+}
+.traffic-totals {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 20px;
+  padding: 16px 20px;
+}
+.traffic-totals span {
+  color: var(--muted);
+  font-size: 12px;
+}
+.traffic-totals strong {
+  display: block;
+  font-size: 22px;
+  margin-top: 6px;
+  font-variant-numeric: tabular-nums;
+}
+.traffic-trend {
+  padding: 0 20px 16px;
+}
+.traffic-legend,
+.traffic-axis {
+  font-size: 11px;
+  color: var(--muted);
+}
+.traffic-ingress {
+  color: var(--accent);
+}
+.traffic-egress {
+  color: var(--muted);
+}
+.traffic-bar-ingress {
+  fill: var(--accent);
+}
+.traffic-bar-egress {
+  fill: var(--muted);
+  opacity: 0.55;
+}
+.traffic-chart {
+  display: block;
+  width: 100%;
+  height: 100px;
+  margin: 12px 0 6px;
+  border-bottom: 1px solid var(--border);
+}
+.traffic-axis {
+  justify-content: space-between;
+}
+.traffic-note {
+  padding: 0 20px;
+  font-size: 12px;
+}
+.traffic-devices {
+  width: 100%;
+  margin-top: 12px;
+  font-size: 12px;
+  border-collapse: collapse;
+  table-layout: fixed;
+}
+.traffic-devices th,
+.traffic-devices td {
+  padding: 8px 0;
+  text-align: right;
+  border-bottom: 1px solid var(--border);
+}
+.traffic-devices th:first-child,
+.traffic-devices td:first-child {
+  width: 50%;
+  text-align: left;
+  overflow-wrap: anywhere;
+}
+.traffic-pagination {
+  justify-content: flex-end;
+  margin-top: 12px;
+}
+
 .device-avatar {
   width: 40px;
   height: 40px;

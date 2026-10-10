@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
-import type { Status } from "../api";
+import type { Device, Status } from "../api";
+import { TrafficPanel } from "../components/TrafficPanel";
 import { useOperations } from "../app/useOperations";
 import { Icon } from "../components/Icon";
 import { NetworkSetup } from "../components/NetworkSetup";
@@ -7,12 +8,20 @@ import { relayHost, relayState, serviceState } from "../format";
 import { t } from "../i18n";
 
 interface Props {
+  active: boolean;
+  devices: Device[];
   status: Status | null;
   feedback: ReactNode;
   navigate: (page: "devices" | "settings" | "history") => void;
 }
 
-export function Overview({ status, feedback, navigate }: Props) {
+export function Overview({
+  status,
+  feedback,
+  navigate,
+  active,
+  devices,
+}: Props) {
   const { busy, pending, action, stop } = useOperations();
   const local = status?.local;
   const service = status?.service;
@@ -284,6 +293,11 @@ export function Overview({ status, feedback, navigate }: Props) {
           onCreated={() => navigate("devices")}
         />
       )}
+      <TrafficPanel
+        status={status}
+        active={active && !busy}
+        devices={devices}
+      />
       {local?.joined && (
         <>
           <div className="quick-links">

@@ -102,6 +102,15 @@ async fn devices<R: tauri::Runtime>(
 }
 
 #[tauri::command]
+async fn traffic(
+    query: xrun::protocol::TrafficQuery,
+) -> Result<xrun::protocol::TrafficReport, CommandError> {
+    xrun::client::traffic(query)
+        .await
+        .map_err(CommandError::from_error)
+}
+
+#[tauri::command]
 async fn job_output<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
     db_id: String,
@@ -366,6 +375,7 @@ pub(super) fn register<R: tauri::Runtime>(builder: tauri::Builder<R>) -> tauri::
             set_language,
             status,
             devices,
+            traffic,
             job_output,
             activity_history,
             activity_job,

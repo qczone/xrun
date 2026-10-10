@@ -26,6 +26,12 @@ export interface ControlState extends ConnectionBase {
   manager: boolean;
   generation: string;
 }
+export interface TrafficState extends ConnectionBase {
+  role: "traffic";
+  device: string;
+  manager: boolean;
+  deadline: number;
+}
 export interface SessionBinding {
   target: string;
   generation: string;
@@ -58,7 +64,12 @@ export interface ClosedState extends ConnectionBase {
   role: "closed";
 }
 export type Attachment =
-  ChallengeState | ControlState | PendingState | TunnelState | ClosedState;
+  | ChallengeState
+  | ControlState
+  | TrafficState
+  | PendingState
+  | TunnelState
+  | ClosedState;
 
 const BASE_KEYS = ["id", "role", "network", "ip", "protocol"];
 const BINDING_KEYS = ["target", "generation", "sid"];
@@ -129,6 +140,22 @@ export function attachment(value: unknown): Attachment | undefined {
     protocol,
   };
   switch (value.role) {
+    case "traffic":
+      if (
+        !object(value, [...BASE_KEYS, "device", "manager", "deadline"]) ||
+        typeof value.device !== "string" ||
+        !DEVICE.test(value.device) ||
+        typeof value.manager !== "boolean" ||
+        !deadline(value.deadline)
+      )
+        return;
+      return {
+        ...base,
+        role: "traffic",
+        device: value.device,
+        manager: value.manager,
+        deadline: value.deadline,
+      };
     case "auth":
     case "verifying": {
       const keys = [
@@ -218,9 +245,7 @@ export function attachment(value: unknown): Attachment | undefined {
       const session = binding(value);
       const keys =
         value.role === "source"
-          ? [
-            ...TUNNEL_KEYS, "anonymous", "cachedSince", "source", "management",
-          ]
+          ? [...TUNNEL_KEYS, "anonymous", "cachedSince", "source", "management"]
           : TUNNEL_KEYS;
       if (
         !object(value, keys) ||

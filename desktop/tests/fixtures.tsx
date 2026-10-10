@@ -49,7 +49,7 @@ export async function fixture(
       joined,
       device_id: "self",
       name: "mac1",
-      version: "0.1.0-rc.4",
+      version: "0.1.0-rc.5",
       daemon_running: true,
       daemon_connected: true,
       remote_access_paused: false,
@@ -110,7 +110,8 @@ export async function fixture(
     callback: () => void,
     delay?: number,
   ) => {
-    if (delay !== 3000) return realSetInterval(callback, delay);
+    if (delay !== 3000 && delay !== 10_000)
+      return realSetInterval(callback, delay);
     timers.set(--timerId, callback);
     return timerId;
   }) as unknown as typeof setInterval);
@@ -147,6 +148,24 @@ export async function fixture(
           return structuredClone(settings);
         case "devices":
           return { devices, server_error: null };
+        case "traffic": {
+          const query = args.query as { period: string };
+          return {
+            network_id: status.network?.network_id,
+            device_id: status.network?.is_manager
+              ? null
+              : status.local.device_id,
+            period: query.period,
+            start_ms: 0,
+            end_ms: Date.now(),
+            recorded_since_ms: null,
+            complete: true,
+            totals: { ingress_bytes: 0, egress_bytes: 0 },
+            devices: [],
+            daily: [],
+            next_offset: null,
+          };
+        }
         case "save_settings":
           settings.execution = args.execution as Settings["execution"];
           return null;

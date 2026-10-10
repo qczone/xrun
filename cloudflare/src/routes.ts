@@ -9,6 +9,7 @@ interface RouteBase {
 export type ChallengeRoute = RouteBase &
   (
     | { action: "status" }
+    | { action: "traffic" }
     | { action: "control" }
     | { action: "connect"; target: string }
   );
@@ -26,7 +27,10 @@ export function relativeRoute(path: string): Route | undefined {
   const parts = path.split("/").slice(1);
   const [resource, network, action, target, generation, sid] = parts;
   if (resource !== "networks" || !NETWORK.test(network)) return;
-  if ((action === "status" || action === "control") && parts.length === 3) {
+  if (
+    (action === "status" || action === "control" || action === "traffic") &&
+    parts.length === 3
+  ) {
     return { network, action, path };
   }
   if (action === "connect" && parts.length === 4 && DEVICE.test(target)) {

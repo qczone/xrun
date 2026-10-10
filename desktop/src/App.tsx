@@ -138,6 +138,8 @@ export function App() {
             hidden={page !== "overview"}
           >
             <Overview
+              active={visible && page === "overview" && !confirmation.active}
+              devices={devices}
               status={status}
               feedback={feedback("overview")}
               navigate={navigate}

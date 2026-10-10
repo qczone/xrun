@@ -20,6 +20,7 @@ import {
 } from "./limits";
 import { route, type AttachRoute } from "./routes";
 import { PROTOCOL } from "./protocol";
+import { Traffic, trafficQuery } from "./traffic";
 import {
   base,
   expired,
@@ -43,11 +44,13 @@ export function error(code: string, message: string, status = 400): Response {
 
 /** Live routing bindings and ciphertext windows survive with hibernating sockets. */
 export class XrunRelay extends DurableObject<Env> {
+  private traffic: Traffic;
   private connections: Connections;
   private nextAlarm: number | null = null;
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
+    this.traffic = new Traffic(ctx.storage);
     this.connections = new Connections(ctx.getWebSockets());
     this.validateRestoredBindings();
     ctx.blockConcurrencyWhile(async () => {
@@ -274,6 +277,16 @@ export class XrunRelay extends DurableObject<Env> {
       if (!proof) throw new Error("Member proof required");
       this.send(ws, { type: "status", devices: this.connections.devices() });
       this.close(ws);
+    } else if (state.action === "traffic") {
+      if (!proof) throw new Error("Member proof required");
+      this.connections.save(ws, {
+        ...base(state),
+        role: "traffic",
+        device: proof.device,
+        manager: proof.manager,
+        deadline: Date.now() + AUTH_TIMEOUT_MS,
+      });
+      this.send(ws, { type: "traffic_ready" });
     } else if (state.action === "control") {
       if (!proof) throw new Error("Member proof required");
       this.registerControl(ws, state, proof);
@@ -317,10 +330,10 @@ export class XrunRelay extends DurableObject<Env> {
     const source = proof?.device ?? null;
     // The manager's authenticated live control already carries its root proof.
     // Anonymous pairing cannot consume this last protected network slot.
-    const management = proof !== undefined && (
-      proof.manager ||
-      this.connections.control(proof.device)?.state.manager === true
-    );
+    const management =
+      proof !== undefined &&
+      (proof.manager ||
+        this.connections.control(proof.device)?.state.manager === true);
     const anonymousFull =
       !proof &&
       this.connections.anonymous(state.target) >= ANONYMOUS_PER_TARGET;
@@ -331,14 +344,18 @@ export class XrunRelay extends DurableObject<Env> {
     for (;;) {
       const sourceFull =
         this.connections.source(source, state.ip) >= SESSIONS_PER_SOURCE;
-      const ordinaryFull = !management &&
-        this.connections.ordinarySessions >= SESSIONS - MANAGER_RESERVED_SESSIONS;
+      const ordinaryFull =
+        !management &&
+        this.connections.ordinarySessions >=
+          SESSIONS - MANAGER_RESERVED_SESSIONS;
       const totalFull = this.connections.sourceCount >= SESSIONS;
       if (!sourceFull && !ordinaryFull && !totalFull) break;
       const cached = this.connections.oldestCached((candidate) => {
         if (sourceFull) {
-          return candidate.source === source &&
-            (source !== null || candidate.ip === state.ip);
+          return (
+            candidate.source === source &&
+            (source !== null || candidate.ip === state.ip)
+          );
         }
         return !ordinaryFull || !candidate.management;
       });
@@ -454,12 +471,23 @@ export class XrunRelay extends DurableObject<Env> {
         this.reject(ws, "MESSAGE_TOO_LARGE", "Ciphertext window exceeded");
         return;
       }
+      const device = state.role === "source" ? state.source : state.target;
+      this.traffic.record(state.network, device, message.byteLength, false);
       state = { ...state, outstanding: state.outstanding + message.byteLength };
     }
     // Budget changes must always survive eviction. Persist the exact idle expiry
     // in the same write, so wake-up cannot expire a recently active peer early.
     this.connections.save(ws, { ...state, deadline: Date.now() + IDLE });
     peer.socket.send(message);
+    if (typeof message !== "string") {
+      const device =
+        state.role === "source"
+          ? state.target
+          : peer.state.role === "source"
+            ? peer.state.source
+            : null;
+      this.traffic.record(state.network, device, message.byteLength, true);
+    }
   }
   async webSocketMessage(
     ws: WebSocket,
@@ -472,6 +500,37 @@ export class XrunRelay extends DurableObject<Env> {
         if (typeof message !== "string")
           throw new Error("Expected member proof");
         await this.authenticate(ws, state, message);
+      } else if (state.role === "traffic") {
+        if (
+          typeof message !== "string" ||
+          message.length > CONTROL_MESSAGE_BYTES ||
+          expired(state, Date.now())
+        )
+          throw new Error("Invalid traffic query");
+        const value: unknown = JSON.parse(message);
+        const query =
+          object(value) && value.type === "traffic_query"
+            ? trafficQuery(value.query)
+            : undefined;
+        if (!query) {
+          this.reject(
+            ws,
+            "INVALID_REQUEST",
+            "Invalid traffic period or pagination",
+          );
+          return;
+        }
+        try {
+          const report = this.traffic.report(
+            state.network,
+            state.manager ? null : state.device,
+            query,
+          );
+          this.send(ws, { type: "traffic", report });
+          this.close(ws);
+        } catch {
+          this.reject(ws, "STORAGE_ERROR", "Relay traffic storage unavailable");
+        }
       } else if (state.role === "control") {
         this.controlMessage(ws, state, message);
       } else if (tunnel(state)) {

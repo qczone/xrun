@@ -100,6 +100,54 @@ pub(super) async fn run(cli: LocalCli) -> Result<i32> {
         Local::Status => {
             return status(json).await;
         }
+        Local::Traffic {
+            period,
+            limit,
+            offset,
+        } => {
+            let report = crate::client::traffic(crate::protocol::TrafficQuery {
+                period,
+                limit,
+                offset,
+            })
+            .await?;
+            print(json, &report, || {
+                println!(
+                    "traffic: {} ({period}, UTC)",
+                    report.device_id.as_deref().unwrap_or(&report.network_id)
+                );
+                println!(
+                    "{}: {} bytes",
+                    if report.device_id.is_some() {
+                        "sent"
+                    } else {
+                        "ingress"
+                    },
+                    report.totals.ingress_bytes
+                );
+                println!(
+                    "{}: {} bytes",
+                    if report.device_id.is_some() {
+                        "received"
+                    } else {
+                        "egress"
+                    },
+                    report.totals.egress_bytes
+                );
+                for device in &report.devices {
+                    println!(
+                        "{}\tsent={}\treceived={}",
+                        device.device_id, device.sent_bytes, device.received_bytes
+                    );
+                }
+                if let Some(offset) = report.next_offset {
+                    println!("next page: --offset {offset}");
+                }
+                if !report.complete {
+                    eprintln!("[xrun] traffic counters are incomplete after a recording error");
+                }
+            });
+        }
         Local::Recent => {
             let submissions =
                 SubmissionStore::open(&config::device_dir()?.join("submissions.sqlite"))?

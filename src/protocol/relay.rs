@@ -1,5 +1,5 @@
 //! Signed relay challenges and routing messages shared by endpoints and relays.
-use super::Data;
+use super::{Data, TrafficQuery, TrafficReport};
 use crate::{
     config::Identity,
     crypto,
@@ -20,8 +20,7 @@ pub struct Proof {
     pub root_pem: String,
     /// Base64 P-256 signature over the domain-separated challenge binding.
     pub signature: String,
-    /// Only the manager's control connection carries this root-key signature,
-    /// so pairing without a member certificate reaches no other device.
+    /// Root-key signature for manager control registration and network traffic queries.
     pub manager_signature: Option<String>,
 }
 #[derive(Debug, Serialize)]
@@ -138,6 +137,18 @@ pub enum RelayMessage {
     Status {
         /// Device IDs with live relay control bindings.
         devices: Vec<String>,
+    },
+    /// Query observed ciphertext usage after authenticating the traffic connection.
+    TrafficQuery {
+        /// Period and device pagination; scope comes from the authenticated proof.
+        query: TrafficQuery,
+    },
+    /// Traffic authentication accepted; the client may now submit its query.
+    TrafficReady,
+    /// Relay-owned traffic snapshot, never an endpoint delivery or Job receipt.
+    Traffic {
+        /// Authorized network or device traffic report.
+        report: TrafficReport,
     },
     /// Machine code plus human-readable diagnostic; dispatch only on code.
     Error {

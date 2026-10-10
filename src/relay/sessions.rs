@@ -232,19 +232,75 @@ async fn bridge(
     closed: &mut watch::Receiver<bool>,
     cacheable: bool,
 ) -> Result<()> {
+    let (network, device, target_id) = {
+        let connections = app.connections.lock().await;
+        let session = connections
+            .sessions
+            .get(sid)
+            .context(ErrorCode::InvalidSession.error("traffic binding is missing"))?;
+        (
+            session.network.clone(),
+            session.device.clone(),
+            session.target.clone(),
+        )
+    };
+    let activity = Activity::new(tokio::time::Instant::now());
+    let source_usage = Usage {
+        traffic: &app.traffic,
+        network: &network,
+        from: device.as_deref(),
+        to: Some(&target_id),
+        activity: &activity,
+    };
+    let target_usage = Usage {
+        traffic: &app.traffic,
+        network: &network,
+        from: Some(&target_id),
+        to: device.as_deref(),
+        activity: &activity,
+    };
     let (source_tx, source_rx) = source.split();
     let (target_tx, target_rx) = target.split();
     let source_tx = Mutex::new(source_tx);
     let target_tx = Mutex::new(target_tx);
-    let activity = Activity::new(tokio::time::Instant::now());
     tokio::select! {
-        result = source_direction(app, sid, cacheable, source_rx, &target_tx, &source_tx, &activity) => result,
-        result = direction(target_rx, &source_tx, &activity) => result,
+        result = source_direction(app, sid, cacheable, source_rx, &target_tx, &source_tx, &source_usage) => result,
+        result = direction(target_rx, &source_tx, &target_usage) => result,
         result = idle_session(&activity) => result,
         _ = closed.changed() => Ok(()),
     }
 }
 type Activity = std::sync::Mutex<tokio::time::Instant>;
+struct Usage<'a> {
+    traffic: &'a Arc<traffic::Traffic>,
+    network: &'a str,
+    from: Option<&'a str>,
+    to: Option<&'a str>,
+    activity: &'a Activity,
+}
+impl Usage<'_> {
+    async fn record(&self, bytes: usize, outgoing: bool) {
+        if bytes == 0 {
+            return;
+        }
+        let device = if outgoing { self.to } else { self.from };
+        if !self.traffic.persistent {
+            self.traffic.record(self.network, device, bytes, outgoing);
+            return;
+        }
+        let traffic = self.traffic.clone();
+        let network = self.network.to_owned();
+        let device = device.map(str::to_owned);
+        if let Err(error) = tokio::task::spawn_blocking(move || {
+            traffic.record(&network, device.as_deref(), bytes, outgoing)
+        })
+        .await
+        {
+            self.traffic.recording_task_failed();
+            tracing::warn!(%error, "relay traffic recorder stopped; forwarding remains enabled");
+        }
+    }
+}
 async fn idle_session(activity: &Activity) -> Result<()> {
     loop {
         let deadline = *activity.lock().unwrap() + RELAY_IDLE_TIMEOUT;
@@ -262,7 +318,7 @@ async fn source_direction<R, W, S>(
     mut reader: R,
     target: &Mutex<W>,
     source: &Mutex<S>,
-    activity: &Activity,
+    usage: &Usage<'_>,
 ) -> Result<()>
 where
     R: futures_util::Stream<Item = std::result::Result<Message, axum::Error>> + Unpin,
@@ -275,7 +331,7 @@ where
             .next()
             .await
             .context(ErrorCode::ConnectionClosed.error("source ciphertext stream ended"))??;
-        *activity.lock().unwrap() = tokio::time::Instant::now();
+        *usage.activity.lock().unwrap() = tokio::time::Instant::now();
         match &message {
             Message::Text(text) if cacheable && text.len() <= CACHE_STATE_MESSAGE_BYTES => {
                 let RelayMessage::CacheState { idle: next } = serde_json::from_str(text)? else {
@@ -306,10 +362,17 @@ where
                     .error("reactivate a cached tunnel before sending ciphertext")
             ),
         }
+        let bytes = if let Message::Binary(bytes) = &message {
+            bytes.len()
+        } else {
+            0
+        };
+        usage.record(bytes, false).await;
         forward(target, message).await?;
+        usage.record(bytes, true).await;
     }
 }
-async fn direction<R, W>(mut reader: R, writer: &Mutex<W>, activity: &Activity) -> Result<()>
+async fn direction<R, W>(mut reader: R, writer: &Mutex<W>, usage: &Usage<'_>) -> Result<()>
 where
     R: futures_util::Stream<Item = std::result::Result<Message, axum::Error>> + Unpin,
     W: futures_util::Sink<Message, Error = axum::Error> + Unpin,
@@ -319,7 +382,7 @@ where
             .next()
             .await
             .context(ErrorCode::ConnectionClosed.error("ciphertext stream ended"))??;
-        *activity.lock().unwrap() = tokio::time::Instant::now();
+        *usage.activity.lock().unwrap() = tokio::time::Instant::now();
         match &message {
             Message::Binary(bytes) if bytes.len() <= FILE_CHUNK => {}
             Message::Ping(_) | Message::Pong(_) => {}
@@ -328,7 +391,14 @@ where
                 bail!(ErrorCode::InvalidMessage.error("relay only accepts encrypted binary frames"))
             }
         }
+        let bytes = if let Message::Binary(bytes) = &message {
+            bytes.len()
+        } else {
+            0
+        };
+        usage.record(bytes, false).await;
         forward(writer, message).await?;
+        usage.record(bytes, true).await;
     }
 }
 async fn forward<W>(writer: &Mutex<W>, message: Message) -> Result<()>
@@ -353,6 +423,7 @@ mod tests {
         let idle = tokio::spawn(async move {
             let app = App {
                 connections: Mutex::new(Connections::default()),
+                traffic: Arc::new(traffic::Traffic::memory()),
             };
             let activity = Activity::new(tokio::time::Instant::now());
             let source = futures_util::stream::poll_fn(move |cx| from_source.poll_recv(cx));
@@ -365,9 +436,16 @@ mod tests {
             };
             let source_tx = sink();
             let target_tx = sink();
+            let usage = Usage {
+                traffic: &app.traffic,
+                network: "test",
+                from: Some("a"),
+                to: Some("b"),
+                activity: &activity,
+            };
             tokio::select! {
-                result = source_direction(&app, "session", false, source, &target_tx, &source_tx, &activity) => result,
-                result = direction(target, &source_tx, &activity) => result,
+                result = source_direction(&app, "session", false, source, &target_tx, &source_tx, &usage) => result,
+                result = direction(target, &source_tx, &usage) => result,
                 result = idle_session(&activity) => result,
             }
         });

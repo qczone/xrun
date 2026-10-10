@@ -2,11 +2,13 @@
 #![deny(missing_docs)]
 mod job;
 mod relay;
+mod traffic;
 mod version;
 pub use job::*;
 pub use relay::{ChallengeBinding, Proof, RelayMessage, valid_relay_route};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
+pub use traffic::*;
 pub use version::{PROTOCOL, ProtocolRange, SIGNATURE_FORMAT};
 /// Package release for display, diagnostics and local CLI/daemon IPC.
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -491,6 +493,7 @@ pub const RESERVED: &[&str] = &[
     "deny-from",
     "revoke",
     "status",
+    "traffic",
     "recent",
     "down",
     "server",

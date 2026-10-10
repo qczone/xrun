@@ -168,6 +168,126 @@ async fn attach(
     }
 }
 
+async fn usage(
+    cfg: &ServerConfig,
+    network: &Network,
+    id: &Identity,
+    root: Option<&Manager>,
+) -> Result<xrun::protocol::TrafficReport> {
+    let path = format!("/networks/{}/traffic", network.id);
+    let mut ws = authed(cfg, &network.id, &path, Some(id), root).await?;
+    assert!(matches!(
+        net::receive(&mut ws).await?,
+        RelayMessage::TrafficReady
+    ));
+    net::send(
+        &mut ws,
+        &RelayMessage::TrafficQuery {
+            query: xrun::protocol::TrafficQuery {
+                period: xrun::protocol::TrafficPeriod::All,
+                ..Default::default()
+            },
+        },
+    )
+    .await?;
+    let RelayMessage::Traffic { report } = net::receive(&mut ws).await? else {
+        anyhow::bail!("missing usage");
+    };
+    Ok(report)
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn traffic_counts_both_legs_once_and_survives_relay_restart() -> Result<()> {
+    tokio::time::timeout(Duration::from_secs(25), async {
+        let temp = tempfile::tempdir()?;
+        let port = std::net::TcpListener::bind("127.0.0.1:0")?
+            .local_addr()?
+            .port();
+        let cfg = ServerConfig {
+            port,
+            addresses: vec![format!("127.0.0.1:{port}")],
+            manual: true,
+            no_detect: true,
+            data_dir: temp.path().join("relay"),
+        };
+        let n = network(&temp.path().join("manager"), &cfg)?;
+        let mut server = Relay(tokio::spawn(xrun::testing::relay::run(cfg.clone())));
+        while tokio::net::TcpStream::connect(("127.0.0.1", port))
+            .await
+            .is_err()
+        {
+            assert!(!server.0.is_finished());
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+        let (mut ctl, generation) = control(&cfg, &n.id, &n.target, None).await?;
+        let mut sender = source(&cfg, &n.id, &n.target.device_id, Some(&n.source)).await?;
+        let sid = incoming(&mut ctl).await?;
+        let mut receiver = attach(&cfg, &n.id, &n.target.device_id, &generation, &sid).await?;
+        assert!(matches!(
+            net::receive(&mut sender).await?,
+            RelayMessage::Connected { .. }
+        ));
+        sender.send(Message::Binary(vec![1; 3072].into())).await?;
+        assert_eq!(
+            receiver.next().await.context("receiver closed")??.len(),
+            3072
+        );
+        receiver.send(Message::Binary(vec![2; 1024].into())).await?;
+        assert_eq!(sender.next().await.context("sender closed")??.len(), 1024);
+        net::send(&mut sender, &RelayMessage::CacheState { idle: true }).await?;
+        assert!(matches!(
+            net::receive(&mut sender).await?,
+            RelayMessage::CacheState { idle: true }
+        ));
+        net::send(&mut sender, &RelayMessage::CacheState { idle: false }).await?;
+        net::receive::<RelayMessage>(&mut sender).await?;
+        sender.send(Message::Binary(vec![1; 128].into())).await?;
+        receiver.next().await.context("receiver closed")??;
+        let own = usage(&cfg, &n, &n.source, None).await?;
+        assert_eq!(own.device_id.as_deref(), Some(n.source.device_id.as_str()));
+        assert_eq!(
+            own.totals,
+            xrun::protocol::TrafficBytes {
+                ingress_bytes: 3200,
+                egress_bytes: 1024
+            }
+        );
+        assert_eq!(own.devices.len(), 1);
+        let report = usage(&cfg, &n, &n.manager_identity, Some(&n.manager)).await?;
+        assert_eq!(
+            report.totals,
+            xrun::protocol::TrafficBytes {
+                ingress_bytes: 4224,
+                egress_bytes: 4224
+            }
+        );
+        assert!(report.device_id.is_none() && report.complete);
+        assert_eq!(
+            usage(&cfg, &n, &n.target, None).await?.totals.egress_bytes,
+            3200
+        );
+        drop((sender, receiver, ctl));
+        server.0.abort();
+        let _ = (&mut server.0).await;
+        let restarted = Relay(tokio::spawn(xrun::testing::relay::run(cfg.clone())));
+        while tokio::net::TcpStream::connect(("127.0.0.1", port))
+            .await
+            .is_err()
+        {
+            assert!(!restarted.0.is_finished());
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+        assert_eq!(
+            usage(&cfg, &n, &n.manager_identity, Some(&n.manager))
+                .await?
+                .totals,
+            report.totals
+        );
+        Ok::<_, anyhow::Error>(())
+    })
+    .await?
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn authenticated_devices_behind_one_nat_do_not_share_a_source_quota() -> Result<()> {
     tokio::time::timeout(Duration::from_secs(25), async {
@@ -293,7 +413,7 @@ async fn relay_routes_only_proven_members_and_keeps_binding_and_resource_limits(
             .await
             .is_err()
         );
-        // Only the random route is accepted; there is no roster API or database.
+        // Only the random route is accepted; there is no roster API or member database.
         for url in [
             format!("{}/networks/{n}/status", cfg.urls()[0]),
             format!("{}/wrong/networks/{n}/status", cfg.urls()[0]),

@@ -109,6 +109,9 @@ async function pair() {
   await sender.json();
   await receiver.json();
   return {
+    fixture: network,
+    source,
+    target,
     network: network.network,
     control,
     sender,
@@ -117,6 +120,70 @@ async function pair() {
     sid: incoming.session_id,
   };
 }
+
+test("traffic persists across socket restoration and closure with authenticated network/device scope", async () => {
+  const p = await pair();
+  const query = async (
+    member: typeof p.source,
+    manager = false,
+    offset = 0,
+    limit = 50,
+  ) => {
+    const path = "/networks/" + p.network + "/traffic";
+    const socket = await authenticated(path, (nonce) =>
+      member.proof(path, nonce, manager),
+    );
+    expect(await socket.json()).toEqual({ type: "traffic_ready" });
+    socket.send({
+      type: "traffic_query",
+      query: { period: "all", offset, limit },
+    });
+    const response = await socket.json();
+    expect(response.type).toBe("traffic");
+    return response.report;
+  };
+  p.sender.send(new Uint8Array(3072).buffer);
+  expect(((await p.receiver.next()) as ArrayBuffer).byteLength).toBe(3072);
+  p.receiver.send(new Uint8Array(1024).buffer);
+  expect(((await p.sender.next()) as ArrayBuffer).byteLength).toBe(1024);
+  p.receiver.send({ type: "ack", bytes: 3072 });
+  expect(await p.sender.json()).toEqual({ type: "ack", bytes: 3072 });
+  p.sender.send({ type: "cache_state", idle: true });
+  expect(await p.sender.json()).toEqual({ type: "cache_state", idle: true });
+  await inspect(p.network, "restore");
+  p.sender.send({ type: "cache_state", idle: false });
+  expect(await p.sender.json()).toEqual({ type: "cache_state", idle: false });
+  p.sender.send(new Uint8Array(128).buffer);
+  await p.receiver.next();
+  const source = await query(p.source);
+  expect(source.device_id).toBe(p.source.device);
+  expect(source.totals).toEqual({ ingress_bytes: 3200, egress_bytes: 1024 });
+  expect(source.devices).toEqual([
+    { device_id: p.source.device, sent_bytes: 3200, received_bytes: 1024 },
+  ]);
+  const target = await query(p.target);
+  expect(target.totals).toEqual({ ingress_bytes: 1024, egress_bytes: 3200 });
+  const report = await query(p.source, true);
+  expect(report.device_id).toBeNull();
+  expect(report.complete).toBe(true);
+  expect(report.totals).toEqual({ ingress_bytes: 4224, egress_bytes: 4224 });
+  expect(report.daily).toHaveLength(30);
+  expect(report.daily.at(-1)).toMatchObject(report.totals);
+  const first = await query(p.source, true, 0, 1);
+  expect(first.next_offset).toBe(1);
+  const second = await query(p.source, true, 1, 1);
+  expect(second.next_offset).toBeNull();
+  expect(first.devices[0].device_id).not.toBe(second.devices[0].device_id);
+  p.sender.close();
+  p.receiver.close();
+  p.control.close();
+  expect((await query(p.source, true)).totals).toEqual(report.totals);
+  const anonymous = await authenticated(
+    "/networks/" + p.network + "/traffic",
+    async () => null,
+  );
+  expect((await anonymous.json()).code).toBe("UNAUTHENTICATED");
+});
 
 test("cached sessions survive restoration and yield capacity while active sessions stay protected", async () => {
   const network = await fixture();
@@ -224,15 +291,20 @@ test("source fairness survives restoration and the manager retains the final net
   const neighbor = await f.member();
   const controlPath = `/networks/${f.network}/control`;
   const control = await authenticated(controlPath, (nonce) =>
-    manager.proof(controlPath, nonce, true));
+    manager.proof(controlPath, nonce, true),
+  );
   const generation = (await control.json()).generation;
   const connect = `/networks/${f.network}/connect/${manager.device}`;
   const sockets: Socket[] = [control];
   async function session(member: typeof first) {
-    const source = await authenticated(connect, (nonce) => member.proof(connect, nonce));
+    const source = await authenticated(connect, (nonce) =>
+      member.proof(connect, nonce),
+    );
     sockets.push(source);
     const incoming = await control.json();
-    const target = await open(`/networks/${f.network}/attach/${manager.device}/${generation}/${incoming.session_id}`);
+    const target = await open(
+      `/networks/${f.network}/attach/${manager.device}/${generation}/${incoming.session_id}`,
+    );
     sockets.push(target);
     expect((await source.json()).type).toBe("connected");
     expect((await target.json()).type).toBe("connected");
@@ -241,12 +313,16 @@ test("source fairness survives restoration and the manager retains the final net
   try {
     for (let i = 0; i < 4; i++) await session(first);
     await inspect(f.network, "restore");
-    const fifth = await authenticated(connect, (nonce) => first.proof(connect, nonce));
+    const fifth = await authenticated(connect, (nonce) =>
+      first.proof(connect, nonce),
+    );
     sockets.push(fifth);
     expect((await fifth.json()).code).toBe("SESSION_LIMIT");
     // A different authenticated device behind the same IP has its own budget.
     for (let i = 0; i < 3; i++) await session(neighbor);
-    const ordinary = await authenticated(connect, (nonce) => neighbor.proof(connect, nonce));
+    const ordinary = await authenticated(connect, (nonce) =>
+      neighbor.proof(connect, nonce),
+    );
     sockets.push(ordinary);
     expect((await ordinary.json()).code).toBe("SESSION_LIMIT");
     const anonymous = await authenticated(connect, async () => null);
@@ -255,7 +331,9 @@ test("source fairness survives restoration and the manager retains the final net
     // Source proofs need no new wire fields: the manager's control proved the root key.
     await session(manager);
     await inspect(f.network, "restore");
-    const ninth = await authenticated(connect, (nonce) => manager.proof(connect, nonce));
+    const ninth = await authenticated(connect, (nonce) =>
+      manager.proof(connect, nonce),
+    );
     sockets.push(ninth);
     expect((await ninth.json()).code).toBe("SESSION_LIMIT");
   } finally {

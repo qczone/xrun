@@ -1,6 +1,7 @@
 //! Rust relay assembly, shared socket validation and private deployment state.
 mod control;
 mod sessions;
+mod traffic;
 use crate::error::ErrorCode;
 use crate::{
     config::ServerConfig,
@@ -167,6 +168,7 @@ struct Connections {
 }
 struct App {
     connections: Mutex<Connections>,
+    traffic: Arc<traffic::Traffic>,
 }
 
 async fn finish(ws: &mut WebSocket, result: Result<()>) {
@@ -181,9 +183,13 @@ pub async fn run(config: ServerConfig) -> Result<()> {
     let path = route(&config)?;
     let app = Arc::new(App {
         connections: Mutex::new(Connections::default()),
+        traffic: Arc::new(traffic::Traffic::open(
+            &config.data_dir.join("traffic.sqlite"),
+        )),
     });
     let router = Router::new()
         .route("/networks/{network}/status", get(status_route))
+        .route("/networks/{network}/traffic", get(traffic::traffic_route))
         .route("/networks/{network}/control", get(control_route))
         .route("/networks/{network}/connect/{target}", get(source_route))
         .route(

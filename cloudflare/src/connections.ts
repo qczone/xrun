@@ -15,7 +15,8 @@ export interface Connection<State extends Attachment = Attachment> {
 
 const NEXT_ROLES: Record<Attachment["role"], readonly Attachment["role"][]> = {
   auth: ["verifying", "closed"],
-  verifying: ["control", "pending", "closed"],
+  verifying: ["control", "traffic", "pending", "closed"],
+  traffic: ["closed"],
   control: ["closed"],
   pending: ["source", "closed"],
   source: ["source", "closed"],
@@ -162,7 +163,8 @@ export class Connections {
         (state.role === "pending" || state.role === "source") &&
         state.source === source &&
         (source !== null || state.ip === ip)
-      ) count++;
+      )
+        count++;
     }
     return count;
   }
@@ -174,7 +176,8 @@ export class Connections {
         state &&
         (state.role === "pending" || state.role === "source") &&
         !state.management
-      ) count++;
+      )
+        count++;
     }
     return count;
   }

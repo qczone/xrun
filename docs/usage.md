@@ -22,7 +22,7 @@
 
 ## 安装
 
-CLI 和 daemon 是同一个 Rust 二进制，运行已构建程序不需要 Rust、Node.js 或 Bun。桌面 App 管理网络、授权与服务，远程执行和文件传输使用 CLI。当前版本为 `0.1.0-rc.4`；本机 CLI 与 daemon 要求发布版本一致，设备与中转按协议范围协商互通。
+CLI 和 daemon 是同一个 Rust 二进制，运行已构建程序不需要 Rust、Node.js 或 Bun。桌面 App 管理网络、授权与服务，远程执行和文件传输使用 CLI。当前版本为 `0.1.0-rc.5`；本机 CLI 与 daemon 要求发布版本一致，设备与中转按协议范围协商互通。
 
 | 平台 | 安装方式 |
 | --- | --- |
@@ -45,25 +45,25 @@ Windows EXE 安装器同时安装桌面 App 和终端 CLI，并自动将安装�
 从相应版本的 Release 下载安装脚本。例如 macOS / Linux：
 
 ```bash
-curl -fL https://github.com/qczone/xrun/releases/download/v0.1.0-rc.4/install.sh -o install.sh
-bash install.sh --version 0.1.0-rc.4
+curl -fL https://github.com/qczone/xrun/releases/download/v0.1.0-rc.5/install.sh -o install.sh
+bash install.sh --version 0.1.0-rc.5
 ```
 
 ```powershell
-Invoke-WebRequest https://github.com/qczone/xrun/releases/download/v0.1.0-rc.4/install.ps1 -OutFile install.ps1
-powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File .\install.ps1 -Version 0.1.0-rc.4
+Invoke-WebRequest https://github.com/qczone/xrun/releases/download/v0.1.0-rc.5/install.ps1 -OutFile install.ps1
+powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File .\install.ps1 -Version 0.1.0-rc.5
 ```
 
 整个过程通过 stdout 返回一条 JSON，失败时 `ok` 为 `false`、包含 `error.code` 和 `error.message`，进程退出码为 1；成功返回版本、安装路径、终端 CLI 的 `executable` 路径、`changed` 和自检结果。Windows 另返回 `helper_executable` 供检查后台 helper。重复安装相同产物时返回 `changed: false`。源码中的安装脚本位于 `scripts/`，也可直接从项目根目录执行。
 
-macOS 默认识别设备的真实架构，即使终端通过 Rosetta 运行也会选择 arm64 包。已安装 Rosetta 的 Apple Silicon Mac 可用 `--arch x86_64` 安装 Intel 版，例如 `bash install.sh --version 0.1.0-rc.4 --arch x86_64`；Intel Mac 不支持安装 arm64 版。Windows 和 Linux 按系统架构自动选择原生包。
+macOS 默认识别设备的真实架构，即使终端通过 Rosetta 运行也会选择 arm64 包。已安装 Rosetta 的 Apple Silicon Mac 可用 `--arch x86_64` 安装 Intel 版，例如 `bash install.sh --version 0.1.0-rc.5 --arch x86_64`；Intel Mac 不支持安装 arm64 版。Windows 和 Linux 按系统架构自动选择原生包。
 
 默认下载地址是 `https://github.com/qczone/xrun/releases/download/v<完整版本>/`。`--base-url`／`-BaseUrl` 可指定其他 HTTPS 产物目录。每个目录需包含对应的 `xrun-<系统>-<架构>.json` 清单及其引用的文件，系统为 `darwin`、`windows` 或 `linux`，架构为 `x86_64` 或 `arm64`。安装时不需要 Bun；产物准备见 [开发与发布](development.md#发布与内置文档)。
 
 离线安装或验收本地打包产物时，用 `--source-dir`／`-SourceDir` 指定产物目录。例如 macOS：
 
 ```bash
-bash scripts/install.sh --version 0.1.0-rc.4 --source-dir ./dist
+bash scripts/install.sh --version 0.1.0-rc.5 --source-dir ./dist
 ```
 
 默认 macOS App 安装到 `~/Applications/xrun.app`，CLI 入口为 `~/.local/bin/xrun`；Windows App 安装到 `%LOCALAPPDATA%\Programs\xrun`，CLI 位于其 `cli` 子目录；Linux CLI 安装到 `~/.local/bin/xrun`。`--install-dir`／`-InstallDir` 可指定父目录，AI 可直接使用 JSON 返回的 `executable` 路径调用程序。脚本安装程序并配置当前用户的终端 PATH；网络加入、设备授权和后台服务的启用继续使用现有 App 或 CLI 命令。
@@ -359,6 +359,25 @@ PATH = "/home/user/.cargo/bin:/home/user/.local/bin:/usr/local/bin:/usr/bin:/bin
 服务输出与任务 `logs` 不同。macOS 纯 CLI 服务日志在 `~/.xrun/daemon-service.log`；Linux 可用 `journalctl --user -u xrun-daemon.service` 查看；无 systemd 使用外部管理器日志或启动时重定向输出。
 
 ## 状态与排错
+
+### 流量统计
+
+```bash
+xrun traffic
+xrun traffic --period today
+xrun traffic --period all --json
+xrun traffic --period month --limit 50 --offset 50
+```
+
+`traffic` 查询当前中转的持久化流量记录，不要求本机 daemon 正在运行。管理设备查看本网络入站、出站和设备收发明细；普通成员只查看本机发送、接收量。默认查询本月，`today`、`month` 按 UTC 自然日／自然月统计，`all` 查询全部已记录流量。设备明细按设备 ID 排序，默认每页 50 条，最多 256 条，JSON 的 `next_offset` 指向下一页。
+
+入站指设备发给中转，出站指中转交给设备的发送队列。只计有效密文二进制帧，包含设备间 TLS 握手、协议与传输开销；外层认证、ACK、缓存状态和心跳不计入。网络出站已计一次转发，不应再与入站相加当作同一份传输量。出站计数不是完整送达回执，也不等于云厂商网卡账单。
+
+桌面概览页展示同一份统计、每日趋势与管理设备可见的设备明细。累计视图的趋势只显示最近 30 个 UTC 日期，累计总量仍覆盖全部记录。页面可见时每 10 秒刷新；读取失败保留上次快照并显示错误，统计没有记录时显示零。
+
+统计从升级中转后开始，Rust 保存在中转数据目录的 `traffic.sqlite`，Cloudflare 保存在对应网络的 DO SQLite 中。重启、关闭或复用连接不清零；换中转不自动合并旧数据。匿名加入通道计入网络和已认证目标设备，不给匿名来源分配虚假设备身份。存储录入失败继续转发，报告 `complete: false`；存储无法读取返回 `STORAGE_ERROR`。当前只提供统计，不配置额度或速度限制。
+
+### 连接状态
 
 `status` 读取中转报告的连接列表，并按本机已验证的成员清单过滤；“已连接”不保证目标能执行命令，也不表示已同步最新成员变更。查看主机名、系统、版本等详情时，用 `xrun <设备> info` 单独连接目标验证。撤销送达仍以端点签名回执为准。
 
