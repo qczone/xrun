@@ -518,8 +518,12 @@ mod tests {
             );
             assert!(retained_lock, "canceled waiter released path serialization");
             let _permit = admission.acquire().await?;
+            // The callback releases admission before the worker drops its path guard.
+            // Wait for path serialization independently rather than assuming atomic release.
+            let _guard = tokio::time::timeout(std::time::Duration::from_secs(5), lock.lock())
+                .await
+                .context("push worker did not release its path lock")?;
             assert_eq!(std::fs::read(&path)?, b"original");
-            assert!(lock.try_lock().is_ok());
             Ok(())
         })
     }
