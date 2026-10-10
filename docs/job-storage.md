@@ -2,7 +2,9 @@
 
 所有业务操作由目标设备接受为一个 Job：`exec`、`stream_exec`、`push`、`pull`、`screenshot`、`forward`。查询、状态轮询和取消不新建 Job。桌面活动旅程只展示其他设备在本机执行的操作，直接读取本机 `daemon.db`，不向其他设备查询。
 
-唯一建表定义是 [src/store/schema.sql](../src/store/schema.sql)。daemon schema 为 2，直接初始化新结构，不保留旧表、迁移、历史回填或旧接口；已有不同 schema 明确报错，需要开发者停止服务后显式重建。数据库使用 WAL、FULL 持久化和外键约束。
+唯一建表定义是 [src/store/schema.sql](../src/store/schema.sql)。daemon schema 为 2，直接初始化新结构，不迁移或回填旧记录、不保留旧接口。遇到更旧的活动库或提交记录库，先用 SQLite 完整备份（包含 WAL 中已提交的数据）到私有 `database-backups/`，再在事务中建立新结构；备份或建表失败保留原库。未知的较新 schema、非空且无版本的库以及损坏的库仍明确报错。数据库使用 WAL、FULL 持久化和外键约束。
+
+桌面 App 打开时完成这一流程，活动查询等待准备完成。原来运行的旧 daemon 先正常停止、清理操作，再换用当前 App 的 CLI helper 并恢复运行；原来停止的服务保持停止。重启意图保存在私有标记中，失败或退出后可以重试。设备身份、网络成员清单和授权配置保留。旧记录只存在备份中，不显示在新活动旅程；备份不参与附件保留期限的自动清理。
 
 ## jobs
 

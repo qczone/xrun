@@ -39,6 +39,7 @@ const FILE_OPERATION_LIMIT: usize = 8;
 
 pub(crate) fn init() -> Result<()> {
     let id = Identity::load()?;
+    prepare_storage_upgrade()?;
     let dir = config::device_dir()?;
     std::fs::create_dir_all(&dir)?;
     config::restrict_dir(&dir)?;
@@ -57,6 +58,41 @@ pub(crate) fn init() -> Result<()> {
             cfg.allow_from.push(inviter)
         }
         cfg.save()?;
+    }
+    Ok(())
+}
+pub(crate) fn job_upgrade_required() -> Result<bool> {
+    crate::database::older_schema(
+        &config::device_dir()?.join("daemon.db"),
+        crate::store::JOB_SCHEMA_VERSION,
+    )
+}
+pub(crate) fn storage_upgrade_required() -> Result<bool> {
+    // Check both stores before interrupting a service or rebuilding either one.
+    let jobs = job_upgrade_required()?;
+    let submissions = crate::database::older_schema(
+        &config::device_dir()?.join("submissions.sqlite"),
+        crate::store::SUBMISSION_SCHEMA_VERSION,
+    )?;
+    Ok(jobs || submissions)
+}
+pub(crate) fn prepare_storage_upgrade() -> Result<()> {
+    // Job history belongs to the daemon. Submission writers are CLI processes
+    // and are serialized by SQLite, independently of the daemon instance lock.
+    let _lock = if job_upgrade_required()? {
+        Some(instance_lock()?)
+    } else {
+        None
+    };
+    prepare_storage_upgrade_locked()
+}
+fn prepare_storage_upgrade_locked() -> Result<()> {
+    storage_upgrade_required()?;
+    let dir = config::device_dir()?;
+    crate::store::jobs::prepare_upgrade(&dir.join("daemon.db"))?;
+    let submissions = dir.join("submissions.sqlite");
+    if crate::database::older_schema(&submissions, crate::store::SUBMISSION_SCHEMA_VERSION)? {
+        crate::store::SubmissionStore::open(&submissions)?;
     }
     Ok(())
 }
@@ -292,6 +328,7 @@ pub(crate) async fn shutdown_signal() {
 }
 pub async fn run() -> Result<()> {
     let _lock = instance_lock()?;
+    prepare_storage_upgrade_locked()?;
     let dir = config::device_dir()?;
     let control = Arc::new(crate::control::Control::new(&dir)?);
     let local_listener = crate::ipc::Listener::bind(&dir)?;

@@ -9,6 +9,7 @@ use base64::{Engine, engine::general_purpose::STANDARD};
 use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
 use serde::{Deserialize, Serialize};
 use std::{path::Path, sync::Mutex};
+pub(crate) use submissions::SUBMISSION_SCHEMA_VERSION;
 pub(crate) use submissions::{Submission, SubmissionStore};
 
 const MAX_JOB_LOG_BYTES: i64 = 64 * 1024 * 1024;

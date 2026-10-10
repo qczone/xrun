@@ -6322,7 +6322,7 @@ dependencies = [
 
 [[package]]
 name = "xrun"
-version = "0.1.0-rc.3"
+version = "0.1.0-rc.4"
 dependencies = [
  "anyhow",
  "axum",
@@ -6363,12 +6363,13 @@ dependencies = [
 
 [[package]]
 name = "xrun-desktop"
-version = "0.1.0-rc.3"
+version = "0.1.0-rc.4"
 dependencies = [
  "anyhow",
  "libc",
  "objc2-foundation",
  "objc2-service-management",
+ "rusqlite",
  "serde",
  "serde_json",
  "tauri",

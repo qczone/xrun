@@ -1,5 +1,6 @@
 CREATE TABLE meta(key TEXT PRIMARY KEY NOT NULL,value TEXT NOT NULL);
 INSERT INTO meta VALUES('log_bytes','0');
+INSERT INTO meta VALUES('db_id','db_' || lower(hex(randomblob(16))));
 
 CREATE TABLE jobs(
     job_id TEXT PRIMARY KEY NOT NULL,

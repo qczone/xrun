@@ -7,6 +7,21 @@ use tauri::{Emitter, Manager};
 pub(super) struct Desktop {
     pub(super) action: tokio::sync::Mutex<()>,
     pub(super) error: Mutex<Option<CommandError>>,
+    upgrade: tokio::sync::OnceCell<()>,
+}
+
+pub(super) async fn ensure_upgrade<R: tauri::Runtime>(
+    app: &tauri::AppHandle<R>,
+) -> anyhow::Result<()> {
+    let state = app.state::<Desktop>();
+    state
+        .upgrade
+        .get_or_try_init(|| async {
+            let _guard = state.action.lock().await;
+            platform::prepare_upgrade().await
+        })
+        .await?;
+    Ok(())
 }
 
 #[derive(Serialize)]
@@ -67,6 +82,12 @@ pub(super) fn app_builder<R: tauri::Runtime>(
             let item = tray::build(app)?;
             #[cfg(target_os = "macos")]
             let _ = record(app.handle(), platform::install_cli());
+            let upgrade_handle = app.handle().clone();
+            tauri::async_runtime::spawn(async move {
+                if let Err(error) = ensure_upgrade(&upgrade_handle).await {
+                    let _ = record::<(), _>(&upgrade_handle, Err(error));
+                }
+            });
             let handle = app.handle().clone();
             tauri::async_runtime::spawn(async move {
                 loop {

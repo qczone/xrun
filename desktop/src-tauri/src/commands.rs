@@ -1,6 +1,6 @@
 //! Tauri command adaptation and serialized local actions.
 use super::{
-    app::{Desktop, Status, local_status, record},
+    app::{Desktop, Status, ensure_upgrade, local_status, record},
     error::{self, CommandError},
     language::{LanguagePreference, LanguageSettings, LanguageState},
     platform, tray,
@@ -90,18 +90,27 @@ fn window_visible<R: tauri::Runtime>(app: tauri::AppHandle<R>) -> Result<bool, C
 }
 
 #[tauri::command]
-async fn devices() -> Result<xrun::client::Status, CommandError> {
+async fn devices<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+) -> Result<xrun::client::Status, CommandError> {
+    ensure_upgrade(&app)
+        .await
+        .map_err(CommandError::from_error)?;
     xrun::client::status()
         .await
         .map_err(CommandError::from_error)
 }
 
 #[tauri::command]
-async fn job_output(
+async fn job_output<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
     db_id: String,
     job: String,
     after: Option<u64>,
 ) -> Result<xrun::client::history::JobOutput, CommandError> {
+    ensure_upgrade(&app)
+        .await
+        .map_err(CommandError::from_error)?;
     tauri::async_runtime::spawn_blocking(move || xrun::client::history::output(&db_id, &job, after))
         .await
         .map_err(CommandError::from_error)?
@@ -109,17 +118,28 @@ async fn job_output(
 }
 
 #[tauri::command]
-async fn activity_job(db_id: String, id: String) -> Result<xrun::protocol::Job, CommandError> {
+async fn activity_job<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    db_id: String,
+    id: String,
+) -> Result<xrun::protocol::Job, CommandError> {
+    ensure_upgrade(&app)
+        .await
+        .map_err(CommandError::from_error)?;
     tauri::async_runtime::spawn_blocking(move || xrun::client::history::job(&db_id, &id))
         .await
         .map_err(CommandError::from_error)?
         .map_err(CommandError::from_error)
 }
 #[tauri::command]
-async fn activity_history(
+async fn activity_history<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
     before: Option<String>,
     filter: String,
 ) -> Result<xrun::client::history::ActivityPage, CommandError> {
+    ensure_upgrade(&app)
+        .await
+        .map_err(CommandError::from_error)?;
     tauri::async_runtime::spawn_blocking(move || {
         xrun::client::history::activity(before.as_deref(), &filter)
     })
@@ -129,9 +149,13 @@ async fn activity_history(
 }
 
 #[tauri::command]
-async fn activity_attachment(
+async fn activity_attachment<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
     id: String,
 ) -> Result<xrun::client::history::AttachmentPreview, CommandError> {
+    ensure_upgrade(&app)
+        .await
+        .map_err(CommandError::from_error)?;
     tauri::async_runtime::spawn_blocking(move || xrun::client::history::attachment(&id))
         .await
         .map_err(CommandError::from_error)?
@@ -143,6 +167,9 @@ async fn save_activity_attachment<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
     id: String,
 ) -> Result<Option<String>, CommandError> {
+    ensure_upgrade(&app)
+        .await
+        .map_err(CommandError::from_error)?;
     let attachment_id = id.clone();
     let preview = tauri::async_runtime::spawn_blocking(move || {
         xrun::client::history::attachment(&attachment_id)
@@ -366,6 +393,7 @@ pub(super) fn register<R: tauri::Runtime>(builder: tauri::Builder<R>) -> tauri::
 
 #[cfg(test)]
 pub(crate) mod tests {
+    mod upgrade;
     use super::*;
     use anyhow::Result;
     use serde_json::{Value, json};

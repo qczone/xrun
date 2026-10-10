@@ -1,8 +1,10 @@
-//! Fresh schema initialization and explicit rejection of unsupported databases.
+//! Schema initialization; disposable history upgrades have a separate backup policy.
+mod upgrade;
 use crate::error::ErrorCode;
 use anyhow::{Result, bail};
 use rusqlite::{Connection, TransactionBehavior};
 use std::time::{Duration, Instant};
+pub(crate) use upgrade::{initialize_with_backup, older_schema};
 
 const BUSY_TIMEOUT: Duration = Duration::from_secs(5);
 const WAL_RETRY_DELAY: Duration = Duration::from_millis(10);

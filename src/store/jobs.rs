@@ -10,6 +10,20 @@ pub(crate) const JOB_COLUMNS: &str = concat!(
 pub(crate) const JOB_SCHEMA_VERSION: i64 = 2;
 const JOB_SCHEMA: &str = include_str!("schema.sql");
 
+pub(crate) fn prepare_upgrade(path: &Path) -> Result<()> {
+    if crate::database::older_schema(path, JOB_SCHEMA_VERSION)? {
+        let mut db = super::open(path, false)?;
+        crate::database::initialize_with_backup(
+            &mut db,
+            path,
+            "jobs",
+            JOB_SCHEMA_VERSION,
+            JOB_SCHEMA,
+        )?;
+    }
+    Ok(())
+}
+
 pub(super) struct Database {
     pub(super) db: Connection,
     pub(super) db_id: String,

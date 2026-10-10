@@ -47,13 +47,62 @@ pub async fn check_helper() -> Result<()> {
 
 pub async fn start() -> Result<()> {
     check_helper().await?;
+    prepare_upgrade().await?;
     let helper = helper()?;
     if xrun::client::services::daemon_running()? {
-        // Opening the App never replaces or interrupts an already-running CLI daemon.
         return Ok(());
     }
     xrun::client::services::initialize_daemon()?;
-    start_impl(&helper).await
+    start_service(&helper).await
+}
+
+pub async fn prepare_upgrade() -> Result<()> {
+    let (storage, restart, pending) = tokio::task::spawn_blocking(|| -> Result<_> {
+        Ok((
+            xrun::client::services::storage_upgrade_required()?,
+            xrun::client::services::daemon_upgrade_required()?,
+            xrun::client::services::daemon_upgrade_pending()?,
+        ))
+    })
+    .await??;
+    if !storage && !restart && !pending {
+        return Ok(());
+    }
+    // Validate the replacement before interrupting an existing service.
+    let helper = if restart || pending {
+        check_helper().await?;
+        Some(helper()?)
+    } else {
+        None
+    };
+    if restart {
+        xrun::client::services::stop_daemon_for_upgrade().await?;
+    }
+    tokio::task::spawn_blocking(xrun::client::services::prepare_storage_upgrade).await??;
+    if let Some(helper) = helper {
+        if !xrun::client::services::daemon_running()? {
+            start_service(&helper).await?;
+        }
+        xrun::client::services::finish_daemon_upgrade()?;
+    }
+    Ok(())
+}
+
+async fn start_service(helper: &std::path::Path) -> Result<()> {
+    let directory = xrun::client::services::data_dir()?;
+    let previous = xrun::client::services::daemon_state(&directory)?.generation;
+    start_impl(helper).await?;
+    for _ in 0..120 {
+        let state = xrun::client::services::daemon_state(&directory)?;
+        if state.running && state.generation.is_some() && state.generation != previous {
+            return Ok(());
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    }
+    bail!(error::failure(
+        "DAEMON_START_TIMEOUT",
+        "the service did not become ready; retry starting it"
+    ))
 }
 
 #[cfg(target_os = "macos")]

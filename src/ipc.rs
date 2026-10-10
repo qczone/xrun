@@ -24,6 +24,16 @@ struct Endpoint {
     token: String,
     version: String,
 }
+pub(crate) fn version_matches(dir: &Path) -> Result<Option<bool>> {
+    let bytes = match std::fs::read(dir.join("daemon-ipc.json")) {
+        Ok(bytes) => bytes,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(error.into()),
+    };
+    let endpoint: Endpoint =
+        serde_json::from_slice(&bytes).context("read local daemon endpoint")?;
+    Ok(Some(endpoint.version == VERSION))
+}
 #[derive(Serialize, Deserialize)]
 #[serde(tag = "local", rename_all = "snake_case", deny_unknown_fields)]
 pub(crate) enum LocalRequest {

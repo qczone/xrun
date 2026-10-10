@@ -118,6 +118,7 @@ pub(super) async fn run(cli: LocalCli) -> Result<i32> {
         }
         Local::Down { purge } => {
             service::uninstall("daemon").await?;
+            crate::client::services::finish_daemon_upgrade()?;
             if cfg!(target_os = "linux") {
                 service::uninstall("server").await?
             }
@@ -150,9 +151,12 @@ pub(super) async fn run(cli: LocalCli) -> Result<i32> {
                 daemon::init()?;
                 service::install("daemon").await?
             }
-            Some(DaemonCommand::Uninstall) => service::uninstall("daemon").await?,
+            Some(DaemonCommand::Uninstall) => {
+                service::uninstall("daemon").await?;
+                crate::client::services::finish_daemon_upgrade()?;
+            }
             Some(DaemonCommand::Start) => service::start("daemon").await?,
-            Some(DaemonCommand::Stop) => service::stop_daemon().await?,
+            Some(DaemonCommand::Stop) => crate::client::services::stop_daemon().await?,
             Some(DaemonCommand::Reset) => daemon::reset()?,
             Some(DaemonCommand::Pause) => {
                 crate::client::pause_access(true).await?;

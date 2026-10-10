@@ -1,5 +1,6 @@
 use super::*;
 const RECENT_SUBMISSION_WINDOW_MS: i64 = 24 * 60 * 60 * 1000;
+pub(crate) const SUBMISSION_SCHEMA_VERSION: i64 = 2;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct Submission {
     pub request_id: String,
@@ -19,10 +20,11 @@ pub(crate) struct SubmissionStore(Mutex<Connection>);
 impl SubmissionStore {
     pub(crate) fn open(path: &Path) -> Result<Self> {
         let mut db = open(path, true)?;
-        crate::database::initialize(
+        crate::database::initialize_with_backup(
             &mut db,
+            path,
             "submissions",
-            2,
+            SUBMISSION_SCHEMA_VERSION,
             "
             CREATE TABLE submissions(id TEXT PRIMARY KEY,data TEXT NOT NULL,time INTEGER NOT NULL);
             CREATE INDEX submission_time ON submissions(time);
@@ -67,6 +69,50 @@ impl SubmissionStore {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn cli_open_backs_up_old_submission_payloads_and_accepts_new_operations() -> Result<()> {
+        let directory = tempfile::tempdir()?;
+        let path = directory.path().join("submissions.sqlite");
+        let db = Connection::open(&path)?;
+        db.execute_batch(
+            "CREATE TABLE submissions(id TEXT PRIMARY KEY,data TEXT NOT NULL,time INTEGER NOT NULL);
+             INSERT INTO submissions VALUES('old','old payload without kind or label',0);
+             PRAGMA user_version=1;",
+        )?;
+        drop(db);
+        let store = SubmissionStore::open(&path)?;
+        assert!(store.recent()?.is_empty());
+        let operation = Submission {
+            request_id: "new".into(),
+            source_device_id: "source".into(),
+            target_device_id: "target".into(),
+            target_name: "peer".into(),
+            ca_pin: "pin".into(),
+            db_id: "db_new".into(),
+            request_hash: "hash".into(),
+            kind: JobKind::Forward,
+            label: "forward 8080".into(),
+            created_at_ms: now_ms(),
+            job_id: None,
+            status: "pending".into(),
+        };
+        store.save(&operation)?;
+        drop(store);
+        let store = SubmissionStore::open(&path)?;
+        assert_eq!(store.recent()?.len(), 1);
+        assert_eq!(store.get("new")?.unwrap().label, operation.label);
+        let copies = std::fs::read_dir(directory.path().join("database-backups"))?
+            .collect::<std::io::Result<Vec<_>>>()?;
+        assert_eq!(copies.len(), 1);
+        let backup = Connection::open(copies[0].path().join("submissions.sqlite"))?;
+        assert_eq!(
+            backup.query_row("SELECT data FROM submissions", [], |row| row
+                .get::<_, String>(0))?,
+            "old payload without kind or label"
+        );
+        Ok(())
+    }
 
     #[test]
     fn parallel_cli_openers_initialize_the_same_submission_store() -> Result<()> {
