@@ -213,7 +213,7 @@ xrun win1 screenshot ./screen.png --json
 
 `--mkdir` 创建远端目标父目录。相对远端路径在目标默认目录解析，或用 `-C` 指定远端绝对目录；本地路径以调用设备当前目录为准。
 
-push、pull 分块读写单个文件，最多 64 MiB，不把整个文件装入内存，不转换 BOM 或换行。保留 SHA-256 校验，接收完整且校验通过后才保存目标文件或输出到 stdout。push 两条路径必填；pull 省略本地目标时保存到唯一临时文件。`-` 表示本地 stdin/stdout：
+push、pull 按 64 KiB 分块读写单个文件，不设固定文件大小上限，不把整个文件装入内存，不转换 BOM 或换行。保留 SHA-256 校验，接收完整且校验通过后才保存目标文件或输出到 stdout。push 两条路径必填；pull 省略本地目标时保存到唯一临时文件。`-` 表示本地 stdin/stdout：
 
 ```bash
 xrun linux1 pull /repo/config.json -
@@ -236,7 +236,7 @@ xrun linux1 pull /home/user/demo/artifacts/page.png ./page.png
 
 ## 流式执行
 
-`-i` 实时传递 stdin、stdout 和 stderr，适合大输入或与本地管道组合。输入没有可靠任务的 1 MiB 总量限制，也不受单文件 64 MiB 上限限制：
+`-i` 实时传递 stdin、stdout 和 stderr，适合大输入或与本地管道组合。输入没有可靠任务的 1 MiB 总量限制：
 
 ```bash
 xrun linux1 -i -- cat < ./large.bin > ./copy.bin
@@ -292,7 +292,7 @@ bun run --cwd cloudflare deploy --name xrun-relay
 xrun up --relay 'https://<Worker 域名>/<随机路由>' --name mac1
 ```
 
-Cloudflare 使用公共 HTTPS 证书，设备间仍使用独立的网络根证书和双向 TLS。中转不保存成员名单、任务、日志或文件，只保留在线连接和临时转发状态。单文件支持 64 MiB；每方向 4 MiB 的传输窗口限制尚未确认的密文，每个网络最多同时保留 8 个中转会话。部署、检查和删除说明见 [cloudflare/README.md](../cloudflare/README.md)。
+Cloudflare 使用公共 HTTPS 证书，设备间仍使用独立的网络根证书和双向 TLS。中转不保存成员名单、任务、日志或文件，只保留在线连接和临时转发状态。单文件大小不设固定上限；每方向 4 MiB 的传输窗口限制尚未确认的密文，每个网络最多同时保留 8 个中转会话。部署、检查和删除说明见 [cloudflare/README.md](../cloudflare/README.md)。
 
 如果使用自建 Linux 中转，在 Linux 主机上执行：
 

@@ -1,9 +1,5 @@
 //! Independent, private snapshots of transferred files and screenshots.
-use crate::{
-    config,
-    error::ErrorCode,
-    protocol::{MAX_FILE, now_ms},
-};
+use crate::{config, error::ErrorCode, protocol::now_ms};
 use anyhow::{Context, Result, bail};
 use base64::{Engine, engine::general_purpose::STANDARD};
 use serde::{Deserialize, Serialize};
@@ -116,9 +112,6 @@ impl Cache {
                 break;
             }
             size += count as u64;
-            if size > MAX_FILE {
-                bail!(ErrorCode::FileTooLarge.error("attachment exceeds the file transfer limit"));
-            }
             temp.write_all(&buffer[..count])?;
             hash.update(&buffer[..count]);
         }
@@ -383,6 +376,25 @@ pub(crate) fn for_job(
 mod tests {
     use super::*;
     use crate::{protocol::*, store::JobStore};
+
+    #[test]
+    fn large_files_are_retained_and_exported_with_bounded_previews() -> Result<()> {
+        let dir = tempfile::tempdir()?;
+        let store = JobStore::open(&dir.path().join("daemon.db"), true)?;
+        let cache = store.attachments();
+        let size = 64 * 1024 * 1024 + 1;
+        let metadata = cache.save(std::io::repeat(0xa5).take(size), "large.bin")?;
+        assert_eq!(metadata.size, size);
+        let preview = cache.preview(metadata.clone())?;
+        assert_eq!(preview.attachment.status, "available");
+        assert!(preview.image.is_none());
+        assert!(preview.text.is_none());
+        let destination = dir.path().join("export.bin");
+        cache.export(metadata.clone(), &destination)?;
+        assert_eq!(std::fs::metadata(&destination)?.len(), size);
+        assert_eq!(sha256(&std::fs::read(destination)?), metadata.sha256);
+        Ok(())
+    }
 
     #[tokio::test]
     async fn startup_cleans_only_orphan_snapshots_and_records_missing_copies() -> Result<()> {

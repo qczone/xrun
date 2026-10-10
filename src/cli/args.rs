@@ -339,7 +339,7 @@ pub(super) enum Remote {
         "Examples:\n",
         "  xrun linux1 push ./config.json /home/user/demo/config.json\n",
         "  xrun linux1 push ./result.txt /home/user/demo/output/result.txt --mkdir\n",
-        "Files are limited to 64 MiB.\n",
+        "Files are streamed in chunks with SHA-256 verification.\n",
         "Full documentation: xrun doc files"
     )
     )]
@@ -367,7 +367,7 @@ pub(super) enum Remote {
         "Examples:\n",
         "  xrun linux1 pull /home/user/demo/config.json ./config.json --json\n",
         "  xrun linux1 pull /home/user/demo/config.json -\n",
-        "Files are limited to 64 MiB. Pulling to stdout cannot use --json.\n",
+        "Files are streamed in chunks with SHA-256 verification. Pulling to stdout cannot use --json.\n",
         "Full documentation: xrun doc files"
     )
     )]

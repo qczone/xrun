@@ -131,7 +131,7 @@ XRUN_TEST_CF_LINK_FILE=/绝对路径/私有地址文件 \
   cargo test --locked --test cloudflare -- --ignored --nocapture
 ```
 
-测试用正式 CLI / daemon 创建隔离网络，覆盖任务、64 MiB 文件、流式执行、转发、管理设备离线、空闲恢复和撤销。本地 workerd 不能代替真实 Cloudflare 休眠验证。`cloudflare/tests/workerd/deployed-probe.ts` 仅用于临时部署；`cloudflare/scripts/hibernation.ts` 用静默前后的实例标识变化直接证明重建，并校验附件中的额度、期限和恢复后的 ACK。验收结束后清理临时 Worker / DO；探针不进入生产入口。子项目说明见 [cloudflare/README.md](../cloudflare/README.md)。
+测试用正式 CLI / daemon 创建隔离网络，覆盖任务、65 MiB 文件、流式执行、转发、管理设备离线、空闲恢复和撤销。本地 workerd 不能代替真实 Cloudflare 休眠验证。`cloudflare/tests/workerd/deployed-probe.ts` 仅用于临时部署；`cloudflare/scripts/hibernation.ts` 用静默前后的实例标识变化直接证明重建，并校验附件中的额度、期限和恢复后的 ACK。验收结束后清理临时 Worker / DO；探针不进入生产入口。子项目说明见 [cloudflare/README.md](../cloudflare/README.md)。
 
 ## 版本与协议
 

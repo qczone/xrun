@@ -1,5 +1,7 @@
+use crate::config::sync_parent;
 use crate::error::{ErrorCode, file_io};
-use crate::{config::sync_parent, protocol::MAX_FILE};
+#[cfg(any(target_os = "macos", windows, test))]
+use crate::protocol::MAX_SCREENSHOT;
 use anyhow::{Context, Result, bail};
 use sha2::{Digest, Sha256};
 use std::{
@@ -37,9 +39,6 @@ fn open_file(path: &Path) -> Result<std::fs::File> {
     if !metadata.is_file() {
         bail!(ErrorCode::InvalidPath.error("only regular files are supported"))
     }
-    if metadata.len() > MAX_FILE {
-        bail!(ErrorCode::FileTooLarge.error(format!("maximum {MAX_FILE} bytes")))
-    }
     let mut options = std::fs::OpenOptions::new();
     options.read(true);
     #[cfg(unix)]
@@ -54,23 +53,25 @@ fn open_file(path: &Path) -> Result<std::fs::File> {
     Ok(file)
 }
 #[cfg(any(target_os = "macos", windows, test))]
-pub(crate) fn read_file(path: &Path) -> Result<Vec<u8>> {
+pub(crate) fn read_screenshot(path: &Path) -> Result<Vec<u8>> {
     let file = open_file(path)?;
+    if file.metadata()?.len() > MAX_SCREENSHOT {
+        bail!(ErrorCode::FileTooLarge.error("screenshot exceeds 64 MiB"));
+    }
     let mut bytes = vec![];
-    file.take(MAX_FILE + 1)
+    file.take(MAX_SCREENSHOT + 1)
         .read_to_end(&mut bytes)
         .map_err(file_io)?;
-    if bytes.len() as u64 > MAX_FILE {
-        bail!(ErrorCode::FileTooLarge.error(format!("maximum {MAX_FILE} bytes")))
+    if bytes.len() as u64 > MAX_SCREENSHOT {
+        bail!(ErrorCode::FileTooLarge.error("screenshot exceeds 64 MiB"))
     }
     Ok(bytes)
 }
 fn copy_hashed(
-    file: impl Read,
+    mut input: impl Read,
     output: &mut impl std::io::Write,
     canceled: Option<&AtomicBool>,
 ) -> Result<(u64, String)> {
-    let mut input = file.take(MAX_FILE + 1);
     let mut chunk = [0u8; 64 * 1024];
     let mut size = 0;
     let mut digest = Sha256::new();
@@ -83,9 +84,6 @@ fn copy_hashed(
             break;
         }
         size += n as u64;
-        if size > MAX_FILE {
-            bail!(ErrorCode::FileTooLarge.error(format!("maximum {MAX_FILE} bytes")))
-        }
         output.write_all(&chunk[..n])?;
         digest.update(&chunk[..n]);
     }
@@ -215,9 +213,6 @@ pub(crate) async fn push(
         callback: Some(Box::new(finished)),
     };
     let prepared = (|| {
-        if contents.as_file().metadata()?.len() > MAX_FILE {
-            bail!(ErrorCode::FileTooLarge.error(format!("maximum {MAX_FILE} bytes")));
-        }
         if expect.as_ref().is_some_and(|s| !valid_hash(s)) {
             bail!(ErrorCode::InvalidExpect.error("expected a full SHA-256"));
         }
@@ -449,6 +444,18 @@ fn local_metadata(path: &Path) -> Result<Option<std::fs::Metadata>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn oversized_capture_files_are_still_rejected_before_buffering() -> Result<()> {
+        let file = tempfile::NamedTempFile::new()?;
+        file.as_file().set_len(MAX_SCREENSHOT + 1)?;
+        assert!(crate::error::is(
+            &read_screenshot(file.path()).unwrap_err(),
+            ErrorCode::FileTooLarge
+        ));
+        Ok(())
+    }
+
     #[test]
     fn canceled_queued_push_keeps_admission_and_path_lock_until_worker_finishes() -> Result<()> {
         use std::io::Write;
@@ -560,14 +567,14 @@ mod tests {
     fn user_paths_have_explicit_file_error_codes() -> Result<()> {
         let dir = tempfile::tempdir()?;
         for error in [
-            read_file(&dir.path().join("absent")).unwrap_err(),
+            read_screenshot(&dir.path().join("absent")).unwrap_err(),
             prepare_upload(&dir.path().join("absent")).unwrap_err(),
         ] {
             assert!(crate::error::is(&error, ErrorCode::FileNotFound));
             assert_eq!(crate::error::wire(&error).0, "FILE_NOT_FOUND");
         }
         assert!(crate::error::is(
-            &read_file(dir.path()).unwrap_err(),
+            &read_screenshot(dir.path()).unwrap_err(),
             ErrorCode::IsDirectory
         ));
         Ok(())

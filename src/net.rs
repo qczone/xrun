@@ -182,8 +182,11 @@ pub async fn send_bytes(ws: &mut Ws, bytes: &[u8]) -> Result<()> {
     send(ws, &Data::End).await
 }
 pub async fn receive_bytes(ws: &mut Ws, size: u64, hash: &str, max: u64) -> Result<Vec<u8>> {
+    if size > max {
+        bail!(ErrorCode::FileTooLarge.error(format!("limit {max} bytes")))
+    }
     let mut bytes = Vec::new();
-    receive_body(ws, &mut bytes, size, hash, max).await?;
+    receive_body(ws, &mut bytes, size, hash).await?;
     Ok(bytes)
 }
 pub(crate) async fn receive_file(
@@ -201,24 +204,19 @@ pub(crate) async fn receive_file_with_prefix(
 ) -> Result<tempfile::NamedTempFile> {
     let temp = tempfile::Builder::new().prefix(prefix).tempfile()?;
     let mut file = tokio::fs::File::from_std(temp.reopen()?);
-    receive_body(ws, &mut file, size, hash, MAX_FILE).await?;
+    receive_body(ws, &mut file, size, hash).await?;
     file.flush().await?;
     use std::io::{Seek, SeekFrom};
     temp.as_file().seek(SeekFrom::Start(0))?;
     Ok(temp)
 }
 pub async fn send_file(ws: &mut Ws, file: &std::fs::File) -> Result<()> {
-    let mut file = tokio::fs::File::from_std(file.try_clone()?).take(MAX_FILE + 1);
-    let mut sent = 0u64;
+    let mut file = tokio::fs::File::from_std(file.try_clone()?);
     let mut chunk = vec![0; FILE_CHUNK];
     loop {
         let n = file.read(&mut chunk).await?;
         if n == 0 {
             break;
-        }
-        sent += n as u64;
-        if sent > MAX_FILE {
-            bail!(ErrorCode::FileTooLarge.error(format!("limit {MAX_FILE} bytes")));
         }
         ws.feed(Message::Binary(chunk[..n].to_vec().into())).await?;
     }
@@ -229,11 +227,7 @@ async fn receive_body<W: AsyncWrite + Unpin>(
     output: &mut W,
     size: u64,
     hash: &str,
-    max: u64,
 ) -> Result<()> {
-    if size > max {
-        bail!(ErrorCode::FileTooLarge.error(format!("limit {max} bytes")))
-    }
     let mut received = 0u64;
     let mut digest = Sha256::new();
     loop {
@@ -243,7 +237,7 @@ async fn receive_body<W: AsyncWrite + Unpin>(
             .context(ErrorCode::ConnectionClosed.error("incomplete body"))??
         {
             Message::Binary(chunk) => {
-                if chunk.len() > FILE_CHUNK || received + chunk.len() as u64 > size {
+                if chunk.len() > FILE_CHUNK || chunk.len() as u64 > size - received {
                     bail!(ErrorCode::InvalidBody.error("unexpected chunk size"))
                 }
                 output.write_all(&chunk).await?;

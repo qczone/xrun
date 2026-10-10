@@ -216,7 +216,7 @@ xrun relay install --addr 192.168.1.10:9528
 
 每个网络对应一个 DO。没有成员、配额、任务或文件数据表；在线控制连接、会话代次、接入 ID 和未确认密文字节数随 WebSocket attachment 保存，休眠后重建连接关系。alarm 仅清理认证超时、待接入和闲置传输；没有持续运行的 JS 心跳，原生 ping/pong 由 CF 运行时处理。
 
-每网络最多 512 个 WebSocket、256 个控制连接、8 个来源会话（含待接入）；每 IP 最多 8 个正在验证的连接；每目标匿名配对最多 4 个。`connected` 携带 `flow_control: true`；每方向最多 4 MiB 未确认密文，8 个双向会话的未确认密文预算合计最多 64 MiB，此外仍有运行时、连接和消息对象开销。接收端写入本地 TLS 通道后，每累计 256 KiB 回复 `{type:"ack",bytes:N}`，不足阈值的尾部计入下一批，中转校验确认量后通知发送端释放窗口。超过 64 KiB 的帧、超出窗口或非法确认会关闭两端。窗口不限制累计传输量，单文件仍为 64 MiB。
+每网络最多 512 个 WebSocket、256 个控制连接、8 个来源会话（含待接入）；每 IP 最多 8 个正在验证的连接；每目标匿名配对最多 4 个。`connected` 携带 `flow_control: true`；每方向最多 4 MiB 未确认密文，8 个双向会话的未确认密文预算合计最多 64 MiB，此外仍有运行时、连接和消息对象开销。接收端写入本地 TLS 通道后，每累计 256 KiB 回复 `{type:"ack",bytes:N}`，不足阈值的尾部计入下一批，中转校验确认量后通知发送端释放窗口。超过 64 KiB 的帧、超出窗口或非法确认会关闭两端。窗口不限制累计传输量，单文件大小不设固定上限。
 
 签名清单中的 `relay_ca_pem` 为空时选择公共 WebPKI，邀请链接的中转指纹段为 `webpki`；网络根指纹仍固定，成员和执行权限仍在内层验证。中转信任方式也受管理签名约束。公共中转地址仅接受单段合法随机路径，不允许用户名、查询参数或 fragment。
 
@@ -498,8 +498,8 @@ push、pull 和截图请求均先持久化 Job 再执行，使用相同来源白
 
 | 命令 | 行为 |
 | --- | --- |
-| `xrun <设备> push <本地源> <远端目标> [-C 目录] [--expect sha256] [--mkdir] [--no-overwrite] [--json]` | 上传最多 64 MiB 的单个文件；本地源为 - 时读取 stdin；校验完成后原子写入，成功输出远端绝对路径 |
-| `xrun <设备> pull <远端源> [本地目标] [-C 目录] [--json]` | 下载最多 64 MiB 的单个文件；校验完成后保存，stdout 输出本地绝对路径；本地目标为 - 时输出原始字节 |
+| `xrun <设备> push <本地源> <远端目标> [-C 目录] [--expect sha256] [--mkdir] [--no-overwrite] [--json]` | 分块上传单个文件，不设固定大小上限；本地源为 - 时读取 stdin；校验完成后原子写入，成功输出远端绝对路径 |
+| `xrun <设备> pull <远端源> [本地目标] [-C 目录] [--json]` | 分块下载单个文件，不设固定大小上限；校验完成后保存，stdout 输出本地绝对路径；本地目标为 - 时输出原始字节 |
 
 路径按**源、目标**排列。push 的两条路径都必填；pull 省略本地目标时保存到系统临时目录中的唯一文件。本地相对路径以 CLI 当前目录为准，`-C` 只影响远端路径。目标按文件路径处理，不自动拼接文件名；创建远端父目录用 `--mkdir`，本地父目录需已存在。
 
@@ -512,7 +512,7 @@ xrun linux1 pull /repo/config.json -
 printf '%s\n' 'hello' | xrun linux1 push - /repo/note.txt
 ```
 
-这里的 - 只用于 push 的本地源或 pull 的本地目标。push 从 stdin 读取时，CLI 先将完整输入保存到私有临时文件，最多 64 MiB；输入失败或超限不提交。pull 输出 stdout 前也先完成下载与校验。`pull ... - --json` 返回参数错误；`push - ... --json` 可以使用。
+这里的 - 只用于 push 的本地源或 pull 的本地目标。push 从 stdin 读取时，CLI 先按块将完整输入保存到私有临时文件，不设固定总量上限；输入读取失败不提交。pull 输出 stdout 前也先完成下载与校验。`pull ... - --json` 返回参数错误；`push - ... --json` 可以使用。
 
 push/pull 按固定大小分块读写，SHA-256 随读取或写入累计，不将整个文件装入内存。push 普通文件先计算摘要，再从同一个打开的文件句柄发送；两次读取内容不一致时，接收方因长度或摘要不符拒绝上传，保留原目标。pull 在目标 daemon 上先生成私有临时快照，使摘要对应实际发送的字节。完整响应后的会话归还与关闭见 6.2。
 
@@ -827,7 +827,7 @@ Rust 内部用 `error::ErrorCode` 和 `CodedError` 标识错误，协议边界�
 
 此次统一 Job 使用 daemon 与 submissions schema 2；不迁移旧数据、不回填、不保留旧接口。更旧的活动库和提交记录库先完整备份，再以事务重建；设备身份、授权和成员清单保留。App 打开时正常停止旧 daemon、换用当前 helper 并恢复先前运行状态，活动查询等待存储准备完成。CLI 更新前按 4.2 等待任务结束并停止本机服务，参与业务操作的端点统一更新。当前发布版本为 `0.1.0-rc.4`，各发布入口统一维护。
 
-单条业务消息不超过 1 MiB，可靠执行用 stdin/脚本各不超过 1 MiB，push/pull 文件和截图 PNG 不超过 64 MiB；push 从 stdin 读取时也使用文件的 64 MiB 上限。接收时检查，超限拒绝。任务列表分页，CLI 可逐页展示。流式输入和 TCP 转发不受文件总量限制，单块最多 64 KiB，内存受有界缓冲约束。
+单条业务消息不超过 1 MiB，可靠执行用 stdin/脚本各不超过 1 MiB，截图 PNG 不超过 64 MiB。接收时检查，超限拒绝。push/pull 文件与 push 从 stdin 读取时不设固定总量上限，按 64 KiB 分块读写，附件缓存也按块保存与导出；截图缓冲上限独立于文件传输。任务列表分页，CLI 可逐页展示。流式输入和 TCP 转发不设固定总量上限，单块最多 64 KiB，内存受有界缓冲约束。
 
 程序、参数、环境和路径不得含 NUL；输入与文件原始字节不受此限制。Windows 环境名大小写重复、负数超时、未知字段或类型错误返回 INVALID_REQUEST。
 
@@ -877,7 +877,7 @@ Rust 与 Cloudflare 中转使用同一套连接认证和端到端会话协议，
 - Linux、Windows 的测试工作流分别覆盖 x86_64 与 arm64，macOS 测试工作流使用 ARM runner；均运行格式检查、clippy 和原生核心测试，覆盖配对、TLS、成员签名、授权、可靠任务、传输、流式执行、端口转发与故障恢复。测试直接调用中转库，不开放非 Linux 的中转部署命令。
 - 核心测试包含前台提交与日志共用会话，以及独立 CLI 进程之间的缓存复用、配置更新、授权变化、数据库重建、并发请求隔离、私有 IPC 认证、提前归还、缓存上限、证书过期和上传期间源文件变化。
 - Linux 使用 Xvfb 验证 X11 PNG，并以 1 MiB 主线程栈检查命令和取消路径。
-- Linux 工作流另在 workerd 中运行 Cloudflare 中转测试，验证证书挑战、连接数量限制、一次性接入、断线清理和密文窗口。随后运行 `cloudflare` 的 `bun run test:interop`：本地 workerd 使用临时 HTTPS 证书和固定证书指纹，真实 Rust CLI/daemon 完成创建、配对、证书签名、可靠任务、64 MiB 文件往返、二进制流、TCP 半关闭、管理设备离线、空闲恢复与撤销。两组验证均无需 Cloudflare 凭证。互通脚本先用 Cargo 构建 CLI 和 Cloudflare 测试，复制到独立临时目录，再显式运行标为 ignore 的测试，避免运行期间被其他构建替换；普通 `cargo test` 不要求 workerd。相同测试也可通过私有 `XRUN_TEST_CF_LINK_FILE` 对已部署中转运行。
+- Linux 工作流另在 workerd 中运行 Cloudflare 中转测试，验证证书挑战、连接数量限制、一次性接入、断线清理和密文窗口。随后运行 `cloudflare` 的 `bun run test:interop`：本地 workerd 使用临时 HTTPS 证书和固定证书指纹，真实 Rust CLI/daemon 完成创建、配对、证书签名、可靠任务、65 MiB 文件往返、二进制流、TCP 半关闭、管理设备离线、空闲恢复与撤销。两组验证均无需 Cloudflare 凭证。互通脚本先用 Cargo 构建 CLI 和 Cloudflare 测试，复制到独立临时目录，再显式运行标为 ignore 的测试，避免运行期间被其他构建替换；普通 `cargo test` 不要求 workerd。相同测试也可通过私有 `XRUN_TEST_CF_LINK_FILE` 对已部署中转运行。
 - macOS/Windows 运行前端类型检查与 UI 测试、desktop Rust 检查，生成调试安装包并检查 App/helper。macOS 解压 App ZIP 后使用其中 helper 跑 smoke；Windows 安装 NSIS 后使用安装目录 helper 跑 smoke。Linux 原生检查命令安装、PATH、重复安装和失败回滚。
 - Cargo 与 Bun 缓存按系统/架构、工具链或锁文件区分。失败时上传测试子进程日志。正式签名、公证与发布产物由独立 Package 工作流处理。
 - Package 工作流中 Linux / Windows 两种架构分别原生构建和运行产物检查；macOS 两组均在 ARM runner 构建，x86_64 产物通过 Rosetta 运行 smoke 与安装检查。后者验证转译环境，不代替 Intel Mac 实机验收。
@@ -944,7 +944,7 @@ App 网络界面此前通过本机 TypeScript/UI 测试、Rust 检查、App 自�
 | 执行入口 | 前台默认超时 1800 秒，start 默认不限时，显式超时覆盖默认值；start 返回可查询的任务引用；前台提交与日志共用会话，断线才重连补读；两者复用 exec，follow 不参与去重摘要 |
 | 输入与输出 | stdin 超限不启动；非 UTF-8 输出原样传递；正常执行没有额外 xrun 输出；JSON 不混入人读内容 |
 | 文件传输 | 仅单文件 push/pull，路径按源、目标排列；目录被拒绝；本地相对路径使用 CLI 当前目录，-C 只影响远端；push 保留远端已有目标权限 |
-| 字节与管道 | 二进制、CRLF、BOM 和 NUL 原样传输；push - 读取最多 64 MiB，超限不提交；pull 到 stdout 先校验且不能同时 --json；push 从 stdin 可以输出 JSON |
+| 字节与管道 | 二进制、CRLF、BOM 和 NUL 原样传输；push - 按块暂存 stdin，不设固定总量上限，读取失败不提交；pull 到 stdout 先校验且不能同时 --json；push 从 stdin 可以输出 JSON |
 | 覆盖条件 | pull --json 给出下载内容的完整 sha256；push --expect 与远端当前目标比较，不匹配或目标已不存在时不覆盖；不带时正常创建或替换 |
 | 并发上传 | 两个内容均不同于原文件的 push 使用同一旧摘要时，只能一个成功；检测到外部修改时拒绝；不声称严格外部互斥 |
 | 上传响应丢失 | push 不自动重发，返回 75；再次 pull 能看到实际内容，外部后续修改不会被重试覆盖 |

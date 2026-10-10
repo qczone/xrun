@@ -121,5 +121,93 @@ pub(super) async fn check(suite: &Suite) -> Result<()> {
             content
         );
     }
+    large_files(suite).await
+}
+
+async fn large_files(suite: &Suite) -> Result<()> {
+    use std::io::Write;
+
+    let Suite { source, target, .. } = suite;
+    let size = 64 * 1024 * 1024 + 1;
+    let upload = source.join("large-upload.bin");
+    let mut file = std::fs::File::create(&upload)?;
+    let chunk = [0xa5; FILE_CHUNK];
+    for _ in 0..size / FILE_CHUNK {
+        file.write_all(&chunk)?;
+    }
+    file.write_all(&[0x5a])?;
+    drop(file);
+    let hash = sha256(&std::fs::read(&upload)?);
+    let remote = target.join("large-remote.bin");
+    let download = source.join("large-download.bin");
+    let db = rusqlite::Connection::open_with_flags(
+        target.join(".xrun/daemon.db"),
+        rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
+    )?;
+    for stdin in [false, true] {
+        let mut push = command(
+            source,
+            &[
+                "runner1",
+                "push",
+                if stdin {
+                    "-"
+                } else {
+                    upload.to_str().context("upload path")?
+                },
+                remote.to_str().context("remote path")?,
+                "--json",
+            ],
+        );
+        if stdin {
+            push.stdin(Stdio::from(std::fs::File::open(&upload)?));
+        }
+        let pushed = json(tokio::time::timeout(Duration::from_secs(180), push.output()).await??);
+        assert_eq!(pushed["size"], size);
+        assert_eq!(pushed["sha256"], hash);
+        let pulled = json(
+            tokio::time::timeout(
+                Duration::from_secs(180),
+                command(
+                    source,
+                    &[
+                        "runner1",
+                        "pull",
+                        remote.to_str().unwrap(),
+                        download.to_str().unwrap(),
+                        "--json",
+                    ],
+                )
+                .output(),
+            )
+            .await??,
+        );
+        assert_eq!(pulled["size"], size);
+        assert_eq!(pulled["sha256"], hash);
+        assert_eq!(sha256(&std::fs::read(&download)?), hash);
+        let pull_ref = pulled["job"].as_str().context("pull job reference")?;
+        let finished = json(cli(source, &["runner1", "wait", pull_ref, "--json"]).await);
+        assert_eq!(finished["job"]["state"], "succeeded");
+        for response in [&pushed, &pulled] {
+            let (_, job_id) = response["job"]
+                .as_str()
+                .context("file job reference")?
+                .rsplit_once('/')
+                .context("device/job reference")?;
+            let (id, bytes, digest): (String, i64, String) = db.query_row(
+                "SELECT attachment_id,size_bytes,sha256 FROM job_attachments WHERE job_id=?1",
+                [job_id],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )?;
+            assert_eq!(bytes, size as i64);
+            assert_eq!(digest, hash);
+            assert_eq!(
+                sha256(&std::fs::read(
+                    target.join(".xrun/attachments").join(format!("{id}.blob"))
+                )?),
+                hash
+            );
+        }
+    }
     Ok(())
 }

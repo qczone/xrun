@@ -240,7 +240,7 @@ mod tests {
                 assert_eq!((width, height), (Some(1), Some(1)));
                 assert_eq!(captured_at.as_deref(), Some("2026-10-06T00:00:00Z"));
                 assert_eq!(
-                    net::receive_bytes(&mut client, size, &hash, MAX_FILE).await?,
+                    net::receive_bytes(&mut client, size, &hash, MAX_SCREENSHOT).await?,
                     png
                 );
                 assert!(operation.as_ref().unwrap().finished);
@@ -308,7 +308,7 @@ mod tests {
             bail!("file metadata expected")
         };
         assert_eq!(
-            net::receive_bytes(&mut client, size, &hash, MAX_FILE).await?,
+            net::receive_bytes(&mut client, size, &hash, MAX_SCREENSHOT).await?,
             bytes
         );
         let job = store.get(&id)?.unwrap();

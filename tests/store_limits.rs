@@ -2,6 +2,8 @@ use anyhow::Result;
 use rusqlite::{Connection, params};
 use xrun::testing::{protocol::*, store::JobStore};
 
+const LOG_LIMIT_BYTES: u64 = 64 * 1024 * 1024;
+
 struct Store {
     tasks: JobStore,
     db: Connection,
@@ -86,7 +88,7 @@ impl Store {
             };
             self.job(&id, JobState::Running, n)?;
             self.tasks.append(&id, "stdout", b"retained log")?;
-            self.account(&id, MAX_FILE)?;
+            self.account(&id, LOG_LIMIT_BYTES)?;
             if state.terminal() {
                 let mut job = self.tasks.get(&id)?.unwrap();
                 job.state = state;
@@ -104,9 +106,9 @@ fn per_job_limit_accepts_the_boundary_and_truncates_without_losing_previous_outp
     let s = Store::new()?;
     s.job("job", JobState::Running, 1)?;
     s.tasks.append("job", "stdout", b"previous")?;
-    s.account("job", MAX_FILE - 2)?;
+    s.account("job", LOG_LIMIT_BYTES - 2)?;
     assert_eq!(s.tasks.append("job", "stderr", b"ok")?, Some(2));
-    assert_eq!(s.total()?, MAX_FILE);
+    assert_eq!(s.total()?, LOG_LIMIT_BYTES);
     for _ in 0..2 {
         assert_eq!(s.tasks.append("job", "stdout", b"overflow")?, None);
         let job = s.tasks.get("job")?.unwrap();
@@ -114,7 +116,7 @@ fn per_job_limit_accepts_the_boundary_and_truncates_without_losing_previous_outp
         assert_eq!(job.last_log_seq, 2);
         assert_eq!(job.output_complete, Some(false));
         assert_eq!(job.output_loss_reason.as_deref(), Some("TRUNCATED"));
-        assert_eq!(s.total()?, MAX_FILE);
+        assert_eq!(s.total()?, LOG_LIMIT_BYTES);
     }
     let logs = s.tasks.logs("job", 0)?;
     assert_eq!(logs.len(), 2);
@@ -164,7 +166,7 @@ fn global_limit_reclaims_only_oldest_finished_logs_and_rolls_back_failed_appends
         assert_eq!(s.tasks.get(id)?.unwrap().output_complete, Some(true));
         assert_eq!(s.tasks.logs(id, 0)?.len(), 1);
     }
-    assert_eq!(s.total()?, 1024 * 1024 * 1024 - MAX_FILE + 7);
+    assert_eq!(s.total()?, 1024 * 1024 * 1024 - LOG_LIMIT_BYTES + 7);
     Ok(())
 }
 
@@ -194,6 +196,6 @@ fn global_limit_never_evicts_running_jobs_and_can_resume_after_one_finishes() ->
         s.tasks.get("new")?.unwrap().output_loss_reason,
         partial.output_loss_reason
     );
-    assert_eq!(s.total()?, 1024 * 1024 * 1024 - MAX_FILE + 7);
+    assert_eq!(s.total()?, 1024 * 1024 * 1024 - LOG_LIMIT_BYTES + 7);
     Ok(())
 }

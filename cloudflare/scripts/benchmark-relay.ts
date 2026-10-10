@@ -15,7 +15,7 @@ import { fixture, VERSION } from "../tests/fixtures";
 import { Socket } from "../tests/socket";
 
 // Isolate the forwarding loop from Rust/TLS overhead. The interoperability
-// suite separately times actual 64 MiB push/pull using the production Worker.
+// suite separately times actual 65 MiB push/pull using the production Worker.
 const repository = resolve(import.meta.dir, "../..");
 const baseline = process.argv[2];
 if (!baseline)

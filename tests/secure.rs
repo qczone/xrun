@@ -242,9 +242,13 @@ async fn final_large_response_survives_backpressure_and_immediate_close() -> Res
             )
             .await?;
             tokio::time::sleep(Duration::from_millis(100)).await;
-            let received =
-                net::receive_bytes(&mut ws, content.len() as u64, &sha256(&content), MAX_FILE)
-                    .await?;
+            let received = net::receive_bytes(
+                &mut ws,
+                content.len() as u64,
+                &sha256(&content),
+                content.len() as u64,
+            )
+            .await?;
             assert_eq!(received.len(), content.len());
             Ok::<_, anyhow::Error>(())
         };
@@ -330,9 +334,13 @@ async fn final_response_survives_a_relay_that_buffers_until_after_close_is_sent(
                     .is_err()
             );
             release.notify_one();
-            let received =
-                net::receive_bytes(&mut ws, content.len() as u64, &sha256(&content), MAX_FILE)
-                    .await?;
+            let received = net::receive_bytes(
+                &mut ws,
+                content.len() as u64,
+                &sha256(&content),
+                content.len() as u64,
+            )
+            .await?;
             assert_eq!(received, content);
             net::close(&mut ws).await;
             Ok::<_, anyhow::Error>(())

@@ -698,7 +698,7 @@ async fn log_quota_and_write_failure_preserve_exit_status_and_report_incomplete_
             store(&lab)?.append(&job.job_id, "stdout", b"retained")?;
             db.execute(
                 "UPDATE jobs SET log_bytes=?2 WHERE job_id=?1",
-                rusqlite::params![job.job_id, MAX_FILE as i64],
+                rusqlite::params![job.job_id, 64_i64 * 1024 * 1024],
             )?;
             db.execute(
                 "UPDATE meta SET value=(SELECT SUM(log_bytes) FROM jobs) WHERE key='log_bytes'",

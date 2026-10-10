@@ -1,5 +1,5 @@
 use crate::error::ErrorCode;
-use crate::protocol::MAX_FILE;
+use crate::protocol::MAX_SCREENSHOT;
 use anyhow::{Context, Result, bail};
 use tokio::sync::OwnedSemaphorePermit;
 pub struct Capture {
@@ -53,7 +53,7 @@ impl Drop for CaptureProcess {
     }
 }
 fn decode(bytes: Vec<u8>) -> Result<Capture> {
-    if bytes.len() as u64 > MAX_FILE {
+    if bytes.len() as u64 > MAX_SCREENSHOT {
         bail!(ErrorCode::FileTooLarge.error("screenshot exceeds 64 MiB"))
     }
     let decoder = png::Decoder::new(std::io::Cursor::new(&bytes));
@@ -120,7 +120,7 @@ async fn mac_capture(
     if !status.success() {
         bail!(ErrorCode::NoDisplay.error("screenshot requires a logged-in graphical session"))
     }
-    let bytes = crate::transfer::read_file(capture.path.as_ref().unwrap()).context(
+    let bytes = crate::transfer::read_screenshot(capture.path.as_ref().unwrap()).context(
         ErrorCode::ScreenshotFailed.error("screencapture did not create a readable PNG"),
     )?;
     Ok((bytes, capture.permit.take()))
@@ -191,7 +191,7 @@ async fn windows_capture(
     if !status.success() {
         bail!(ErrorCode::ScreenshotFailed.error("PowerShell could not capture or save the display"))
     }
-    let bytes = crate::transfer::read_file(capture.path.as_ref().unwrap())
+    let bytes = crate::transfer::read_screenshot(capture.path.as_ref().unwrap())
         .context(ErrorCode::ScreenshotFailed.error("cannot read captured PNG"))?;
     Ok((bytes, capture.permit.take()))
 }
@@ -333,7 +333,7 @@ mod tests {
             error(decode(bytes), ErrorCode::ScreenshotFailed);
         }
         error(
-            decode(vec![0; MAX_FILE as usize + 1]),
+            decode(vec![0; MAX_SCREENSHOT as usize + 1]),
             ErrorCode::FileTooLarge,
         );
         Ok(())
@@ -458,7 +458,7 @@ $b=New-Object Drawing.Bitmap 1,1; try{$b.Save($env:XRUN_CAPTURE_PATH,[Drawing.Im
             "GDI+ save failed: {}",
             String::from_utf8_lossy(&output.stderr)
         );
-        let bytes = crate::transfer::read_file(&temp).unwrap();
+        let bytes = crate::transfer::read_screenshot(&temp).unwrap();
         let reader = png::Decoder::new(std::io::Cursor::new(bytes))
             .read_info()
             .unwrap();

@@ -14,8 +14,8 @@ pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 pub const MAX_MESSAGE: usize = 1024 * 1024;
 /// Maximum buffered execution stdin size in bytes.
 pub const MAX_INPUT: usize = 1024 * 1024;
-/// Maximum file transfer or screenshot payload size in bytes.
-pub const MAX_FILE: u64 = 64 * 1024 * 1024;
+/// Maximum buffered screenshot payload size in bytes.
+pub const MAX_SCREENSHOT: u64 = 64 * 1024 * 1024;
 /// Maximum ciphertext frame payload in bytes, shared with Cloudflare.
 pub const FILE_CHUNK: usize = 64 * 1024;
 /// Maximum unacknowledged ciphertext per direction on relays without drain().

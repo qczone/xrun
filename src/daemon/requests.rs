@@ -147,15 +147,11 @@ fn admit(rt: &Runtime, source: &str, generation: u64, request: &Request) -> Resu
     }
     match request {
         Request::Push {
-            size,
             sha256,
             no_overwrite,
             expect,
             ..
         } => {
-            if *size > MAX_FILE {
-                bail!(ErrorCode::FileTooLarge.error("file transfer limit exceeded"));
-            }
             if sha256.len() != 64 || !sha256.bytes().all(|byte| byte.is_ascii_hexdigit()) {
                 bail!(ErrorCode::InvalidRequest.error("invalid file digest"));
             }

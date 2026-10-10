@@ -73,7 +73,7 @@
 | status | TEXT NOT NULL | available/expired/missing |
 | deleted_at_ms | INTEGER | 到期副本清理时间 |
 
-索引按 job_id 查询附件，以及按 status/created_at_ms 清理附件。push/pull 从已校验的临时快照复制，截图复制实际发送的 PNG。先持久保存副本，再保存外键元数据；启动前清理没有元数据引用的缓存副本。
+索引按 job_id 查询附件，以及按 status/created_at_ms 清理附件。push/pull 从已校验的临时快照按块复制，不设固定附件大小上限；截图复制实际发送的 PNG，截图自身仍受 64 MiB 上限约束。附件导出按块读写，内联预览最多读取 8 MiB，文本预览最多 1 MiB。先持久保存副本，再保存外键元数据；启动前清理没有元数据引用的缓存副本。
 
 副本位于 `attachments/<时间>_<随机ID>.blob`，独立于原文件。默认保留 30 天，`attachment_retention_days` 可设 0–3650，0 为长期保留。每 10 分钟检查，缩短期限立即清理；过期后保留元数据与活动摘要。预览或导出再次检查当前期限和可用性。附件留存失败不会把成功的业务结果改成失败，错误记录在该 Job 的 result 中。
 

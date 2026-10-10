@@ -14,8 +14,10 @@ use xrun::testing::{
     config::Identity,
     membership::RosterCache,
     protocol::RelayMessage,
-    protocol::{MAX_FILE, VERSION, sha256},
+    protocol::{VERSION, sha256},
 };
+
+const FILE_BYTES: u64 = 65 * 1024 * 1024;
 
 struct CloudLab {
     root: tempfile::TempDir,
@@ -189,22 +191,22 @@ async fn public_relay_executes_transfers_streams_and_rejects_route_takeover() ->
         assert!(matches!(xrun::testing::net::receive(&mut anonymous).await?, RelayMessage::Error { code, .. } if code == "UNAUTHENTICATED"));
         cloud_online(&lab.source, "target1").await?;
         println!("certificate interoperability and route takeover rejection: passed");
-        // Exercise the actual product file limit, rather than a small fixture.
-        let content: Vec<u8> = (0..MAX_FILE).map(|i| (i % 251) as u8).collect();
+        // Cross the former file-size cap without changing the relay's bounded windows.
+        let content: Vec<u8> = (0..FILE_BYTES).map(|i| (i % 251) as u8).collect();
         let local = lab.root.path().join("upload.bin"); let remote = lab.target.join("artifact.bin"); let download = lab.root.path().join("download.bin");
         std::fs::write(&local, &content)?;
-        println!("starting 64 MiB upload");
+        println!("starting 65 MiB upload");
         let started = Instant::now();
         ok(run(&lab.source, &["target1", "push", &local.to_string_lossy(), &remote.to_string_lossy(), "--no-overwrite"]).await);
         let upload_seconds = started.elapsed().as_secs_f64();
-        println!("64 MiB upload: {upload_seconds:.3}s; starting download");
+        println!("65 MiB upload: {upload_seconds:.3}s; starting download");
         let started = Instant::now();
         let result = json(run(&lab.source, &["target1", "pull", &remote.to_string_lossy(), &download.to_string_lossy(), "--json"]).await);
         let download_seconds = started.elapsed().as_secs_f64();
-        println!("64 MiB download: {download_seconds:.3}s");
+        println!("65 MiB download: {download_seconds:.3}s");
         assert_eq!(result["sha256"], sha256(&content));
         assert_eq!(sha256(&std::fs::read(download)?), sha256(&content));
-        println!("64 MiB file transfer in both directions: passed");
+        println!("65 MiB file transfer in both directions: passed");
         let backend = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
         let port = backend.local_addr()?.port();
         let echo = tokio::spawn(async move {
@@ -248,7 +250,7 @@ async fn public_relay_executes_transfers_streams_and_rejects_route_takeover() ->
                 "architecture":std::env::consts::ARCH,
                 "relay_label":std::env::var("XRUN_BENCH_RELAY_LABEL").unwrap_or_else(|_| "public relay".into()),
                 "command_latency":commands,
-                "file_bytes":MAX_FILE,
+                "file_bytes":FILE_BYTES,
                 "upload_seconds":upload_seconds,
                 "download_seconds":download_seconds,
                 "sha256_verified":true,

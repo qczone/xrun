@@ -185,7 +185,7 @@ pub(super) async fn run(id: &Identity, target: &str, command: Remote, json: bool
             else {
                 bail!(ErrorCode::InvalidMessage.error("expected screenshot header"))
             };
-            let bytes = net::receive_bytes(&mut s.ws, size, &sha256, MAX_FILE).await?;
+            let bytes = net::receive_bytes(&mut s.ws, size, &sha256, MAX_SCREENSHOT).await?;
             s.finish().await;
             let path = save_download(&bytes, local, "xrun-screen-", ".png")?;
             print(
