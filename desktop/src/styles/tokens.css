@@ -1,12 +1,12 @@
 :root {
   color-scheme: light dark;
-  --bg: #f7f8fa;
-  --sidebar: #eef1f3;
+  --bg: #fff;
+  --sidebar: #f5f7f6;
   --card: #fff;
-  --text: #202a32;
-  --muted: #606d77;
-  --border: #e0e6ea;
-  --accent: #087961;
+  --text: #242b2a;
+  --muted: #748078;
+  --border: #e5eae7;
+  --accent: #16765d;
   --accent-hover: #06664f;
   --soft: #eaf4ef;
   --warning: #805813;

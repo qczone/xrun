@@ -1,6 +1,6 @@
 import type { Device, Status, TrafficReport } from "../api";
 import { useTraffic } from "../app/useTraffic";
-import { recordTime } from "../format";
+import { dateTime } from "../format";
 import { t } from "../i18n";
 import { ErrorNotice } from "./ErrorNotice";
 
@@ -73,7 +73,7 @@ function Trend({ report }: { report: TrafficReport }) {
   );
 }
 
-export function TrafficPanel({
+export function TrafficDetails({
   status,
   active,
   devices,
@@ -82,7 +82,7 @@ export function TrafficPanel({
   active: boolean;
   devices: Device[];
 }) {
-  const traffic = useTraffic(status, active);
+  const traffic = useTraffic(status, active, "month");
   if (!status?.local.joined || !status.network) return null;
   const { report, period, loading, error } = traffic;
   const manager = status.network.is_manager;
@@ -144,7 +144,7 @@ export function TrafficPanel({
             <Trend report={report} />
           </div>
           {manager && (
-            <details className="overview-details">
+            <details className="traffic-device-details">
               <summary>{t("traffic.devices")}</summary>
               {report.devices.length ? (
                 <table className="traffic-devices">
@@ -194,7 +194,7 @@ export function TrafficPanel({
             </details>
           )}
           <p className="muted traffic-note">
-            {t("traffic.updated", { time: recordTime(report.end_ms) })}
+            {t("traffic.updated", { time: dateTime(report.end_ms) })}
           </p>
         </>
       )}

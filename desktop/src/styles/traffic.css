@@ -1,0 +1,167 @@
+.traffic-summary {
+  margin-top: 34px;
+  border-top: 1px solid var(--border);
+  padding: 17px 14px;
+  font-size: 11px;
+}
+.traffic-summary-row {
+  display: flex;
+  align-items: center;
+  gap: 22px;
+}
+.traffic-summary-title {
+  color: var(--muted);
+}
+.traffic-summary-stat {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--muted);
+}
+.traffic-summary-stat .icon {
+  width: 13px;
+  height: 13px;
+}
+.traffic-summary-stat strong {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text);
+}
+.traffic-summary-row > .text-button {
+  margin-left: auto;
+  font-size: 11px;
+}
+.traffic-summary .error-notice {
+  margin-top: 12px;
+}
+.traffic-dialog {
+  width: 640px;
+}
+.traffic-dialog .traffic-panel {
+  border: 0;
+  padding: 0;
+  margin: 0;
+}
+.traffic-panel .panel-heading {
+  padding: 0;
+}
+.traffic-panel .panel-heading h2 {
+  font-size: 12px;
+  color: var(--muted);
+  font-weight: 400;
+}
+.traffic-periods {
+  display: flex;
+  gap: 4px;
+}
+.traffic-periods .selected {
+  background: var(--soft);
+}
+.traffic-totals {
+  display: flex;
+  gap: 55px;
+  margin: 24px 0;
+}
+.traffic-totals span {
+  display: block;
+  font-size: 11px;
+  color: var(--muted);
+}
+.traffic-totals strong {
+  font-size: 26px;
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+}
+.traffic-legend {
+  display: flex;
+  gap: 16px;
+  font-size: 11px;
+  margin-bottom: 12px;
+}
+.traffic-ingress {
+  color: var(--accent);
+}
+.traffic-egress {
+  color: var(--muted);
+}
+.traffic-chart {
+  width: 100%;
+  height: 120px;
+  display: block;
+  border-bottom: 1px solid var(--border);
+}
+.traffic-bar-ingress {
+  fill: var(--accent);
+  opacity: 0.75;
+}
+.traffic-bar-egress {
+  fill: var(--accent);
+  opacity: 0.3;
+}
+.traffic-axis {
+  display: flex;
+  justify-content: space-between;
+  font-size: 10px;
+  color: var(--muted);
+  margin-top: 6px;
+}
+.traffic-note {
+  font-size: 11px;
+  margin: 16px 0 0;
+}
+.traffic-devices {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+.traffic-devices th,
+.traffic-devices td {
+  text-align: left;
+  padding: 10px 7px;
+  border-bottom: 1px solid var(--border);
+  overflow-wrap: anywhere;
+}
+.traffic-devices th {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 400;
+}
+.traffic-devices td:first-child {
+  max-width: 220px;
+}
+.traffic-devices td:not(:first-child),
+.traffic-devices th:not(:first-child) {
+  white-space: nowrap;
+}
+.traffic-device-details {
+  margin-top: 24px;
+  font-size: 12px;
+  color: var(--muted);
+}
+.traffic-device-details > summary {
+  margin-bottom: 10px;
+}
+.traffic-pagination {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 12px 0;
+}
+.traffic-pagination button {
+  font-size: 11px;
+}
+@media (max-width: 850px) {
+  .traffic-summary-row {
+    gap: 13px;
+    flex-wrap: wrap;
+  }
+}
+@media (max-width: 720px) {
+  .traffic-summary {
+    padding-left: 5px;
+    padding-right: 5px;
+  }
+  .traffic-summary-title {
+    width: 100%;
+  }
+}

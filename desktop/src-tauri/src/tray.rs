@@ -1,50 +1,63 @@
 //! Tray visibility, actions and user-visible service status.
 use super::{
-    app::{Desktop, record},
+    app::{Desktop, DesktopPage, navigate, record},
     language::{Language, LanguageState},
     platform,
 };
+use std::sync::Mutex;
 use tauri::{
     Emitter, Manager,
     menu::{Menu, MenuItem, PredefinedMenuItem},
-    tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
+    tray::{MouseButton, TrayIconBuilder, TrayIconEvent},
 };
 
-struct TrayMenu<R: tauri::Runtime>(Menu<R>);
+struct TrayMenu<R: tauri::Runtime> {
+    menu: Menu<R>,
+    action: Mutex<PrimaryAction>,
+}
 
-fn labels(language: Language) -> [(&'static str, &'static str); 5] {
+fn labels(language: Language) -> [(&'static str, &'static str); 4] {
     [
         ("show", language.text("Open xrun", "打开 xrun")),
-        (
-            "start",
-            language.text("Start background service", "启动后台服务"),
-        ),
-        (
-            "stop",
-            language.text("Stop background service", "停止后台服务"),
-        ),
-        ("hide", language.text("Hide icon", "隐藏图标")),
-        (
-            "quit",
-            language.text(
-                "Quit app (service keeps running)",
-                "退出 App（服务继续运行）",
-            ),
-        ),
+        ("activity", language.text("Activity", "活动")),
+        ("settings", language.text("Settings…", "设置…")),
+        ("quit", language.text("Quit xrun", "退出 xrun")),
     ]
 }
 
-pub(super) fn refresh_language<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> tauri::Result<()> {
+pub(super) fn refresh<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> tauri::Result<()> {
     let language = app.state::<LanguageState>().settings().language;
+    update_menu(app, language, menu_view(language, current_status()))
+}
+
+fn update_menu<R: tauri::Runtime>(
+    app: &tauri::AppHandle<R>,
+    language: Language,
+    view: MenuView,
+) -> tauri::Result<()> {
     if let Some(menu) = app.try_state::<TrayMenu<R>>() {
-        let status = current_text(language);
-        for (id, label) in labels(language).into_iter().chain([("state", status)]) {
-            if let Some(item) = menu.0.get(id).and_then(|item| item.as_menuitem().cloned()) {
+        for (id, label) in labels(language).into_iter().chain([
+            ("device", view.device.as_str()),
+            ("state", view.status),
+            ("service", view.action.label(language)),
+        ]) {
+            if let Some(item) = menu
+                .menu
+                .get(id)
+                .and_then(|item| item.as_menuitem().cloned())
+            {
                 item.set_text(label)?;
+                if id == "service" {
+                    item.set_enabled(
+                        !view.action.changes_service()
+                            || app.state::<Desktop>().action.try_lock().is_ok(),
+                    )?;
+                }
             }
         }
+        *menu.action.lock().unwrap() = view.action;
         if let Some(icon) = app.tray_by_id("xrun") {
-            icon.set_tooltip(Some(status))?;
+            icon.set_tooltip(Some(format!("{} · {}", view.device, view.status)))?;
         }
     }
     Ok(())
@@ -77,50 +90,87 @@ pub(super) fn menu_event<R: tauri::Runtime>(
 ) {
     match event.id.as_ref() {
         "show" => present(app),
-        "hide" => {
-            let _ = hide(app);
-        }
+        "activity" => navigate(app, DesktopPage::Activity),
+        "settings" => navigate(app, DesktopPage::Settings),
         "quit" => app.exit(0),
-        "start" | "stop" => {
+        "service" => {
+            // Execute the action shown in the menu. An older Pause label must
+            // never turn into Resume because a background refresh raced the click.
+            let action = app
+                .try_state::<TrayMenu<R>>()
+                .map(|menu| *menu.action.lock().unwrap())
+                .unwrap_or_else(|| menu_view(Language::En, current_status()).action);
+            match action {
+                PrimaryAction::Join => {
+                    navigate(app, DesktopPage::Devices);
+                    return;
+                }
+                PrimaryAction::Inspect => {
+                    navigate(app, DesktopPage::Settings);
+                    return;
+                }
+                _ => {}
+            }
             let app = app.clone();
-            let start = event.id.as_ref() == "start";
             tauri::async_runtime::spawn(async move {
                 let state = app.state::<Desktop>();
-                let _guard = state.action.lock().await;
-                let result = if start {
-                    match xrun::client::local_status() {
+                let Ok(guard) = state.action.try_lock() else {
+                    return;
+                };
+                let _ = refresh(&app);
+                let result = match action {
+                    PrimaryAction::Start => match xrun::client::local_status() {
                         Ok(status) if !status.joined => {
-                            present(&app);
+                            navigate(&app, DesktopPage::Devices);
                             Ok(())
                         }
                         Ok(_) => platform::start().await,
                         Err(error) => Err(error),
-                    }
-                } else {
-                    xrun::client::services::stop_daemon().await
+                    },
+                    PrimaryAction::Pause => xrun::client::pause_access(true).await,
+                    PrimaryAction::Resume => xrun::client::pause_access(false).await,
+                    PrimaryAction::Join | PrimaryAction::Inspect => unreachable!(),
                 };
                 let _ = record(&app, result);
+                drop(guard);
+                let _ = refresh(&app);
             });
         }
         _ => {}
     }
 }
 
-pub(super) fn build<R: tauri::Runtime>(app: &tauri::App<R>) -> tauri::Result<MenuItem<R>> {
+pub(super) fn build<R: tauri::Runtime>(app: &tauri::App<R>) -> tauri::Result<()> {
     let language = app.state::<LanguageState>().settings().language;
-    let state = MenuItem::with_id(
-        app,
-        "state",
-        language.text("xrun · Checking status…", "xrun · 检查状态…"),
-        false,
-        None::<&str>,
-    )?;
+    let view = menu_view(language, current_status());
+    let device = MenuItem::with_id(app, "device", &view.device, false, None::<&str>)?;
+    let state = MenuItem::with_id(app, "state", view.status, false, None::<&str>)?;
     let separator = PredefinedMenuItem::separator(app)?;
-    let menu = Menu::with_items(app, &[&state, &separator])?;
+    let menu = Menu::with_items(app, &[&device, &state, &separator])?;
     for (id, label) in labels(language) {
-        menu.append(&MenuItem::with_id(app, id, label, true, None::<&str>)?)?;
+        if id == "quit" {
+            menu.append(&PredefinedMenuItem::separator(app)?)?;
+            menu.append(&MenuItem::with_id(
+                app,
+                "service",
+                view.action.label(language),
+                true,
+                None::<&str>,
+            )?)?;
+            menu.append(&PredefinedMenuItem::separator(app)?)?;
+        }
+        menu.append(&MenuItem::with_id(
+            app,
+            id,
+            label,
+            true,
+            (id == "settings").then_some("CmdOrCtrl+,"),
+        )?)?;
     }
-    app.manage(TrayMenu(menu.clone()));
+    app.manage(TrayMenu {
+        menu: menu.clone(),
+        action: Mutex::new(view.action),
+    });
     TrayIconBuilder::with_id("xrun")
         .icon(tauri::image::Image::from_bytes(
             if cfg!(target_os = "macos") {
@@ -130,7 +180,7 @@ pub(super) fn build<R: tauri::Runtime>(app: &tauri::App<R>) -> tauri::Result<Men
             },
         )?)
         .icon_as_template(cfg!(target_os = "macos"))
-        .tooltip("xrun")
+        .tooltip(format!("{} · {}", view.device, view.status))
         .menu(&menu)
         .show_menu_on_left_click(true)
         .on_menu_event(menu_event)
@@ -140,10 +190,6 @@ pub(super) fn build<R: tauri::Runtime>(app: &tauri::App<R>) -> tauri::Result<Men
                 TrayIconEvent::DoubleClick {
                     button: MouseButton::Left,
                     ..
-                } | TrayIconEvent::Click {
-                    button: MouseButton::Left,
-                    button_state: MouseButtonState::Up,
-                    ..
                 }
             ) && !cfg!(target_os = "macos")
             {
@@ -151,7 +197,7 @@ pub(super) fn build<R: tauri::Runtime>(app: &tauri::App<R>) -> tauri::Result<Men
             }
         })
         .build(app)?;
-    Ok(state)
+    Ok(())
 }
 
 struct TrayStatus {
@@ -159,38 +205,92 @@ struct TrayStatus {
     service: platform::ServiceStatus,
 }
 
-pub(super) fn current_text(language: Language) -> &'static str {
+fn current_status() -> anyhow::Result<TrayStatus> {
     // The tray needs only local service state. Do not reopen and verify the full
     // signed member roster on every background status tick.
-    let status = (|| {
-        Ok(TrayStatus {
-            local: xrun::client::local_status()?,
-            service: platform::status()?,
-        })
-    })();
-    text(language, status)
+    Ok(TrayStatus {
+        local: xrun::client::local_status()?,
+        service: platform::status()?,
+    })
 }
 
-fn text(language: Language, status: anyhow::Result<TrayStatus>) -> &'static str {
-    match status {
-        Ok(s) if !s.local.joined => language.text("xrun · Not joined", "xrun · 尚未加入"),
-        Ok(s) if s.service.approval_required => {
-            language.text("xrun · Approval required", "xrun · 需要系统授权")
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum PrimaryAction {
+    Join,
+    Start,
+    Pause,
+    Resume,
+    Inspect,
+}
+
+impl PrimaryAction {
+    fn label(self, language: Language) -> &'static str {
+        match self {
+            Self::Join => language.text("Join a network…", "加入网络…"),
+            Self::Start => language.text("Start service", "启动服务"),
+            Self::Pause => language.text("Pause access", "暂停访问"),
+            Self::Resume => language.text("Resume access", "恢复访问"),
+            Self::Inspect => language.text("View details…", "查看详情…"),
         }
-        Ok(s) if !s.local.daemon_running => {
-            language.text("xrun · Service stopped", "xrun · 服务已停止")
-        }
-        Ok(s) if s.local.remote_access_paused => {
-            language.text("xrun · Remote access paused", "xrun · 远程访问已暂停")
-        }
-        Ok(s) if s.local.daemon_connected == Some(true) => {
-            language.text("xrun · Connected", "xrun · 已连接")
-        }
-        Ok(s) if s.local.daemon_connected.is_none() => {
-            language.text("xrun · Older service running", "xrun · 旧版服务运行中")
-        }
-        Ok(_) => language.text("xrun · Connecting…", "xrun · 连接中…"),
-        Err(_) => language.text("xrun · Status unavailable", "xrun · 状态读取失败"),
+    }
+
+    fn changes_service(self) -> bool {
+        matches!(self, Self::Start | Self::Pause | Self::Resume)
+    }
+}
+
+struct MenuView {
+    device: String,
+    status: &'static str,
+    action: PrimaryAction,
+}
+
+fn menu_view(language: Language, status: anyhow::Result<TrayStatus>) -> MenuView {
+    let Ok(s) = status else {
+        return MenuView {
+            device: "xrun".into(),
+            status: language.text("Status unavailable", "状态读取失败"),
+            action: PrimaryAction::Inspect,
+        };
+    };
+    let state = if !s.local.joined {
+        language.text("Not joined", "未加入网络")
+    } else if s.service.approval_required {
+        language.text("Approval needed", "待系统授权")
+    } else if !s.local.daemon_running {
+        language.text("Service stopped", "服务已停止")
+    } else if s.local.remote_access_paused {
+        language.text("Access paused", "访问已暂停")
+    } else if s.local.daemon_connected == Some(true) {
+        language.text("Connected", "已连接")
+    } else if s.local.daemon_connected.is_none() {
+        language.text("Running (legacy)", "旧版运行中")
+    } else {
+        language.text("Connecting…", "连接中…")
+    };
+    let name = s
+        .local
+        .name
+        .filter(|name| !name.is_empty())
+        .unwrap_or("xrun".into());
+    // Keep a long user-supplied name from widening the native menu.
+    let mut characters = name.chars();
+    let mut device: String = characters.by_ref().take(16).collect();
+    if characters.next().is_some() {
+        device.push('…');
+    }
+    MenuView {
+        device,
+        status: state,
+        action: if !s.local.joined {
+            PrimaryAction::Join
+        } else if !s.local.daemon_running {
+            PrimaryAction::Start
+        } else if s.local.remote_access_paused {
+            PrimaryAction::Resume
+        } else {
+            PrimaryAction::Pause
+        },
     }
 }
 
@@ -204,9 +304,9 @@ pub(crate) mod tests {
     use anyhow::Result;
 
     #[test]
-    fn tray_start_without_identity_opens_setup_without_initializing_a_service() -> Result<()> {
+    fn tray_join_without_identity_opens_setup_without_initializing_a_service() -> Result<()> {
         isolated(
-            "tray_start_without_identity_opens_setup_without_initializing_a_service",
+            "tray_join_without_identity_opens_setup_without_initializing_a_service",
             || {
                 use tauri::Listener;
                 let (app, _window) = build_app();
@@ -216,7 +316,12 @@ pub(crate) mod tests {
                 app.listen("xrun-window-visible", move |event| {
                     tx.send(event.payload().to_owned()).unwrap();
                 });
-                menu_event(app.handle(), tauri::menu::MenuEvent { id: "start".into() });
+                menu_event(
+                    app.handle(),
+                    tauri::menu::MenuEvent {
+                        id: "service".into(),
+                    },
+                );
                 assert_eq!(rx.recv_timeout(std::time::Duration::from_secs(5))?, "true");
                 tauri::async_runtime::block_on(async {
                     let state = app.state::<Desktop>();
@@ -255,13 +360,74 @@ pub(crate) mod tests {
             (LanguagePreference::Zh, "打开 xrun"),
         ] {
             state.save(preference)?;
-            refresh_language(app)?;
+            refresh(app)?;
             let menu = app.state::<TrayMenu<R>>();
-            let show = menu.0.get("show").unwrap();
+            let show = menu.menu.get("show").unwrap();
             assert_eq!(show.as_menuitem().unwrap().text()?, expected);
+            for (id, label) in labels(state.settings().language) {
+                let item = menu.menu.get(id).unwrap();
+                assert_eq!(item.as_menuitem().unwrap().text()?, label);
+            }
         }
         state.save(original)?;
-        refresh_language(app)?;
+        refresh(app)?;
+        let menu = app.state::<TrayMenu<R>>();
+        let ids: Vec<String> = menu
+            .menu
+            .items()?
+            .into_iter()
+            .filter_map(|item| item.as_menuitem().map(|item| item.id().as_ref().to_owned()))
+            .collect();
+        assert_eq!(
+            ids,
+            [
+                "device", "state", "show", "activity", "settings", "service", "quit"
+            ]
+        );
+        for id in ["device", "state"] {
+            assert!(
+                !menu
+                    .menu
+                    .get(id)
+                    .unwrap()
+                    .as_menuitem()
+                    .unwrap()
+                    .is_enabled()?
+            );
+        }
+        for (action, expected) in [
+            (PrimaryAction::Start, "启动服务"),
+            (PrimaryAction::Pause, "暂停访问"),
+            (PrimaryAction::Resume, "恢复访问"),
+        ] {
+            update_menu(
+                app,
+                Language::Zh,
+                MenuView {
+                    device: "mac-pro".into(),
+                    status: "测试状态",
+                    action,
+                },
+            )?;
+            let item = menu.menu.get("service").unwrap();
+            let item = item.as_menuitem().unwrap();
+            assert_eq!(item.text()?, expected);
+            assert!(item.is_enabled()?);
+            let desktop = app.state::<Desktop>();
+            let guard = tauri::async_runtime::block_on(desktop.action.lock());
+            update_menu(
+                app,
+                Language::Zh,
+                MenuView {
+                    device: "mac-pro".into(),
+                    status: "测试状态",
+                    action,
+                },
+            )?;
+            assert!(!item.is_enabled()?);
+            drop(guard);
+        }
+        refresh(app)?;
         Ok(())
     }
 
@@ -271,15 +437,74 @@ pub(crate) mod tests {
             "tray_text_prioritizes_setup_approval_stop_and_pause_over_connectivity",
             || {
                 let (app, _window) = build_app();
-                assert_eq!(current_text(Language::En), "xrun · Not joined");
-                for (joined, approval, running, paused, connected, expected) in [
-                    (false, true, true, true, Some(true), "xrun · 尚未加入"),
-                    (true, true, false, false, Some(true), "xrun · 需要系统授权"),
-                    (true, false, false, true, Some(true), "xrun · 服务已停止"),
-                    (true, false, true, true, Some(true), "xrun · 远程访问已暂停"),
-                    (true, false, true, false, Some(true), "xrun · 已连接"),
-                    (true, false, true, false, None, "xrun · 旧版服务运行中"),
-                    (true, false, true, false, Some(false), "xrun · 连接中…"),
+                assert_eq!(
+                    menu_view(Language::En, current_status()).status,
+                    "Not joined"
+                );
+                for (joined, approval, running, paused, connected, expected, action) in [
+                    (
+                        false,
+                        true,
+                        true,
+                        true,
+                        Some(true),
+                        "未加入网络",
+                        PrimaryAction::Join,
+                    ),
+                    (
+                        true,
+                        true,
+                        false,
+                        false,
+                        Some(true),
+                        "待系统授权",
+                        PrimaryAction::Start,
+                    ),
+                    (
+                        true,
+                        false,
+                        false,
+                        true,
+                        Some(true),
+                        "服务已停止",
+                        PrimaryAction::Start,
+                    ),
+                    (
+                        true,
+                        false,
+                        true,
+                        true,
+                        Some(true),
+                        "访问已暂停",
+                        PrimaryAction::Resume,
+                    ),
+                    (
+                        true,
+                        false,
+                        true,
+                        false,
+                        Some(true),
+                        "已连接",
+                        PrimaryAction::Pause,
+                    ),
+                    (
+                        true,
+                        false,
+                        true,
+                        false,
+                        None,
+                        "旧版运行中",
+                        PrimaryAction::Pause,
+                    ),
+                    (
+                        true,
+                        false,
+                        true,
+                        false,
+                        Some(false),
+                        "连接中…",
+                        PrimaryAction::Pause,
+                    ),
                 ] {
                     let mut status = local_status(app.handle())?;
                     status.local.joined = joined;
@@ -287,35 +512,36 @@ pub(crate) mod tests {
                     status.local.daemon_running = running;
                     status.local.remote_access_paused = paused;
                     status.local.daemon_connected = connected;
-                    assert_eq!(
-                        text(
-                            Language::Zh,
-                            Ok(TrayStatus {
-                                local: status.local,
-                                service: status.service
-                            })
-                        ),
-                        expected
+                    let view = menu_view(
+                        Language::Zh,
+                        Ok(TrayStatus {
+                            local: status.local,
+                            service: status.service,
+                        }),
                     );
+                    assert_eq!(view.status, expected);
+                    assert!(view.status.chars().count() <= 6);
+                    assert_eq!(view.action, action);
                 }
-                assert_eq!(
-                    text(Language::Zh, Err(anyhow::anyhow!("unreadable config"))),
-                    "xrun · 状态读取失败"
-                );
+                let view = menu_view(Language::Zh, Err(anyhow::anyhow!("unreadable config")));
+                assert_eq!(view.status, "状态读取失败");
+                assert_eq!(view.action, PrimaryAction::Inspect);
+                assert_eq!(view.device, "xrun");
                 let mut status = local_status(app.handle())?;
                 status.local.joined = true;
                 status.local.daemon_running = true;
                 status.local.daemon_connected = Some(true);
                 status.service.approval_required = false;
                 assert_eq!(
-                    text(
+                    menu_view(
                         Language::En,
                         Ok(TrayStatus {
                             local: status.local,
                             service: status.service
                         })
-                    ),
-                    "xrun · Connected"
+                    )
+                    .status,
+                    "Connected"
                 );
                 Ok(())
             },

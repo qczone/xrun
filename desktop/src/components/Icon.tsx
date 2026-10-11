@@ -6,7 +6,18 @@ export type IconName =
   | "shield"
   | "refresh"
   | "folder"
-  | "terminal";
+  | "terminal"
+  | "activity"
+  | "lock"
+  | "more"
+  | "play"
+  | "pause"
+  | "plus"
+  | "search"
+  | "close"
+  | "image"
+  | "up"
+  | "down";
 
 export function Icon({
   name,
@@ -26,6 +37,45 @@ export function IconDefinitions() {
   return (
     <svg className="icon-defs" aria-hidden="true">
       <defs>
+        <symbol id="i-activity" viewBox="0 0 24 24">
+          <path d="M3 12h4l3-7 4 14 3-7h4" />
+        </symbol>
+        <symbol id="i-lock" viewBox="0 0 24 24">
+          <rect x="5" y="10" width="14" height="11" rx="2" />
+          <path d="M8 10V7a4 4 0 0 1 8 0v3m-4 5v2" />
+        </symbol>
+        <symbol id="i-more" viewBox="0 0 24 24">
+          <circle cx="5" cy="12" r=".7" />
+          <circle cx="12" cy="12" r=".7" />
+          <circle cx="19" cy="12" r=".7" />
+        </symbol>
+        <symbol id="i-play" viewBox="0 0 24 24">
+          <path d="m8 4 12 8-12 8z" />
+        </symbol>
+        <symbol id="i-pause" viewBox="0 0 24 24">
+          <path d="M9 5v14M15 5v14" />
+        </symbol>
+        <symbol id="i-plus" viewBox="0 0 24 24">
+          <path d="M12 5v14M5 12h14" />
+        </symbol>
+        <symbol id="i-search" viewBox="0 0 24 24">
+          <circle cx="10.5" cy="10.5" r="6.5" />
+          <path d="m16 16 4 4" />
+        </symbol>
+        <symbol id="i-close" viewBox="0 0 24 24">
+          <path d="m6 6 12 12M6 18 18 6" />
+        </symbol>
+        <symbol id="i-image" viewBox="0 0 24 24">
+          <rect x="3" y="3" width="18" height="18" rx="2" />
+          <circle cx="8" cy="8" r="1.5" />
+          <path d="m3 17 5-5 4 4 4-6 5 7" />
+        </symbol>
+        <symbol id="i-up" viewBox="0 0 24 24">
+          <path d="M12 20V4M6 10l6-6 6 6" />
+        </symbol>
+        <symbol id="i-down" viewBox="0 0 24 24">
+          <path d="M12 4v16m-6-6 6 6 6-6" />
+        </symbol>
         <symbol id="i-monitor" viewBox="0 0 24 24">
           <rect x="3" y="4" width="18" height="13" rx="2" />
           <path d="M8 21h8m-4-4v4" />

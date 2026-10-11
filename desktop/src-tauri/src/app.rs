@@ -1,5 +1,5 @@
 //! Native state, feedback and application lifecycle assembly.
-use super::{commands, error::CommandError, language::LanguageState, platform, tray};
+use super::{commands, error::CommandError, platform, tray};
 use serde::Serialize;
 use std::sync::Mutex;
 use tauri::{Emitter, Manager};
@@ -7,7 +7,38 @@ use tauri::{Emitter, Manager};
 pub(super) struct Desktop {
     pub(super) action: tokio::sync::Mutex<()>,
     pub(super) error: Mutex<Option<CommandError>>,
+    pub(super) navigation: Mutex<Option<DesktopNavigation>>,
     upgrade: tokio::sync::OnceCell<()>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub(super) enum DesktopPage {
+    Devices,
+    Activity,
+    Settings,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+pub(super) struct DesktopNavigation {
+    revision: u64,
+    page: DesktopPage,
+}
+
+pub(super) fn navigate<R: tauri::Runtime>(app: &tauri::AppHandle<R>, page: DesktopPage) {
+    let request = {
+        let state = app.state::<Desktop>();
+        let mut navigation = state.navigation.lock().unwrap();
+        let request = DesktopNavigation {
+            revision: navigation.map_or(1, |previous| previous.revision + 1),
+            page,
+        };
+        *navigation = Some(request);
+        request
+    };
+    // Retain the last request so a click during WebView startup is not lost.
+    let _ = app.emit("xrun-desktop-navigation", request);
+    tray::present(app);
 }
 
 pub(super) async fn ensure_upgrade<R: tauri::Runtime>(
@@ -79,7 +110,7 @@ pub(super) fn app_builder<R: tauri::Runtime>(
         .setup(move |app| {
             #[cfg(target_os = "macos")]
             app.set_activation_policy(tauri::ActivationPolicy::Accessory);
-            let item = tray::build(app)?;
+            tray::build(app)?;
             #[cfg(target_os = "macos")]
             let _ = record(app.handle(), platform::install_cli());
             let upgrade_handle = app.handle().clone();
@@ -91,12 +122,7 @@ pub(super) fn app_builder<R: tauri::Runtime>(
             let handle = app.handle().clone();
             tauri::async_runtime::spawn(async move {
                 loop {
-                    let text =
-                        tray::current_text(handle.state::<LanguageState>().settings().language);
-                    let _ = item.set_text(text);
-                    if let Some(icon) = handle.tray_by_id("xrun") {
-                        let _ = icon.set_tooltip(Some(text));
-                    }
+                    let _ = tray::refresh(&handle);
                     tokio::time::sleep(std::time::Duration::from_secs(2)).await;
                 }
             });
@@ -307,10 +333,30 @@ pub(crate) mod tests {
                     assert_eq!(window.is_visible().unwrap(), !background && !joined);
                     select(app, "show");
                     assert!(window.is_visible().unwrap());
-                    select(app, "hide");
+                    tray::hide(app).unwrap();
                     assert!(!window.is_visible().unwrap());
                     select(app, "show");
                     assert!(window.is_visible().unwrap());
+                    select(app, "activity");
+                    assert_eq!(
+                        app.state::<Desktop>()
+                            .navigation
+                            .lock()
+                            .unwrap()
+                            .unwrap()
+                            .page,
+                        DesktopPage::Activity
+                    );
+                    select(app, "settings");
+                    assert_eq!(
+                        app.state::<Desktop>()
+                            .navigation
+                            .lock()
+                            .unwrap()
+                            .unwrap()
+                            .page,
+                        DesktopPage::Settings
+                    );
                     run_event(app, tauri::RunEvent::Resumed);
                     select(app, "unrecognized-menu-id");
                     window.close().unwrap();
@@ -327,7 +373,7 @@ pub(crate) mod tests {
                         app.run_on_main_thread(move || {
                             let window = handle.get_webview_window("main").unwrap();
                             assert!(!window.is_visible().unwrap());
-                            select(&handle, "start");
+                            select(&handle, "service");
                         })
                         .unwrap();
                         tokio::time::timeout(Duration::from_secs(5), async {
@@ -358,17 +404,8 @@ pub(crate) mod tests {
                             assert!(!directory.join("identity.toml").exists());
                             assert!(!directory.join("daemon.initialized").exists());
                         }
-                        select(&app, "stop");
-                        tokio::time::timeout(Duration::from_secs(5), async {
-                            loop {
-                                if app.state::<Desktop>().error.lock().unwrap().is_none() {
-                                    break;
-                                }
-                                tokio::time::sleep(Duration::from_millis(20)).await;
-                            }
-                        })
-                        .await
-                        .unwrap();
+                        assert!(!xrun::client::local_status().unwrap().daemon_running);
+                        let _ = record(&app, Ok(()));
                         // Allow the production status updater to complete a second pass.
                         tokio::time::sleep(Duration::from_millis(2100)).await;
                         select(&app, "quit");

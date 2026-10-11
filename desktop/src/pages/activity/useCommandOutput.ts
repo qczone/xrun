@@ -4,19 +4,19 @@ import { api, type CommandJob } from "../../api";
 import { errorCode, errorText } from "../../errors";
 import { isRunning } from "../../format";
 import { OutputBuffer } from "../../logs";
-export type Selection = { job: CommandJob; dbId: string };
+export type CommandSelection = { job: CommandJob; dbId: string };
 interface Input {
-  selection: Selection;
+  selection: CommandSelection;
   active: boolean;
   paused: boolean;
-  refresh: number;
+  refreshVersion: number;
   onLoading: (value: boolean) => void;
 }
-export function useJobOutput({
+export function useCommandOutput({
   selection,
   active,
   paused,
-  refresh,
+  refreshVersion,
   onLoading,
 }: Input) {
   const [job, setJob] = useState(selection.job);
@@ -24,7 +24,7 @@ export function useJobOutput({
   const [outputStatus, setOutputStatus] =
     useState<PlainMessageKey>("output.loading");
   const [revision, setRevision] = useState(0);
-  const buffer = useRef(new OutputBuffer());
+  const outputBuffer = useRef(new OutputBuffer());
   const finished = useRef(false);
   const {
     dbId,
@@ -41,9 +41,13 @@ export function useJobOutput({
       onLoading(true);
       let more = false;
       try {
-        const result = await api.output(dbId, jobId, buffer.current.after);
+        const result = await api.output(
+          dbId,
+          jobId,
+          outputBuffer.current.after,
+        );
         if (disposed) return;
-        buffer.current.consume(result);
+        outputBuffer.current.consume(result);
         setJob(result.job);
         setError(null);
         setRevision((value) => value + 1);
@@ -82,20 +86,20 @@ export function useJobOutput({
     // StrictMode's first setup is discarded before issuing an IPC request.
     queueMicrotask(() => void load(true));
     const timer = setInterval(() => void load(), 3000);
-    // A late response is ignored after hiding or changing the selected task.
+    // A late response is ignored after hiding or changing the selected command.
     return () => {
       disposed = true;
       onLoading(false);
       clearInterval(timer);
     };
-  }, [active, paused, refresh, dbId, jobId, onLoading]);
+  }, [active, paused, refreshVersion, dbId, jobId, onLoading]);
 
   return {
     job,
     error,
     outputStatus: t(outputStatus),
     revision,
-    buffer,
+    outputBuffer,
     clearError: () => setError(null),
   };
 }

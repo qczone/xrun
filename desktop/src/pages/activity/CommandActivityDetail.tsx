@@ -1,35 +1,36 @@
 import { useLayoutEffect, useRef, useState } from "react";
 import type { Status } from "../../api";
+import { Icon } from "../../components/Icon";
 import { ErrorNotice } from "../../components/ErrorNotice";
-import { commandText, duration, isRunning, recordTime } from "../../format";
+import { commandText, duration, isRunning, dateTime } from "../../format";
 import { t } from "../../i18n";
-import { StateChip } from "./TaskState";
-import { useJobOutput, type Selection } from "./useJobOutput";
+import { ActivityState } from "./ActivityState";
+import { useCommandOutput, type CommandSelection } from "./useCommandOutput";
 interface DetailProps {
-  selection: Selection;
+  selection: CommandSelection;
   active: boolean;
   paused: boolean;
-  refresh: number;
+  refreshVersion: number;
   status: Status | null;
   deviceLabel: (id: string) => string;
   onLoading: (value: boolean) => void;
   retry: () => void;
-  back: () => void;
+  onClose: () => void;
 }
 
-export function TaskDetail({
+export function CommandActivityDetail({
   selection,
   active,
   paused,
-  refresh,
+  refreshVersion,
   status,
   deviceLabel,
   onLoading,
   retry,
-  back,
+  onClose,
 }: DetailProps) {
-  const { job, error, outputStatus, revision, buffer, clearError } =
-    useJobOutput({ selection, active, paused, refresh, onLoading });
+  const { job, error, outputStatus, revision, outputBuffer, clearError } =
+    useCommandOutput({ selection, active, paused, refreshVersion, onLoading });
   const [stream, setStream] = useState("all");
   const [follow, setFollow] = useState(true);
   const log = useRef<HTMLPreElement>(null);
@@ -77,22 +78,30 @@ export function TaskDetail({
         : t("output.noExitCode");
 
   return (
-    <section id="task-detail">
-      <button className="history-back" onClick={back}>
-        {t("output.back")}
+    <section id="command-activity-detail">
+      <button
+        className="activity-close icon-button"
+        aria-label={t("activity.closeDetails")}
+        onClick={onClose}
+      >
+        <Icon name="close" />
       </button>
-      <article className="panel task-heading">
-        <div className="task-title">
+      <article className="panel command-heading">
+        <div className="activity-detail-title">
           <h2 className="mono">{commandText(job.params)}</h2>
-          <StateChip job={job} />
+          <ActivityState job={job} />
         </div>
-        <div className="task-summary-meta">
-          <span>{t("history.source", { name: source })}</span>
-          <span>{t("history.duration", { duration: elapsed })}</span>
+        <div className="activity-detail-meta">
+          <span>{t("activity.source", { name: source })}</span>
+          <span>{t("activity.duration", { duration: elapsed })}</span>
           <span>{result}</span>
         </div>
-        <details className="task-facts">
-          <summary>{t("output.details", { id: job.job_id })}</summary>
+        <details className="activity-detail-facts">
+          <summary>{t("activity.technicalDetails")}</summary>
+          <div className="panel-row">
+            <span>Job ID</span>
+            <code>{job.job_id}</code>
+          </div>
           <div className="panel-row">
             <span>{t("output.sourceId")}</span>
             <code>{job.source_device_id}</code>
@@ -103,12 +112,12 @@ export function TaskDetail({
           </div>
           <div className="panel-row">
             <span>{t("output.startedAt")}</span>
-            <span>{recordTime(job.created_at_ms)}</span>
+            <span>{dateTime(job.created_at_ms)}</span>
           </div>
         </details>
       </article>
       {!!warnings.length && (
-        <p id="task-warning" className="inline-notice" role="status">
+        <p id="command-warning" className="inline-notice" role="status">
           {warnings.join(" ")}
         </p>
       )}
@@ -137,9 +146,9 @@ export function TaskDetail({
           </label>
         </div>
         <pre
-          id="task-log"
+          id="command-log"
           ref={log}
-          className="task-log"
+          className="command-log"
           data-filter={stream}
           tabIndex={0}
           aria-label={t("output.log")}
@@ -155,8 +164,8 @@ export function TaskDetail({
               setFollow(false);
           }}
         >
-          {buffer.current.chunks.length ? (
-            buffer.current.chunks.map((chunk) => (
+          {outputBuffer.current.chunks.length ? (
+            outputBuffer.current.chunks.map((chunk) => (
               <span
                 key={chunk.id}
                 data-stream={chunk.stream}
@@ -171,7 +180,9 @@ export function TaskDetail({
         </pre>
         <div className="output-footer">
           <span>{outputStatus}</span>
-          {buffer.current.truncated && <span>{t("output.recentOnly")}</span>}
+          {outputBuffer.current.truncated && (
+            <span>{t("output.recentOnly")}</span>
+          )}
           {!follow && (
             <button className="text-button" onClick={() => setFollow(true)}>
               {t("output.jumpToLatest")}

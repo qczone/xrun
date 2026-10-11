@@ -40,13 +40,15 @@ test("traffic shows device send/receive, switches UTC periods, and stops polling
   const panel = await screen.findByRole("region", { name: "流量统计" });
   await within(panel).findByText("1.0 KiB");
   expect(within(panel).getAllByText("接收").length).toBeGreaterThan(0);
-  fireEvent.click(within(panel).getByRole("button", { name: "今日" }));
+  fireEvent.click(within(panel).getByRole("button", { name: "详情" }));
+  const dialog = await screen.findByRole("dialog", { name: "流量统计" });
+  fireEvent.click(within(dialog).getByRole("button", { name: "今日" }));
   await waitFor(() =>
     expect(
       calls.filter((call) => call.command === "traffic").at(-1)?.args.query,
     ).toMatchObject({ period: "today" }),
   );
-  page("设备");
+  await page("活动");
   const previous = calls.filter((call) => call.command === "traffic").length;
   await poll();
   expect(calls.filter((call) => call.command === "traffic").length).toBe(

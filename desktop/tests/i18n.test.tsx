@@ -10,8 +10,8 @@ import {
 } from "../src/i18n";
 import { en } from "../src/i18n/en";
 import { zh } from "../src/i18n/zh";
-import { clockTime, duration, recordTime } from "../src/format";
-import { event, fixture, task } from "./fixtures";
+import { clockTime, duration, dateTime } from "../src/format";
+import { event, fixture, commandJob, findActivity } from "./fixtures";
 
 const browserLanguages = Object.getOwnPropertyDescriptor(
   navigator,
@@ -90,7 +90,7 @@ test("dates, times and durations follow the selected interface language", () => 
     ["zh", "zh-CN"],
   ] as const) {
     setLanguage(language);
-    expect(recordTime(time)).toBe(
+    expect(dateTime(time)).toBe(
       new Date(time).toLocaleString(locale, { hour12: false }),
     );
     expect(clockTime(time)).toBe(new Date(time).toLocaleTimeString(locale));
@@ -104,7 +104,7 @@ test("dates, times and durations follow the selected interface language", () => 
 
 test("English UI localizes all pages, dynamic labels, confirmations and operation errors", async () => {
   const name = "<img id=untrusted-device> {name}";
-  const job = task("TASK-42", {
+  const job = commandJob("TASK-42", {
     state: "failed",
     result: {
       exit_code: 1,
@@ -130,11 +130,12 @@ test("English UI localizes all pages, dynamic labels, confirmations and operatio
     true,
     "en-US",
   );
-  expect(screen.getByRole("heading", { name: "Device overview" })).toBeTruthy();
+  expect(screen.getByRole("heading", { name: "Devices" })).toBeTruthy();
   devices[0].name = name;
-  page("Devices");
+  await page("Devices");
+  await poll();
   await screen.findByLabelText(`Allow ${name} to access this device`);
-  expect(screen.getByText("Network members · 1")).toBeTruthy();
+  expect(screen.getByText("Device name")).toBeTruthy();
   fireEvent.click(screen.getByLabelText(`Allow ${name} to access this device`));
   const confirmation = await screen.findByRole("dialog", {
     name: `Allow ${name} to access this device?`,
@@ -145,24 +146,22 @@ test("English UI localizes all pages, dynamic labels, confirmations and operatio
     within(confirmation).getByRole("button", { name: "Cancel" }),
   ).toBeTruthy();
   await act(async () => (confirmation as HTMLDialogElement).close("cancel"));
-  page("Activity journey");
-  fireEvent.click(await screen.findByRole("button", { name: /TASK-42/ }));
+  await page("Activity");
+  fireEvent.click(await findActivity("TASK-42"));
   await screen.findByText("Task finished");
   expect(screen.getByText("Exit code 1")).toBeTruthy();
   expect(
     screen.getByText("Duration: 1 min 5 s", {
-      selector: ".task-summary-meta span",
+      selector: ".activity-detail-meta span",
     }),
   ).toBeTruthy();
-  page("Settings");
+  await page("Settings");
   expect(screen.getByLabelText("Default working directory")).toBeTruthy();
   expect(screen.getByText("Tool search path (PATH)")).toBeTruthy();
   status.local.daemon_running = false;
   await poll();
-  page("This device");
-  fireEvent.click(
-    screen.getByRole("button", { name: "Start background service" }),
-  );
+  await page("Devices");
+  fireEvent.click(screen.getByRole("button", { name: "Start service" }));
   const alert = await screen.findByRole("alert");
   expect(alert.textContent).toContain("Could not start the background service");
   expect(alert.textContent).toContain("HELPER_NOT_FOUND: technical detail");
@@ -172,7 +171,7 @@ test("English UI localizes all pages, dynamic labels, confirmations and operatio
 });
 
 test("language switching is immediate, persists, and preserves unsaved fields and selected activity", async () => {
-  const job = task("LANG-42", {
+  const job = commandJob("LANG-42", {
     state: "succeeded",
     result: {
       exit_code: 0,
@@ -200,10 +199,10 @@ test("language switching is immediate, persists, and preserves unsaved fields an
     true,
     "en-US",
   );
-  page("Activity journey");
-  fireEvent.click(await screen.findByRole("button", { name: /LANG-42/ }));
+  await page("Activity");
+  fireEvent.click(await findActivity("LANG-42"));
   await screen.findByText("Task finished");
-  page("Settings");
+  await page("Settings");
   fireEvent.change(screen.getByLabelText("Default working directory"), {
     target: { value: "/unsaved/path" },
   });
@@ -222,18 +221,18 @@ test("language switching is immediate, persists, and preserves unsaved fields an
   expect(
     (screen.getByLabelText("工具搜索路径") as HTMLTextAreaElement).value,
   ).toBe("/custom/bin");
-  expect(screen.getByRole("button", { name: "活动旅程" })).toBeTruthy();
+  expect(screen.getByRole("button", { name: "活动" })).toBeTruthy();
   expect(screen.queryByRole("button", { name: "活动记录" })).toBeNull();
-  page("活动旅程");
+  await page("活动");
   expect(screen.getByText("任务已结束")).toBeTruthy();
   expect(screen.getByText("original output")).toBeTruthy();
-  page("设备");
+  await page("设备");
   expect(
     screen.getByText(
       "暂时没有其他设备。新设备需要管理设备生成的邀请链接才能加入。",
     ),
   ).toBeTruthy();
-  page("设置");
+  await page("设置");
   fireEvent.change(screen.getByLabelText("语言"), {
     target: { value: "system" },
   });
@@ -270,7 +269,7 @@ test("failed language saves keep the previous preference and can be retried", as
     true,
     "en-US",
   );
-  page("Settings");
+  await page("Settings");
   const select = screen.getByLabelText("Language") as HTMLSelectElement;
   fireEvent.change(select, { target: { value: "zh" } });
   expect(select.disabled).toBe(true);

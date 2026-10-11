@@ -2,6 +2,12 @@ import { invoke } from "@tauri-apps/api/core";
 import type { ApiError } from "./errors";
 import type { PlainMessageKey } from "./i18n";
 
+export type DesktopPage = "devices" | "activity" | "settings";
+export interface DesktopNavigation {
+  revision: number;
+  page: DesktopPage;
+}
+
 export interface LocalStatus {
   joined: boolean;
   device_id: string | null;
@@ -198,7 +204,7 @@ export interface AttachmentPreview {
   text: string | null;
 }
 
-export type TaskFilter = "all" | "running" | "failed";
+export type ActivityFilter = "all" | "running" | "failed";
 export type ActionRequest =
   | { command: "start" | "stop" | "remove_service" | "hide_icon" }
   | { command: "join" | "create_network"; args: { link: string; name: string } }
@@ -241,6 +247,8 @@ export interface Revocation {
 
 export const api = {
   windowVisible: () => invoke<boolean>("window_visible"),
+  desktopNavigation: () =>
+    invoke<DesktopNavigation | null>("desktop_navigation"),
   status: () => invoke<Status>("status"),
   settings: () => invoke<Settings>("settings"),
   traffic: (period: TrafficPeriod, offset = 0) =>
@@ -256,7 +264,7 @@ export const api = {
   chooseDirectory: () => invoke<string | null>("choose_directory"),
   action: (request: ActionRequest) =>
     invoke<void>(request.command, "args" in request ? request.args : {}),
-  activity: (before: string | null, filter: TaskFilter) =>
+  activity: (before: string | null, filter: ActivityFilter) =>
     invoke<{
       db_id: string | null;
       entries: Job[];

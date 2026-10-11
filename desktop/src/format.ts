@@ -5,7 +5,7 @@ export const osName = (os: string | null | undefined) =>
   ({ macos: "macOS", windows: "Windows", linux: "Linux" })[os || ""] ||
   os ||
   t("format.unknownOs");
-export const recordTime = (time: number) =>
+export const dateTime = (time: number) =>
   new Date(time).toLocaleString(formatLocale(), { hour12: false });
 export const clockTime = (time: number) =>
   new Date(time).toLocaleTimeString(formatLocale());
@@ -70,27 +70,27 @@ export function relayHost(address: string) {
 
 export { errorText } from "./errors";
 
-export function taskState(job: Job): [string, string] {
+export function jobState(job: Job): [string, string] {
   if (
     job.state === "failed" &&
     (job.kind === "exec" || job.kind === "stream_exec") &&
     job.result &&
     (job.result.exit_code !== null || job.result.signal !== null)
   )
-    return [t("task.nonzeroExit"), "failed"];
+    return [t("job.nonzeroExit"), "failed"];
   const states = {
-    accepted: [t("task.accepted"), "active"],
+    accepted: [t("job.accepted"), "active"],
     running: [t("status.running"), "active"],
-    succeeded: [t("task.success"), "success"],
-    failed: [t("task.failed"), "failed"],
-    canceled: [t("task.canceled"), "neutral"],
-    timed_out: [t("task.timedOut"), "failed"],
-    lost: [t("task.lost"), "failed"],
+    succeeded: [t("job.success"), "success"],
+    failed: [t("job.failed"), "failed"],
+    canceled: [t("job.canceled"), "neutral"],
+    timed_out: [t("job.timedOut"), "failed"],
+    lost: [t("job.lost"), "failed"],
   } satisfies Record<Job["state"], [string, string]>;
   return states[job.state];
 }
 export function commandText(params: { program: string; args: string[] }) {
-  return [params.program || t("task.script"), ...params.args]
+  return [params.program || t("job.script"), ...params.args]
     .map((arg) => (/[\s"'\\]/.test(arg) ? JSON.stringify(arg) : arg))
     .join(" ");
 }

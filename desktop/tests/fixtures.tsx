@@ -131,6 +131,8 @@ export async function fixture(
       switch (command) {
         case "window_visible":
           return true;
+        case "desktop_navigation":
+          return null;
         case "language_settings":
           return structuredClone(languageSettings);
         case "set_language": {
@@ -198,6 +200,23 @@ export async function fixture(
     },
     { shouldMockEvents: true },
   );
+  // The event mock expects id, while the API sends eventId. Normalize the mock
+  // so StrictMode cleanup removes listeners as it does in the native runtime.
+  const internals = (
+    window as unknown as {
+      __TAURI_INTERNALS__: {
+        invoke: (command: string, args?: Args) => Promise<unknown>;
+      };
+    }
+  ).__TAURI_INTERNALS__;
+  const invoke = internals.invoke;
+  internals.invoke = (command, args) =>
+    invoke(
+      command,
+      command === "plugin:event|unlisten"
+        ? { ...args, id: args?.eventId }
+        : args,
+    );
   Object.defineProperty(globalThis, "isTauri", {
     configurable: true,
     value: true,
@@ -221,8 +240,11 @@ export async function fixture(
       for (const callback of [...timers.values()]) callback();
     });
   };
-  const page = (name: string) =>
-    fireEvent.click(screen.getByRole("button", { name }));
+  const page = async (name: string) => {
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name }));
+    });
+  };
   return { ...view, calls, status, settings, devices, poll, page };
 }
 
@@ -255,7 +277,7 @@ function common(id: string): JobCommon {
     attachments: [],
   };
 }
-export function task(
+export function commandJob(
   id = "ABC123",
   changes: Partial<CommandJob> = {},
 ): CommandJob {
@@ -289,7 +311,7 @@ export const event = (
   ).toString("base64"),
 });
 
-export function operation(
+export function activityJob(
   kind: "push" | "pull" | "screenshot" | "stream_exec" | "forward",
   changes: Partial<JobCommon> & {
     path?: string;
@@ -356,6 +378,16 @@ export function operation(
         },
       };
     case "stream_exec":
-      return { ...task(base.job_id, base), kind };
+      return { ...commandJob(base.job_id, base), kind };
   }
+}
+
+export async function findActivity(jobId: string) {
+  return waitFor(() => {
+    const row = document.querySelector<HTMLButtonElement>(
+      `[data-job-id="${jobId}"]`,
+    );
+    expect(row).not.toBeNull();
+    return row!;
+  });
 }

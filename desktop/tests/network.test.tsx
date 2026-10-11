@@ -167,8 +167,8 @@ for (const command of ["join", "create_network"] as const) {
     });
     await screen.findByText(
       command === "join"
-        ? "已加入网络，后台服务未启动。请启动后台服务。"
-        : "网络已创建，后台服务未启动。请启动后台服务。",
+        ? "已加入网络，后台服务未启动。请启动服务。"
+        : "网络已创建，后台服务未启动。请启动服务。",
     );
     await waitFor(() =>
       expect(
@@ -179,7 +179,7 @@ for (const command of ["join", "create_network"] as const) {
     );
     expect(document.body.textContent).not.toContain("registered-secret");
     await act(async () => {
-      fireEvent.click(screen.getByRole("button", { name: "启动后台服务" }));
+      fireEvent.click(screen.getByRole("button", { name: "启动服务" }));
     });
     await screen.findByText("后台服务已启动");
     expect(calls.filter((call) => call.command === command)).toHaveLength(1);

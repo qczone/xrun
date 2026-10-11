@@ -6,7 +6,7 @@ import { emit } from "@tauri-apps/api/event";
 
 test("native window hiding stops status and device polling and showing refreshes immediately", async () => {
   const { page, calls, poll } = await fixture();
-  page("设备");
+  await page("设备");
   await poll();
   const counts = () =>
     ["devices", "status"].map(
@@ -50,7 +50,7 @@ test("native window hiding stops status and device polling and showing refreshes
 
 test("menus have one owner and close on outside clicks, focus, escape and navigation", async () => {
   const { page } = await fixture();
-  page("设备");
+  await page("设备");
   const first = screen.getByLabelText(
     '<img id="injected" src=x onerror=alert(1)> 的更多操作',
   );
@@ -71,8 +71,8 @@ test("menus have one owner and close on outside clicks, focus, escape and naviga
   expect(isOpen(first)).toBe(false);
   expect(document.activeElement).toBe(first);
   fireEvent.click(first);
-  page("本机");
-  page("设备");
+  await page("活动");
+  await page("设备");
   expect(isOpen(first)).toBe(false);
 });
 
@@ -94,7 +94,7 @@ test("a menu near the bottom still opens above after closing and reopening", asy
     },
   );
   const { page } = await fixture();
-  page("设备");
+  await page("设备");
   const summary = screen.getByLabelText("old-device 的更多操作");
   const menu = summary.closest("details")!;
   fireEvent.click(summary);
@@ -129,7 +129,7 @@ test("network changes clear old members and discard a previous network's pending
             server_error: null,
           },
   });
-  page("设备");
+  await page("设备");
   await screen.findByLabelText("允许 old-member 访问本机");
   delay = true;
   await poll();
@@ -152,11 +152,12 @@ test("network changes clear old members and discard a previous network's pending
 
 test("device polling stops while hidden or confirming and resumes when visible", async () => {
   const { page, calls, poll } = await fixture();
+  await page("活动");
   const count = () => calls.filter((call) => call.command === "devices").length;
   const hiddenCount = count();
   await poll();
   expect(count()).toBe(hiddenCount);
-  page("设备");
+  await page("设备");
   await poll();
   expect(count()).toBeGreaterThan(hiddenCount);
   fireEvent.click(
@@ -172,7 +173,7 @@ test("device polling stops while hidden or confirming and resumes when visible",
   );
   await poll();
   expect(count()).toBeGreaterThan(confirmingCount);
-  page("设置");
+  await page("设置");
   const finalCount = count();
   await poll();
   expect(count()).toBe(finalCount);
@@ -180,7 +181,7 @@ test("device polling stops while hidden or confirming and resumes when visible",
 
 test("escape after an accepted confirmation cannot accept the next request", async () => {
   const { page, calls } = await fixture();
-  page("设备");
+  await page("设备");
   fireEvent.click(
     screen.getByLabelText(
       '允许 <img id="injected" src=x onerror=alert(1)> 访问本机',
@@ -189,7 +190,8 @@ test("escape after an accepted confirmation cannot accept the next request", asy
   const dialog = document.getElementById("confirm") as HTMLDialogElement;
   await act(async () => dialog.close("ok"));
   expect(calls.filter((call) => call.command === "permission")).toHaveLength(1);
-  fireEvent.click(screen.getByText("高级访问策略"));
+  await page("设置");
+  fireEvent.click(screen.getByText("网络与服务", { selector: "summary span" }));
   fireEvent.click(screen.getByLabelText("允许全体成员访问本机"));
   expect(dialog.open).toBe(true);
   expect(dialog.returnValue).toBe("");
@@ -201,7 +203,7 @@ test("escape after an accepted confirmation cannot accept the next request", asy
 
 test("unmounting a pending confirmation cancels the operation", async () => {
   const { page, calls, unmount } = await fixture();
-  page("设备");
+  await page("设备");
   fireEvent.click(
     screen.getByLabelText(
       '允许 <img id="injected" src=x onerror=alert(1)> 访问本机',
@@ -216,14 +218,14 @@ test("unmounting a pending confirmation cancels the operation", async () => {
 });
 test("remote names are text and revoked devices remain disabled during edits", async () => {
   const { page } = await fixture();
-  page("设备");
+  await page("设备");
   await screen.findByText('<img id="injected" src=x onerror=alert(1)>');
   expect(document.getElementById("injected")).toBeNull();
   const revoked = screen.getByLabelText(
     "允许 old-device 访问本机",
   ) as HTMLInputElement;
   expect(revoked.disabled).toBe(true);
-  page("设置");
+  await page("设置");
   fireEvent.change(screen.getByLabelText("默认工作目录"), {
     target: { value: "/repo" },
   });
@@ -232,7 +234,7 @@ test("remote names are text and revoked devices remain disabled during edits", a
 
 test("permissions require confirmation and canceled changes never reach the backend", async () => {
   const { page, calls } = await fixture();
-  page("设备");
+  await page("设备");
   const input = await screen.findByLabelText(
     '允许 <img id="injected" src=x onerror=alert(1)> 访问本机',
   );
@@ -270,11 +272,11 @@ test("only managers generate invitations, default registration has no grant and 
       expires_in: 600,
     }),
   });
-  page("设备");
+  await page("设备");
   expect(screen.queryByRole("button", { name: "生成邀请链接" })).toBeNull();
   status.network!.is_manager = true;
   await poll();
-  fireEvent.click(screen.getByRole("button", { name: "邀请新设备" }));
+  fireEvent.click(screen.getByRole("button", { name: "邀请设备" }));
   const option = screen.getByLabelText(
     "允许新设备与本机互相访问",
   ) as HTMLInputElement;
@@ -290,9 +292,9 @@ test("only managers generate invitations, default registration has no grant and 
   expect(
     calls.find((call) => call.command === "copy_invitation")?.args,
   ).toEqual({ link: "xrun://invite-secret" });
-  page("本机");
+  await page("活动");
   expect(screen.queryByLabelText("生成的邀请链接")).toBeNull();
-  page("设备");
+  await page("设备");
   expect(screen.queryByLabelText("生成的邀请链接")).toBeNull();
 });
 
@@ -306,8 +308,8 @@ test("mutual invitation grants require confirmation and expired links are cleare
   });
   status.network!.is_manager = true;
   await poll();
-  page("设备");
-  fireEvent.click(screen.getByRole("button", { name: "邀请新设备" }));
+  await page("设备");
+  fireEvent.click(screen.getByRole("button", { name: "邀请设备" }));
   fireEvent.click(screen.getByLabelText("允许新设备与本机互相访问"));
   fireEvent.click(screen.getByRole("button", { name: "生成邀请链接" }));
   await waitFor(() =>
@@ -343,14 +345,14 @@ test("an invitation completed after leaving its page cannot expose a secret", as
   const { status, poll, page } = await fixture({ invite: () => pending });
   status.network!.is_manager = true;
   await poll();
-  page("设备");
-  fireEvent.click(screen.getByRole("button", { name: "邀请新设备" }));
+  await page("设备");
+  fireEvent.click(screen.getByRole("button", { name: "邀请设备" }));
   fireEvent.click(screen.getByRole("button", { name: "生成邀请链接" }));
-  page("本机");
+  await page("活动");
   await act(async () =>
     complete({ link: "xrun://late-secret", allow: false, expires_in: 600 }),
   );
-  page("设备");
+  await page("设备");
   expect(screen.queryByLabelText("生成的邀请链接")).toBeNull();
   expect(document.body.textContent).not.toContain("late-secret");
 });
@@ -370,7 +372,7 @@ test("membership revocation is manager-only, requires confirmation and sends the
     },
   });
   members = devices;
-  page("设备");
+  await page("设备");
   expect(screen.queryByRole("button", { name: /^撤销 / })).toBeNull();
   status.network!.is_manager = true;
   await poll();
@@ -455,7 +457,7 @@ test("revocation keeps its local result during relay failure and can retry deliv
   });
   status.network!.is_manager = true;
   await poll();
-  page("设备");
+  await page("设备");
   openMemberActions("win1");
   fireEvent.click(screen.getByRole("button", { name: "撤销 win1 的成员身份" }));
   await waitFor(() =>
@@ -490,7 +492,7 @@ test("backend refusal does not falsely mark a member revoked", async () => {
   });
   status.network!.is_manager = true;
   await poll();
-  page("设备");
+  await page("设备");
   const name = '撤销 <img id="injected" src=x onerror=alert(1)> 的成员身份';
   openMemberActions('<img id="injected" src=x onerror=alert(1)>');
   fireEvent.click(screen.getByRole("button", { name }));
@@ -510,8 +512,8 @@ test("backend refusal does not falsely mark a member revoked", async () => {
 
 test("all-member access requires confirmation, respects denials and preserves individual grants", async () => {
   const { page, calls, status, poll } = await fixture();
-  page("设备");
-  fireEvent.click(screen.getByText("高级访问策略"));
+  await page("设置");
+  fireEvent.click(screen.getByText("网络与服务", { selector: "summary span" }));
   fireEvent.click(screen.getByLabelText("允许全体成员访问本机"));
   await waitFor(() =>
     expect(
@@ -535,6 +537,7 @@ test("all-member access requires confirmation, respects denials and preserves in
     (document.getElementById("confirm") as HTMLDialogElement).close("ok"),
   );
   await waitFor(() => expect(status.local.allow_all).toBe(true));
+  await page("设备");
   const individual = screen.getByLabelText(
     '允许 <img id="injected" src=x onerror=alert(1)> 访问本机',
   ) as HTMLInputElement;
@@ -544,8 +547,10 @@ test("all-member access requires confirmation, respects denials and preserves in
   status.allow_from = ["unsafe-label"];
   status.deny_from = [];
   await poll();
+  await page("设置");
   fireEvent.click(screen.getByLabelText("允许全体成员访问本机"));
   await waitFor(() => expect(status.local.allow_all).toBe(false));
+  await page("设备");
   expect(individual.checked).toBe(true);
 });
 
@@ -557,8 +562,8 @@ test("closing the invitation dialog discards a result that arrives later", async
   const { status, poll, page } = await fixture({ invite: () => pending });
   status.network!.is_manager = true;
   await poll();
-  page("设备");
-  fireEvent.click(screen.getByRole("button", { name: "邀请新设备" }));
+  await page("设备");
+  fireEvent.click(screen.getByRole("button", { name: "邀请设备" }));
   fireEvent.click(await screen.findByRole("button", { name: "生成邀请链接" }));
   await screen.findByRole("button", { name: "正在生成…" });
   fireEvent.click(screen.getByRole("button", { name: "关闭邀请" }));
@@ -574,7 +579,7 @@ test("closing the invitation dialog discards a result that arrives later", async
       expires_in: 600,
     }),
   );
-  fireEvent.click(screen.getByRole("button", { name: "邀请新设备" }));
+  fireEvent.click(screen.getByRole("button", { name: "邀请设备" }));
   await screen.findByRole("button", { name: "生成邀请链接" });
   expect(screen.queryByLabelText("生成的邀请链接")).toBeNull();
   expect(document.body.textContent).not.toContain("closed-dialog-secret");

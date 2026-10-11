@@ -1,15 +1,15 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { api, type Attachment, type AttachmentPreview } from "../../api";
 import { ErrorNotice } from "../../components/ErrorNotice";
 import { Icon } from "../../components/Icon";
-import { errorText, fileSize, recordTime } from "../../format";
+import { errorText, fileSize, dateTime } from "../../format";
 import { t } from "../../i18n";
 import { attachmentLabel } from "./operation";
 interface Props {
   metadata: Attachment;
   active: boolean;
   paused: boolean;
-  refresh: number;
+  refreshVersion: number;
   onLoading: (value: boolean) => void;
   retry: () => void;
 }
@@ -17,7 +17,7 @@ export function AttachmentPanel({
   metadata,
   active,
   paused,
-  refresh,
+  refreshVersion,
   onLoading,
   retry,
 }: Props) {
@@ -25,7 +25,19 @@ export function AttachmentPanel({
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState<string | null>(null);
+  const [imageOpen, setImageOpen] = useState(false);
+  const imageDialog = useRef<HTMLDialogElement>(null);
   const id = metadata.id;
+  useEffect(() => {
+    if (!active || paused || metadata.status !== "available")
+      setImageOpen(false);
+  }, [active, paused, metadata.status]);
+  useEffect(() => {
+    if (imageOpen && imageDialog.current && !imageDialog.current.open)
+      imageDialog.current.showModal();
+    else if (!imageOpen && imageDialog.current?.open)
+      imageDialog.current.close();
+  }, [imageOpen]);
   useEffect(() => {
     if (!active || paused || metadata.status !== "available") return;
     let disposed = false;
@@ -51,7 +63,7 @@ export function AttachmentPanel({
       disposed = true;
       onLoading(false);
     };
-  }, [id, metadata.status, active, paused, refresh, onLoading]);
+  }, [id, metadata.status, active, paused, refreshVersion, onLoading]);
   const attachment =
     metadata.status === "available"
       ? preview?.attachment || metadata
@@ -92,18 +104,46 @@ export function AttachmentPanel({
           {attachment.expires_at_ms === null
             ? t("attachment.forever")
             : t("attachment.expiresAt", {
-                time: recordTime(attachment.expires_at_ms),
+                time: dateTime(attachment.expires_at_ms),
               })}
         </p>
       )}
       {preview?.image && attachment?.status === "available" && (
-        <div className="attachment-image">
+        <button
+          className="attachment-image"
+          aria-label={t("attachment.openImage")}
+          onClick={() => setImageOpen(true)}
+        >
           <img
             src={preview.image}
             alt={t("attachment.imageAlt", { name: attachment.name })}
           />
-        </div>
+          <span>{t("attachment.openImage")}</span>
+        </button>
       )}
+      <dialog
+        className="attachment-image-dialog"
+        ref={imageDialog}
+        aria-label={t("attachment.imagePreview")}
+        onClose={() => setImageOpen(false)}
+      >
+        <div className="dialog-heading">
+          <h2>{attachment.name}</h2>
+          <button
+            className="icon-button"
+            aria-label={t("common.close")}
+            onClick={() => setImageOpen(false)}
+          >
+            <Icon name="close" />
+          </button>
+        </div>
+        {imageOpen && preview?.image && attachment.status === "available" && (
+          <img
+            src={preview.image}
+            alt={t("attachment.imageAlt", { name: attachment.name })}
+          />
+        )}
+      </dialog>
       {preview?.text !== null &&
         preview?.text !== undefined &&
         attachment?.status === "available" && (

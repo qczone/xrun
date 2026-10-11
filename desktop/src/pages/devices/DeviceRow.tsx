@@ -12,7 +12,7 @@ interface Props {
   close: () => void;
   revoke: (device: Device) => Promise<void>;
 }
-export function DeviceCard({
+export function DeviceRow({
   device,
   status,
   open,
@@ -37,7 +37,7 @@ export function DeviceCard({
           ? t("devices.fromAll")
           : t("devices.notAllowed");
   return (
-    <div className="device" key={device.device_id}>
+    <div className="device-row" key={device.device_id}>
       <div className="device-identity">
         <div className="device-icon">
           <Icon name="monitor" />
@@ -50,19 +50,21 @@ export function DeviceCard({
             )}
           </div>
           <div className="device-info">
-            <span
-              className={`dot ${device.online && !device.revoked ? "online" : ""}`}
-            />
-            <span>
-              {device.revoked
-                ? t("devices.revoked")
-                : device.online
-                  ? t("devices.connected")
-                  : t("devices.disconnected")}
-              {device.os && <> · {osName(device.os)}</>}
-            </span>
+            {device.os ? osName(device.os) : t("format.unknownOs")}
           </div>
         </div>
+      </div>
+      <div className="device-connection">
+        <span
+          className={`dot ${device.online && !device.revoked ? "online" : ""}`}
+        />
+        <span>
+          {device.revoked
+            ? t("devices.revoked")
+            : device.online
+              ? t("devices.connected")
+              : t("devices.disconnected")}
+        </span>
       </div>
       <div className="device-permission">
         <label className="switch">
@@ -93,7 +95,9 @@ export function DeviceCard({
           />
           <span className="switch-track" />
         </label>
-        <small>{source}</small>
+        <small title={source}>
+          {allowed ? t("devices.allowedShort") : t("devices.deniedShort")}
+        </small>
       </div>
       <DeviceMenu
         device={device}

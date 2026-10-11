@@ -7,7 +7,11 @@ import {
 } from "../api";
 import { errorText } from "../errors";
 
-export function useTraffic(status: Status | null, active: boolean) {
+export function useTraffic(
+  status: Status | null,
+  active: boolean,
+  initialPeriod: TrafficPeriod = "today",
+) {
   const network = status?.network;
   const device = status?.local.device_id;
   const scope =
@@ -19,7 +23,7 @@ export function useTraffic(status: Status | null, active: boolean) {
           network.relay_addresses,
         ])
       : null;
-  const [period, setPeriod] = useState<TrafficPeriod>("month");
+  const [period, setPeriod] = useState<TrafficPeriod>(initialPeriod);
   const [offset, setOffset] = useState(0);
   const [report, setReport] = useState<TrafficReport | null>(null);
   const [error, setError] = useState<string | null>(null);

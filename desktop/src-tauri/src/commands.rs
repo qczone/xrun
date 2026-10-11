@@ -1,6 +1,6 @@
 //! Tauri command adaptation and serialized local actions.
 use super::{
-    app::{Desktop, Status, ensure_upgrade, local_status, record},
+    app::{Desktop, DesktopNavigation, Status, ensure_upgrade, local_status, record},
     error::{self, CommandError},
     language::{LanguagePreference, LanguageSettings, LanguageState},
     platform, tray,
@@ -24,7 +24,7 @@ fn set_language<R: tauri::Runtime>(
     let settings = language
         .save(preference)
         .map_err(CommandError::from_error)?;
-    let _ = tray::refresh_language(&app);
+    let _ = tray::refresh(&app);
     Ok(settings)
 }
 #[tauri::command]
@@ -87,6 +87,11 @@ fn window_visible<R: tauri::Runtime>(app: tauri::AppHandle<R>) -> Result<bool, C
         })
         .unwrap_or(Ok(false))
         .map_err(CommandError::from_error)
+}
+
+#[tauri::command]
+fn desktop_navigation(state: State<'_, Desktop>) -> Option<DesktopNavigation> {
+    *state.navigation.lock().unwrap()
 }
 
 #[tauri::command]
@@ -371,6 +376,7 @@ pub(super) fn register<R: tauri::Runtime>(builder: tauri::Builder<R>) -> tauri::
         .manage(Desktop::default())
         .invoke_handler(tauri::generate_handler![
             window_visible,
+            desktop_navigation,
             language_settings,
             set_language,
             status,
@@ -557,6 +563,35 @@ pub(crate) mod tests {
             String::from_utf8_lossy(&output.stderr)
         );
         Ok(())
+    }
+
+    #[test]
+    fn tray_shortcuts_retain_the_latest_navigation_without_changing_membership() -> Result<()> {
+        isolated(
+            "tray_shortcuts_retain_the_latest_navigation_without_changing_membership",
+            || {
+                let (app, window) = build_app();
+                assert_eq!(
+                    invoke(&window, "desktop_navigation", json!({})),
+                    Ok(Value::Null)
+                );
+                for (id, expected) in [
+                    ("activity", json!({"revision":1,"page":"activity"})),
+                    ("show", json!({"revision":1,"page":"activity"})),
+                    ("settings", json!({"revision":2,"page":"settings"})),
+                ] {
+                    tray::menu_event(app.handle(), tauri::menu::MenuEvent { id: id.into() });
+                    assert_eq!(
+                        invoke(&window, "desktop_navigation", json!({})),
+                        Ok(expected)
+                    );
+                }
+                let status = local_status(app.handle())?;
+                assert!(!status.local.joined && !status.local.daemon_running);
+                assert!(!config::device_dir()?.join("identity.toml").exists());
+                Ok(())
+            },
+        )
     }
 
     pub(crate) fn build_app() -> (tauri::App<MockRuntime>, tauri::WebviewWindow<MockRuntime>) {

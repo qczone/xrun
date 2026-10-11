@@ -1,6 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { Device } from "../../api";
 import { useOperations } from "../../app/useOperations";
+import { Icon } from "../../components/Icon";
 import { t } from "../../i18n";
 
 interface Props {
@@ -84,7 +85,7 @@ export function DeviceMenu({
           toggle();
         }}
       >
-        {t("devices.more")}
+        <Icon name="more" />
       </summary>
       <div ref={body} className="device-more-body">
         <span className="field-help">{t("common.deviceId")}</span>

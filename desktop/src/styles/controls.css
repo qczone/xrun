@@ -10,13 +10,14 @@ button {
   align-items: center;
   justify-content: center;
   gap: 7px;
-  min-height: 36px;
+  min-height: 34px;
   padding: 7px 12px;
   border: 1px solid var(--border);
   border-radius: 7px;
   background: var(--card);
   color: var(--text);
-  font-weight: 550;
+  font-weight: 500;
+  font-size: 13px;
   cursor: pointer;
   white-space: nowrap;
   transition:
@@ -89,8 +90,8 @@ pre:focus-visible {
 .switch {
   display: inline-flex;
   position: relative;
-  width: 34px;
-  height: 20px;
+  width: 29px;
+  height: 18px;
   flex-shrink: 0;
 }
 
@@ -106,8 +107,8 @@ pre:focus-visible {
 }
 
 .switch-track {
-  width: 34px;
-  height: 20px;
+  width: 29px;
+  height: 18px;
   border-radius: 20px;
   background: #c6ccd3;
   transition: background 0.18s;
@@ -116,8 +117,8 @@ pre:focus-visible {
 .switch-track:after {
   content: "";
   position: absolute;
-  left: 3px;
-  top: 3px;
+  left: 2px;
+  top: 2px;
   height: 14px;
   width: 14px;
   border-radius: 50%;
@@ -131,7 +132,7 @@ pre:focus-visible {
 }
 
 .switch input:checked + .switch-track:after {
-  transform: translateX(14px);
+  transform: translateX(11px);
 }
 
 .switch input:focus-visible + .switch-track {

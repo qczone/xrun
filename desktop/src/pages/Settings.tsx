@@ -15,22 +15,25 @@ import {
 import { Icon } from "../components/Icon";
 import { ErrorNotice } from "../components/ErrorNotice";
 import { LanguageSelect } from "../components/LanguageSelect";
-import { Logo } from "../components/Logo";
-import { errorText, osName, serviceState } from "../format";
+import { NetworkSettings } from "./settings/NetworkSettings";
+import { errorText, osName } from "../format";
 import { t } from "../i18n";
 
 interface Props {
   status: Status | null;
   feedback: ReactNode;
+  networkSettingsRequest: number;
 }
 
-export function SettingsPage({ status, feedback }: Props) {
+export function SettingsPage({
+  status,
+  feedback,
+  networkSettingsRequest,
+}: Props) {
   const {
     busy,
     pending,
     action,
-    stop,
-    confirm,
     notify,
     reportError: onError,
   } = useOperations();
@@ -75,7 +78,6 @@ export function SettingsPage({ status, feedback }: Props) {
     settings !== null &&
     JSON.stringify(execution) !== JSON.stringify(settings.execution);
   const disabled = busy || !joined || !settings;
-  const [badge, serviceTone] = serviceState(status);
   const local = status?.local;
   const service = status?.service;
 
@@ -88,8 +90,15 @@ export function SettingsPage({ status, feedback }: Props) {
         </div>
       </div>
       {feedback}
+      {loadError && (
+        <ErrorNotice
+          title={t("settings.loadFailed")}
+          detail={loadError}
+          retry={() => void loadSettings()}
+        />
+      )}
       <div className="settings-section">
-        <h2>{t("settings.startup")}</h2>
+        <h2>{t("settings.general")}</h2>
         <section className="panel">
           <LanguageSelect />
           <label className="setting-row" htmlFor="autostart">
@@ -137,7 +146,6 @@ export function SettingsPage({ status, feedback }: Props) {
       <div className="settings-section">
         <h2>{t("settings.activity")}</h2>
         <form
-          className="panel padded"
           id="retention-form"
           onSubmit={async (event) => {
             event.preventDefault();
@@ -162,67 +170,51 @@ export function SettingsPage({ status, feedback }: Props) {
             }
           }}
         >
-          <div className="concurrency-row">
+          <div className="setting-row">
             <div>
               <label htmlFor="attachment-retention">
                 {t("settings.retentionDays")}
               </label>
-              <p className="field-help">{t("settings.retentionHint")}</p>
+              <small>{t("settings.retentionHint")}</small>
             </div>
-            <input
-              id="attachment-retention"
-              type="number"
-              min="0"
-              max="3650"
-              required
-              disabled={busy || !settings}
-              value={retention}
-              onChange={(event) => setRetention(event.target.value)}
-            />
-          </div>
-          <p className="field-help">{t("settings.retentionCleanupHint")}</p>
-          <div className="form-footer">
-            <span
-              className={
-                settings &&
-                Number(retention) !== settings.attachment_retention_days
-                  ? "dirty"
-                  : ""
-              }
-            >
+            <div className="retention-controls">
+              <input
+                id="attachment-retention"
+                type="number"
+                min="0"
+                max="3650"
+                required
+                disabled={busy || !settings}
+                value={retention}
+                onChange={(event) => setRetention(event.target.value)}
+              />
               {settings &&
-              Number(retention) !== settings.attachment_retention_days
-                ? t("settings.unsaved")
-                : t("settings.retentionSavedHint")}
-            </span>
-            <button
-              type="submit"
-              className="primary"
-              disabled={
-                busy ||
-                !settings ||
-                Number(retention) === settings.attachment_retention_days
-              }
-            >
-              {pending === "save_attachment_retention"
-                ? t("common.saving")
-                : t("settings.saveRetention")}
-            </button>
+                Number(retention) !== settings.attachment_retention_days && (
+                  <button className="primary" type="submit" disabled={busy}>
+                    {t("settings.saveRetention")}
+                  </button>
+                )}
+            </div>
           </div>
+          {settings &&
+            Number(retention) > 0 &&
+            (settings.attachment_retention_days === 0 ||
+              Number(retention) < settings.attachment_retention_days) && (
+              <p className="field-help retention-cleanup-hint">
+                {t("settings.retentionCleanupHint")}
+              </p>
+            )}
         </form>
       </div>
-      <div className="settings-section">
-        <h2>{t("settings.execution")}</h2>
-        {loadError && (
-          <ErrorNotice
-            title={t("settings.loadFailed")}
-            detail={loadError}
-            retry={() => void loadSettings()}
-          />
-        )}
+      <details className="settings-disclosure" id="execution-settings">
+        <summary>
+          <span>{t("settings.execution")}</span>
+          <small>{t("settings.executionSummary")}</small>
+          <Icon name="arrow" />
+        </summary>
         <form
           id="execution-form"
-          className="panel padded"
+          className="settings-disclosure-content"
           onSubmit={async (event) => {
             event.preventDefault();
             if (disabled || !dirty) return;
@@ -237,7 +229,7 @@ export function SettingsPage({ status, feedback }: Props) {
         >
           <div className="field-heading">
             <label htmlFor="cwd">{t("settings.defaultCwd")}</label>
-            <span className="field-tag">{t("settings.newTasks")}</span>
+            <span className="field-tag">{t("settings.newJobs")}</span>
           </div>
           <div className="input-with-button">
             <input
@@ -321,104 +313,37 @@ export function SettingsPage({ status, feedback }: Props) {
           </div>
           {!joined && <p className="field-help">{t("settings.joinFirst")}</p>}
         </form>
-      </div>
-      <div className="settings-section">
-        <h2>{t("service.title")}</h2>
-        <section className="panel">
-          <div className="setting-row">
-            <span>
-              <strong>
-                {t("settings.serviceState")}
-                <span className={`inline-status ${serviceTone}`}>{badge}</span>
-              </strong>
-              <small>
-                {service?.development
-                  ? t("settings.developmentServiceHint")
-                  : t("settings.serviceHint")}
-              </small>
-            </span>
-            <button
-              className="subtle"
-              disabled={busy || !joined}
-              onClick={() =>
-                local?.daemon_running
-                  ? void stop()
-                  : void action({ command: "start" })
-              }
-            >
-              {pending === "start"
-                ? t("common.starting")
-                : pending === "stop"
-                  ? t("common.stopping")
-                  : local?.daemon_running
-                    ? t("service.stop")
-                    : t("service.start")}
-            </button>
-          </div>
-          {service?.legacy_installed && !service.development && (
-            <div className="inline-notice">{t("settings.legacyHint")}</div>
-          )}
-          {local?.daemon_installed && (
-            <div className="setting-row">
-              <span>
-                <strong>{t("settings.removeService")}</strong>
-                <small>{t("settings.removeHint")}</small>
-              </span>
-              <button
-                className="danger-button"
-                disabled={busy}
-                onClick={async () => {
-                  if (
-                    await confirm(
-                      t("settings.removeTitle"),
-                      t("settings.removeMessage"),
-                      { label: t("settings.removeService"), tone: "danger" },
-                    )
-                  )
-                    await action({ command: "remove_service" });
-                }}
-              >
-                {pending === "remove_service"
-                  ? t("common.removing")
-                  : t("settings.remove")}
-              </button>
-            </div>
-          )}
-        </section>
-      </div>
-      <div className="settings-section">
-        <h2>{t("settings.about")}</h2>
-        <section className="panel">
-          <div className="setting-row">
-            <div className="about-brand">
-              <Logo />
-              <small>{t("settings.tagline")}</small>
-            </div>
-            <span className="mono muted">{local?.version}</span>
-          </div>
-          <div className="setting-row">
-            <span>
-              <strong>{t("settings.system")}</strong>
-              <small>
-                {settings ? osName(settings.os) : t("common.loading")}
-              </small>
-            </span>
-          </div>
-          <div className="setting-row data-row">
-            <span>
-              <strong>{t("settings.dataDir")}</strong>
-              <small>{t("settings.dataHint")}</small>
-            </span>
-            <input
-              type="text"
-              readOnly
-              aria-label={t("settings.dataDir")}
-              value={settings?.data_dir || ""}
-              onFocus={(event) => event.target.select()}
-            />
-          </div>
-        </section>
-      </div>
+      </details>
+      <NetworkSettings status={status} openRequest={networkSettingsRequest} />
+      <details className="settings-about">
+        <summary>
+          <Icon name="lock" />
+          xrun {local?.version}
+          <span>·</span>
+          {t("settings.about")}
+        </summary>
+        <div className="setting-row">
+          <span>
+            <strong>{t("settings.system")}</strong>
+            <small>
+              {settings ? osName(settings.os) : t("common.loading")}
+            </small>
+          </span>
+        </div>
+        <div className="setting-row data-row">
+          <span>
+            <strong>{t("settings.dataDir")}</strong>
+            <small>{t("settings.dataHint")}</small>
+          </span>
+          <input
+            type="text"
+            readOnly
+            aria-label={t("settings.dataDir")}
+            value={settings?.data_dir || ""}
+            onFocus={(event) => event.target.select()}
+          />
+        </div>
+      </details>
     </>
   );
 }

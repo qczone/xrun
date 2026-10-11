@@ -1,0 +1,35 @@
+.network-setup {
+  max-width: 440px;
+  margin: 28px auto 0;
+}
+.network-setup-form {
+  margin-top: 22px;
+}
+.setup-tabs {
+  display: flex;
+  gap: 5px;
+  margin-bottom: 24px;
+}
+.setup-tabs button {
+  font-size: 12px;
+  border: 0;
+  color: var(--muted);
+  background: transparent;
+}
+.setup-tabs button.selected {
+  background: var(--soft);
+  color: var(--accent);
+}
+.setup-description {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.7;
+}
+.setup-help {
+  margin: 15px 0;
+  color: var(--muted);
+  font-size: 12px;
+}
+.network-setup .hero-actions .primary {
+  flex: 1;
+}

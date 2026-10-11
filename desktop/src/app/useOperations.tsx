@@ -12,23 +12,23 @@ import {
   type Confirm,
   type Operation,
   type PendingOperation,
+  type DesktopPage,
 } from "../api";
 import { errorCode, errorText } from "../errors";
-export type Page = "overview" | "devices" | "history" | "settings";
-export interface Activity {
+export interface InteractionState {
   busy: boolean;
   confirming: boolean;
 }
 export function useOperationController(
-  page: Page,
+  page: DesktopPage,
   refreshStatus: () => Promise<unknown>,
   confirm: Confirm,
-  activity: RefObject<Activity>,
+  interactionState: RefObject<InteractionState>,
   clearStatusError: () => void,
 ) {
   const [pending, setPending] = useState<PendingOperation | null>(null);
   const [error, setError] = useState<{
-    page: Page;
+    page: DesktopPage;
     title: PlainMessageKey;
     detail: string;
   } | null>(null);
@@ -39,8 +39,8 @@ export function useOperationController(
     return () => clearTimeout(timer);
   }, [toast]);
   const operate: Operation = async (operation, context) => {
-    if (activity.current.busy) return undefined;
-    activity.current.busy = true;
+    if (interactionState.current.busy) return undefined;
+    interactionState.current.busy = true;
     const origin = page;
     setPending(context.name);
     setError(null);
@@ -58,7 +58,7 @@ export function useOperationController(
       setError({ page: origin, title, detail });
     } finally {
       await refreshStatus();
-      activity.current.busy = false;
+      interactionState.current.busy = false;
       setPending(null);
     }
   };

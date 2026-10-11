@@ -1,22 +1,22 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { api, type Job, type TaskFilter } from "../../api";
+import { api, type Job, type ActivityFilter } from "../../api";
 import { errorText } from "../../errors";
-export function useRecordHistory(
+export function useActivityFeed(
   active: boolean,
   paused: boolean,
   selected: boolean,
 ) {
-  const [filter, setFilter] = useState<TaskFilter>("all");
+  const [filter, setFilter] = useState<ActivityFilter>("all");
   const [pagination, setPagination] = useState<{
     cursors: (string | null)[];
     index: number;
   }>({ cursors: [null], index: 0 });
-  const [next, setNext] = useState<string | null>(null);
-  const [entries, setEntries] = useState<Job[]>([]);
+  const [nextCursor, setNextCursor] = useState<string | null>(null);
+  const [jobs, setJobs] = useState<Job[]>([]);
   const [dbId, setDbId] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [refresh, setRefresh] = useState(0);
+  const [refreshVersion, setRefreshVersion] = useState(0);
   const request = useRef(0);
   const cursor = pagination.cursors[pagination.index] ?? null;
 
@@ -32,9 +32,9 @@ export function useRecordHistory(
       try {
         const result = await api.activity(cursor, filter);
         if (disposed || token !== request.current) return;
-        setEntries(result.entries);
+        setJobs(result.entries);
         setDbId(result.db_id);
-        setNext(result.next_cursor);
+        setNextCursor(result.next_cursor);
         setError(null);
       } catch (e) {
         if (!disposed && token === request.current) setError(errorText(e));
@@ -50,40 +50,40 @@ export function useRecordHistory(
       request.current++;
       clearInterval(timer);
     };
-  }, [active, paused, selected, filter, cursor, refresh]);
+  }, [active, paused, selected, filter, cursor, refreshVersion]);
 
   const reset = useCallback(() => {
     setPagination({ cursors: [null], index: 0 });
-    setNext(null);
+    setNextCursor(null);
     setError(null);
   }, []);
-  const selectFilter = (value: TaskFilter) => {
+  const selectFilter = (value: ActivityFilter) => {
     setFilter(value);
     reset();
   };
   const previousPage = () =>
     setPagination((value) => ({ ...value, index: value.index - 1 }));
   const nextPage = () => {
-    if (next !== null)
+    if (nextCursor !== null)
       setPagination((value) => ({
         index: value.index + 1,
-        cursors: [...value.cursors.slice(0, value.index + 1), next],
+        cursors: [...value.cursors.slice(0, value.index + 1), nextCursor],
       }));
   };
   return {
     filter,
     pagination,
-    next,
-    entries,
+    nextCursor,
+    jobs,
     dbId,
     loading,
     error,
-    refresh,
+    refreshVersion,
     selectFilter,
     previousPage,
     nextPage,
     clearLoading: () => setLoading(false),
     clearError: () => setError(null),
-    refreshRecords: () => setRefresh((value) => value + 1),
+    refreshActivities: () => setRefreshVersion((value) => value + 1),
   };
 }

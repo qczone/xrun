@@ -1,42 +1,46 @@
-import { useRef, useState } from "react";
+import { useCallback, useRef, useState } from "react";
+import type { DesktopPage } from "./api";
 import { Icon, IconDefinitions, type IconName } from "./components/Icon";
 import { ErrorNotice } from "./components/ErrorNotice";
-import { serviceLabel } from "./format";
+import { LocalDeviceBar } from "./components/LocalDeviceBar";
 import { t, useLanguage } from "./i18n";
 import { Logo } from "./components/Logo";
-import { Overview } from "./pages/Overview";
 import { Devices } from "./pages/Devices";
 import { SettingsPage } from "./pages/Settings";
-import { History } from "./pages/History";
+import { ActivityPage } from "./pages/Activity";
 import { useStatus } from "./app/useStatus";
 import { useWindowVisible } from "./app/useWindowVisible";
+import { useTrayNavigation } from "./app/useTrayNavigation";
 import { useDevices } from "./app/useDevices";
 import { ConfirmationDialog, useConfirmation } from "./app/useConfirmation";
 import {
   OperationsContext,
   useOperationController,
-  type Activity,
-  type Page,
+  type InteractionState,
 } from "./app/useOperations";
+
 export function App() {
   useLanguage();
-  const pages: { id: Page; label: string; icon: IconName }[] = [
-    { id: "overview", label: t("nav.overview"), icon: "monitor" },
+  const pages: { id: DesktopPage; label: string; icon: IconName }[] = [
     { id: "devices", label: t("nav.devices"), icon: "devices" },
-    { id: "history", label: t("nav.history"), icon: "terminal" },
+    { id: "activity", label: t("nav.activity"), icon: "activity" },
     { id: "settings", label: t("nav.settings"), icon: "settings" },
   ];
-  const [page, setPage] = useState<Page>("overview");
+  const [page, setPage] = useState<DesktopPage>("devices");
+  const [networkSettingsRequest, setNetworkSettingsRequest] = useState(0);
   const main = useRef<HTMLElement>(null);
-  const activity = useRef<Activity>({ busy: false, confirming: false });
+  const interactionState = useRef<InteractionState>({
+    busy: false,
+    confirming: false,
+  });
   const visible = useWindowVisible();
-  const statusController = useStatus(activity, visible);
-  const confirmation = useConfirmation(activity);
+  const statusController = useStatus(interactionState, visible);
+  const confirmation = useConfirmation(interactionState);
   const operations = useOperationController(
     page,
     statusController.refresh,
     confirmation.confirm,
-    activity,
+    interactionState,
     statusController.clearError,
   );
   const { status, error: statusError } = statusController;
@@ -47,22 +51,19 @@ export function App() {
     busy || confirmation.active,
     visible,
   );
-  const { devices } = members;
-  const navigate = (next: Page) => {
+  const deviceCount = members.devices.filter(
+    (device) => device.device_id !== status?.local.device_id && !device.revoked,
+  ).length;
+  const navigate = useCallback((next: DesktopPage) => {
     setPage(next);
     if (main.current) main.current.scrollTop = 0;
+  }, []);
+  useTrayNavigation(navigate);
+  const openNetworkSettings = () => {
+    navigate("settings");
+    setNetworkSettingsRequest((value) => value + 1);
   };
-  const others = devices.filter(
-    (device) => device.device_id !== status?.local.device_id,
-  );
-  const [badge] = serviceLabel(status);
-  const stateTone =
-    status?.local.remote_access_paused || status?.service.approval_required
-      ? "warning"
-      : status?.local.daemon_connected === true
-        ? "online"
-        : "";
-  const feedback = (origin: Page) =>
+  const feedback = (origin: DesktopPage) =>
     error?.page === origin ? (
       <ErrorNotice
         title={error.title}
@@ -73,7 +74,6 @@ export function App() {
         }}
       />
     ) : null;
-
   return (
     <OperationsContext.Provider value={operations}>
       <IconDefinitions />
@@ -92,81 +92,66 @@ export function App() {
               onClick={() => navigate(item.id)}
             >
               <Icon name={item.icon} />
-              {item.label}
-              {item.id === "devices" &&
-                others.some((device) => !device.revoked) && (
-                  <span className="nav-count">
-                    {others.filter((device) => !device.revoked).length}
-                  </span>
-                )}
+              <span className="nav-label">{item.label}</span>
+              {item.id === "devices" && deviceCount > 0 && (
+                <span className="nav-count" aria-hidden="true">
+                  {deviceCount}
+                </span>
+              )}
             </button>
           ))}
         </nav>
         <div className="sidebar-bottom">
-          <div className="sidebar-device">
-            <span className={`dot ${stateTone}`} />
-            <div>
-              <strong>{status?.local.name || t("common.localDevice")}</strong>
-              <span>{badge}</span>
-            </div>
-          </div>
-          {pending && (
-            <span className="operation-progress" role="status">
-              {t(`operation.${pending}`)}
-            </span>
-          )}
-          <span className="version">
-            {status && `v${status.local.version}`}
-          </span>
+          <span className="version">{status && status.local.version}</span>
+          <Icon name="lock" />
         </div>
       </aside>
       <div className="workspace">
+        {status?.local.joined && (
+          <LocalDeviceBar
+            status={status}
+            active={visible}
+            openNetworkSettings={openNetworkSettings}
+          />
+        )}
         <main ref={main} aria-busy={busy}>
           {statusError && statusError !== error?.detail && (
             <ErrorNotice
               title={t("error.status")}
               detail={statusError}
               retry={() => void statusController.refresh()}
-              dismiss={() => {
-                statusController.dismiss(statusError);
-              }}
+              dismiss={() => statusController.dismiss(statusError)}
             />
           )}
-          <section
-            id="page-overview"
-            className="page"
-            hidden={page !== "overview"}
-          >
-            <Overview
-              active={visible && page === "overview" && !confirmation.active}
-              devices={devices}
-              status={status}
-              feedback={feedback("overview")}
-              navigate={navigate}
-            />
-          </section>
+          {pending && (
+            <span className="operation-progress sr-only" role="status">
+              {t(`operation.${pending}`)}
+            </span>
+          )}
           <section
             id="page-devices"
             className="page"
             hidden={page !== "devices"}
           >
             <Devices
-              active={page === "devices"}
+              active={visible && page === "devices"}
+              paused={confirmation.active}
               status={status}
               members={members}
               feedback={feedback("devices")}
             />
           </section>
           <section
-            id="page-history"
+            id="page-activity"
             className="page"
-            hidden={page !== "history"}
+            hidden={page !== "activity"}
           >
-            <History
-              active={visible && page === "history"}
+            <ActivityPage
+              active={visible && page === "activity"}
               paused={confirmation.active}
               status={status}
-              devices={devices}
+              devices={members.devices}
+              feedback={feedback("activity")}
             />
           </section>
           <section
@@ -174,7 +159,11 @@ export function App() {
             className="page"
             hidden={page !== "settings"}
           >
-            <SettingsPage status={status} feedback={feedback("settings")} />
+            <SettingsPage
+              status={status}
+              feedback={feedback("settings")}
+              networkSettingsRequest={networkSettingsRequest}
+            />
           </section>
         </main>
         {toast && (

@@ -35,7 +35,7 @@ export function NetworkSetup({
   if (joined && (!retry || startFailed)) return null;
 
   return (
-    <section className="panel padded">
+    <section className="network-setup">
       {!joined && (
         <div className="setup-tabs" aria-label={t("setup.connectionMethod")}>
           {(["join", "create"] as const).map((value) => (
@@ -57,10 +57,9 @@ export function NetworkSetup({
           ))}
         </div>
       )}
-      <div className="section-title">
-        <h2>{creating ? t("setup.createHere") : t("setup.joinExisting")}</h2>
-        <p>{creating ? t("setup.createHint") : t("setup.joinHint")}</p>
-      </div>
+      <p className="setup-description">
+        {creating ? t("setup.createHint") : t("setup.joinHint")}
+      </p>
       <form
         className="network-setup-form"
         id={creating ? "create-network-form" : "join-form"}
@@ -102,7 +101,7 @@ export function NetworkSetup({
           id="setup-name"
           type="text"
           placeholder={t("setup.namePlaceholder")}
-          pattern="[a-z][a-z0-9-]{0,31}"
+          pattern="[a-z](?:[a-z0-9]|-){0,31}"
           maxLength={32}
           autoComplete="off"
           spellCheck={false}

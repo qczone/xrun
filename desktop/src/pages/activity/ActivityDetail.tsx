@@ -1,31 +1,32 @@
 import { useEffect, useState } from "react";
 import { api, type Job } from "../../api";
 import { errorCode } from "../../errors";
+import { Icon } from "../../components/Icon";
 import { ErrorNotice } from "../../components/ErrorNotice";
-import { duration, errorText, isRunning, recordTime } from "../../format";
+import { duration, errorText, isRunning, dateTime } from "../../format";
 import { t } from "../../i18n";
-import { StateChip } from "./TaskState";
+import { ActivityState } from "./ActivityState";
 import { AttachmentPanel } from "./AttachmentPanel";
 import { jobDescription, jobDuration, operationLabel } from "./operation";
 interface Props {
   selection: { job: Job; dbId: string };
   active: boolean;
   paused: boolean;
-  refresh: number;
+  refreshVersion: number;
   deviceLabel: (id: string) => string;
   onLoading: (value: boolean) => void;
   retry: () => void;
-  back: () => void;
+  onClose: () => void;
 }
-export function JobDetail({
+export function ActivityDetail({
   selection,
   active,
   paused,
-  refresh,
+  refreshVersion,
   deviceLabel,
   onLoading,
   retry,
-  back,
+  onClose,
 }: Props) {
   const [job, setJob] = useState(selection.job);
   const [error, setError] = useState<string | null>(null);
@@ -75,7 +76,7 @@ export function JobDetail({
       disposed = true;
       clearInterval(timer);
     };
-  }, [active, paused, refresh, dbId, id]);
+  }, [active, paused, refreshVersion, dbId, id]);
   useEffect(() => {
     onLoading(loading || previewLoading);
     return () => onLoading(false);
@@ -90,26 +91,34 @@ export function JobDetail({
       : null;
   const hasAttachment = ["push", "pull", "screenshot"].includes(job.kind);
   return (
-    <section id="job-detail">
-      <button className="history-back" onClick={back}>
-        {t("output.back")}
+    <section id="activity-job-detail">
+      <button
+        className="activity-close icon-button"
+        aria-label={t("activity.closeDetails")}
+        onClick={onClose}
+      >
+        <Icon name="close" />
       </button>
       <article className="panel padded">
-        <div className="task-title">
+        <div className="activity-detail-title">
           <h2>{operationLabel(job.kind)}</h2>
-          <StateChip job={job} />
+          <ActivityState job={job} />
         </div>
         {jobDescription(job) && (
-          <p className="record-command mono">{jobDescription(job)}</p>
+          <p className="activity-description mono">{jobDescription(job)}</p>
         )}
-        <div className="task-summary-meta">
+        <div className="activity-detail-meta">
           <span>
-            {t("history.source", { name: deviceLabel(job.source_device_id) })}
+            {t("activity.source", { name: deviceLabel(job.source_device_id) })}
           </span>
-          <span>{recordTime(job.created_at_ms)}</span>
+          <span>{dateTime(job.created_at_ms)}</span>
         </div>
-        <details className="task-facts">
-          <summary>{t("output.details", { id: job.job_id })}</summary>
+        <details className="activity-detail-facts">
+          <summary>{t("activity.technicalDetails")}</summary>
+          <div className="panel-row">
+            <span>Job ID</span>
+            <code>{job.job_id}</code>
+          </div>
           <div className="panel-row">
             <span>{t("output.sourceId")}</span>
             <code>{job.source_device_id}</code>
@@ -127,14 +136,14 @@ export function JobDetail({
           {job.started_at_ms !== null && (
             <div className="panel-row">
               <span>{t("output.startedAt")}</span>
-              <span>{recordTime(job.started_at_ms)}</span>
+              <span>{dateTime(job.started_at_ms)}</span>
             </div>
           )}
         </details>
         {elapsed !== null && (
           <div className="panel-row">
             <span>
-              {t("history.duration", { duration: duration(elapsed) })}
+              {t("activity.duration", { duration: duration(elapsed) })}
             </span>
             {command && (
               <span>
@@ -149,8 +158,8 @@ export function JobDetail({
         )}
         {job.finished_at_ms !== null && (
           <div className="panel-row">
-            <span>{t("history.endedAt")}</span>
-            <span>{recordTime(job.finished_at_ms)}</span>
+            <span>{t("activity.endedAt")}</span>
+            <span>{dateTime(job.finished_at_ms)}</span>
           </div>
         )}
         {job.error_message && (
@@ -166,7 +175,7 @@ export function JobDetail({
           metadata={attachment}
           active={active}
           paused={paused}
-          refresh={refresh}
+          refreshVersion={refreshVersion}
           onLoading={setPreviewLoading}
           retry={retry}
         />
@@ -188,7 +197,7 @@ export function JobDetail({
       )}
       {error && (
         <ErrorNotice
-          title={t("history.loadFailed")}
+          title={t("activity.loadFailed")}
           detail={error}
           retry={retry}
           dismiss={() => setError(null)}

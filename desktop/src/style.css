@@ -4,7 +4,8 @@
 @import "./styles/layout.css";
 @import "./styles/controls.css";
 @import "./styles/components.css";
-@import "./pages/overview.css";
+@import "./styles/network.css";
+@import "./styles/traffic.css";
 @import "./pages/devices/style.css";
-@import "./pages/history/style.css";
+@import "./pages/activity/style.css";
 @import "./pages/settings.css";

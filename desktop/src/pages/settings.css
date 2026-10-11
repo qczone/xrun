@@ -1,15 +1,100 @@
+#page-settings {
+  max-width: 900px;
+  margin-left: 0;
+}
 .settings-section {
-  margin-bottom: 24px;
+  margin-bottom: 25px;
 }
-
 .settings-section > h2 {
-  margin: 0 0 10px 2px;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--muted);
+  margin: 0;
+  padding-bottom: 9px;
+  border-bottom: 1px solid var(--border);
 }
-
 .settings-section .panel {
-  margin-bottom: 0;
+  border: 0;
+  background: transparent;
+  border-radius: 0;
+  margin: 0;
 }
-
+.settings-section .setting-row,
+.settings-disclosure .setting-row,
+.settings-about .setting-row {
+  padding: 16px 0;
+  min-height: 66px;
+}
+.settings-section .setting-row strong,
+.settings-disclosure .setting-row strong {
+  font-size: 13px;
+}
+.settings-section .setting-row small,
+.settings-disclosure .setting-row small {
+  font-size: 11px;
+}
+.settings-section .setting-row label {
+  font-size: 13px;
+  margin: 0;
+}
+.retention-controls {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-shrink: 0;
+}
+.retention-controls input {
+  width: 72px;
+  font-size: 12px;
+}
+.retention-controls button {
+  font-size: 11px;
+}
+.settings-disclosure {
+  border-top: 1px solid var(--border);
+}
+.settings-disclosure > summary {
+  display: flex;
+  align-items: center;
+  gap: 15px;
+  list-style: none;
+  padding: 18px 0;
+  font-size: 13px;
+}
+.settings-disclosure > summary::-webkit-details-marker {
+  display: none;
+}
+.settings-disclosure > summary small {
+  margin-left: auto;
+  color: var(--muted);
+  font-size: 11px;
+}
+.settings-disclosure > summary .icon {
+  width: 14px;
+  height: 14px;
+  color: var(--muted);
+}
+.settings-disclosure[open] > summary .icon {
+  transform: rotate(90deg);
+}
+.settings-disclosure-content {
+  padding: 2px 0 22px;
+}
+.network-facts {
+  display: grid;
+  grid-template-columns: 88px minmax(0, 1fr);
+  gap: 12px 14px;
+  font-size: 12px;
+  margin: 0 0 18px;
+}
+.network-facts dt {
+  color: var(--muted);
+}
+.network-facts dd {
+  margin: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
 .concurrency-row {
   display: flex;
   justify-content: space-between;
@@ -19,35 +104,28 @@
   padding-top: 18px;
   border-top: 1px solid var(--border);
 }
-
 .concurrency-row label {
   margin: 0;
 }
-
 .concurrency-row .field-help {
   margin-top: 3px;
 }
-
 .concurrency-row input {
   width: 86px;
   flex-shrink: 0;
 }
-
 .advanced {
   border-top: 1px solid var(--border);
   margin-top: 20px;
   padding-top: 16px;
 }
-
 .advanced > summary {
-  font-size: 13px;
+  font-size: 12px;
   color: var(--muted);
 }
-
 .advanced textarea {
   margin-top: 12px;
 }
-
 .form-footer {
   flex-wrap: wrap;
   border-top: 1px solid var(--border);
@@ -58,31 +136,39 @@
   align-items: center;
   gap: 12px;
 }
-
 .form-footer span {
-  font-size: 12px;
+  font-size: 11px;
   color: var(--muted);
 }
-
 .form-footer .dirty {
   color: var(--accent);
 }
-
-.about-brand {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 4px;
+.settings-about {
+  border-top: 1px solid var(--border);
+  padding-top: 22px;
 }
-
+.settings-about > summary {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  list-style: none;
+  color: var(--muted);
+  font-size: 10px;
+}
+.settings-about > summary::-webkit-details-marker {
+  display: none;
+}
+.settings-about > summary .icon {
+  width: 12px;
+  height: 12px;
+}
 .data-row {
   align-items: flex-start;
   flex-direction: column;
   gap: 12px;
 }
-
 .data-row input {
-  background: var(--bg);
+  background: var(--sidebar);
   font:
     12px/1.6 ui-monospace,
     SFMono-Regular,
@@ -92,7 +178,17 @@
   border: 0;
   cursor: text;
 }
-
-.about-brand + span {
-  font-size: 12px;
+@media (max-width: 720px) {
+  .settings-disclosure > summary {
+    gap: 9px;
+  }
+  .settings-disclosure > summary small {
+    font-size: 10px;
+    text-align: right;
+  }
+  .retention-controls {
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    max-width: 110px;
+  }
 }

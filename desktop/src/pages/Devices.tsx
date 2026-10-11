@@ -5,26 +5,33 @@ import type { useDevices } from "../app/useDevices";
 import { Icon } from "../components/Icon";
 import { t } from "../i18n";
 import { ErrorNotice } from "../components/ErrorNotice";
-import { DeviceCard } from "./devices/DeviceCard";
+import { NetworkSetup } from "../components/NetworkSetup";
+import { TrafficSummary } from "../components/TrafficSummary";
+import { DeviceRow } from "./devices/DeviceRow";
 import { InvitationDialog } from "./devices/InvitationDialog";
 import { RevocationResult } from "./devices/RevocationResult";
 import { useMembership } from "./devices/useMembership";
+
 interface Props {
   active: boolean;
+  paused: boolean;
   status: Status | null;
   members: ReturnType<typeof useDevices>;
   feedback: ReactNode;
 }
-export function Devices({ active, status, members, feedback }: Props) {
-  const { busy, confirm, action, notify } = useOperations();
+export function Devices({ active, paused, status, members, feedback }: Props) {
+  const { busy, pending, confirm, action } = useOperations();
   const { loading, error: listError, message, refresh } = members;
   const devices = members.devices.filter(
     (device) => device.device_id !== status?.local.device_id,
   );
   const network = status?.network;
+  const joined = !!status?.local.joined;
   const manager = !!network?.is_manager;
   const [inviteOpen, setInviteOpen] = useState(false);
   const [openDeviceId, setOpenDeviceId] = useState<string | null>(null);
+  const [deviceFilter, setDeviceFilter] = useState<"all" | "online">("all");
+  const [search, setSearch] = useState("");
   const {
     revocation,
     revoke,
@@ -33,25 +40,28 @@ export function Devices({ active, status, members, feedback }: Props) {
   useEffect(() => {
     setInviteOpen(false);
     setOpenDeviceId(null);
+    setDeviceFilter("all");
+    setSearch("");
   }, [network?.network_id]);
   useEffect(() => {
     if (!active) setOpenDeviceId(null);
     if (!active || !manager) setInviteOpen(false);
   }, [active, manager]);
-  const deviceName = (id: string) =>
-    devices.find((device) => device.device_id === id)?.name || id;
   const revokeMember = async (device: Device) => {
     if (
       await confirm(
         t("revoke.title", { name: device.name }),
         t("revoke.message"),
-        { label: t("revoke.confirm"), tone: "danger" },
+        {
+          label: t("revoke.confirm"),
+          tone: "danger",
+        },
       )
     )
       await revoke(device.device_id);
   };
   const renderDevice = (device: Device) => (
-    <DeviceCard
+    <DeviceRow
       key={device.device_id}
       device={device}
       status={status}
@@ -66,135 +76,154 @@ export function Devices({ active, status, members, feedback }: Props) {
     />
   );
   const currentMembers = devices.filter((device) => !device.revoked);
-  const revoked = devices.filter((device) => device.revoked);
+  const revokedMembers = devices.filter((device) => device.revoked);
+  const onlineCount = currentMembers.filter((device) => device.online).length;
+  const matchingMembers = currentMembers.filter(
+    (device) =>
+      (deviceFilter === "all" || device.online) &&
+      `${device.name} ${device.os || ""}`
+        .toLocaleLowerCase()
+        .includes(search.toLocaleLowerCase()),
+  );
   return (
     <>
       <div className="page-heading">
         <div>
-          <h1>{t("devices.title")}</h1>
+          <h1>{t(joined ? "devices.title" : "setup.connectTitle")}</h1>
           <p>
-            {manager
-              ? t("devices.managerDescription")
-              : t("devices.memberDescription")}
+            {t(joined ? "devices.description" : "setup.connectDescription")}
           </p>
         </div>
-        <div className="heading-actions">
+        {joined && manager && (
           <button
-            disabled={busy || loading || !status?.local.joined}
-            onClick={() => void refresh()}
+            className="primary"
+            disabled={busy}
+            onClick={() => setInviteOpen(true)}
           >
-            <Icon name="refresh" />
-            {loading ? t("common.refreshing") : t("common.refresh")}
+            <Icon name="plus" />
+            {t("invite.title")}
           </button>
-          {manager && (
-            <button
-              className="primary"
-              disabled={busy}
-              onClick={() => setInviteOpen(true)}
-            >
-              {t("invite.title")}
-            </button>
-          )}
-        </div>
+        )}
       </div>
       {!inviteOpen && feedback}
-      {listError && (
-        <ErrorNotice
-          title={
-            devices.length
-              ? t("devices.refreshFailed")
-              : t("devices.listFailed")
-          }
-          detail={listError}
-          retry={() => void refresh()}
-        />
-      )}
-      {status?.local.remote_access_paused && (
-        <div className="notice">
-          <Icon name="shield" />
-          <p>{t("devices.pausedHint")}</p>
-        </div>
-      )}
-      <div className="permission-note">
-        <Icon name="shield" />
-        <div>
-          <strong>{t("devices.direction")}</strong>
-          <p>{t("devices.permissionHint")}</p>
-        </div>
-      </div>
-      <section
-        className="panel device-list"
-        aria-label={t("devices.networkDevices")}
-      >
-        <div className="list-heading">
-          <span>{t("devices.members", { count: currentMembers.length })}</span>
-          <span>{t("devices.access")}</span>
-          <span />
-        </div>
-        <div id="devices">{currentMembers.map(renderDevice)}</div>
-        {!currentMembers.length && (
-          <div className="empty-state">
-            {loading ? t("devices.reading") : message}
-          </div>
-        )}
-      </section>
-      {revocation && (
-        <RevocationResult
-          result={revocation}
-          manager={manager}
-          deviceName={deviceName}
-          dismiss={dismissRevocation}
-          retry={() => revoke(revocation.device_id)}
-        />
-      )}
-      <details className="panel access-strategy">
-        <summary>
-          {t("devices.advanced")}
-          {status?.local.allow_all && (
-            <span className="role-label">{t("devices.allowAllEnabled")}</span>
-          )}
-        </summary>
-        <div className="setting-row">
-          <div>
-            <strong>{t("devices.allowAll")}</strong>
-            <p className="field-help">{t("devices.allowAllHint")}</p>
-          </div>
-          <label className="switch">
-            <input
-              type="checkbox"
-              aria-label={t("devices.allowAll")}
-              disabled={busy || !status?.local.joined}
-              checked={!!status?.local.allow_all}
-              onChange={async (event) => {
-                const allow = event.target.checked;
-                if (
-                  allow &&
-                  !(await confirm(
-                    t("devices.allowAllTitle"),
-                    t("devices.allowAllMessage"),
-                    { label: t("devices.allowAllConfirm") },
-                  ))
-                )
-                  return;
-                if (
-                  await action({ command: "all_permissions", args: { allow } })
-                )
-                  notify(allow ? "devices.allowAllOn" : "devices.allowAllOff");
-              }}
+      <NetworkSetup
+        joined={joined}
+        busy={busy}
+        pending={pending}
+        startFailed={
+          !!status?.error && status.error.code === "SERVICE_START_FAILED"
+        }
+        action={action}
+        onCreated={() => {}}
+      />
+      {joined && (
+        <>
+          {listError && (
+            <ErrorNotice
+              title={t(
+                devices.length ? "devices.refreshFailed" : "devices.listFailed",
+              )}
+              detail={listError}
+              retry={() => void refresh()}
             />
-            <span className="switch-track" />
-          </label>
-        </div>
-      </details>
-      {revoked.length > 0 && (
-        <details className="panel revoked-devices">
-          <summary>
-            {t("devices.revokedMembers", { count: revoked.length })}
-          </summary>
-          {revoked.map(renderDevice)}
-        </details>
+          )}
+          <div className="list-toolbar">
+            <div className="filter-tabs" aria-label={t("devices.filter")}>
+              {(["all", "online"] as const).map((filter) => (
+                <button
+                  key={filter}
+                  className={`filter-tab ${deviceFilter === filter ? "selected" : ""}`}
+                  aria-pressed={deviceFilter === filter}
+                  onClick={() => setDeviceFilter(filter)}
+                >
+                  {t(filter === "all" ? "devices.all" : "devices.online")}
+                  <span>
+                    {filter === "all" ? currentMembers.length : onlineCount}
+                  </span>
+                </button>
+              ))}
+            </div>
+            <div className="list-toolbar-actions">
+              <label className="list-search">
+                <Icon name="search" />
+                <input
+                  type="text"
+                  aria-label={t("devices.search")}
+                  placeholder={t("devices.search")}
+                  value={search}
+                  onChange={(event) => setSearch(event.target.value)}
+                />
+              </label>
+              <button
+                className="icon-button"
+                aria-label={t("common.refresh")}
+                disabled={busy || loading}
+                onClick={() => void refresh()}
+              >
+                <Icon name="refresh" />
+              </button>
+            </div>
+          </div>
+          <section
+            className="device-list"
+            aria-label={t("devices.networkDevices")}
+          >
+            <div className="list-heading">
+              <span>{t("devices.name")}</span>
+              <span>{t("devices.state")}</span>
+              <span>{t("devices.access")}</span>
+              <span />
+            </div>
+            <div id="devices">{matchingMembers.map(renderDevice)}</div>
+            {!matchingMembers.length && (
+              <div className="empty-state">
+                {loading
+                  ? t("devices.reading")
+                  : currentMembers.length
+                    ? t("devices.noMatch")
+                    : message}
+              </div>
+            )}
+          </section>
+          <p className="permission-hint">
+            <Icon name="shield" />
+            {t(
+              status?.local.remote_access_paused
+                ? "devices.pausedHint"
+                : status?.local.allow_all
+                  ? "devices.allowAllSummary"
+                  : "devices.permissionSummary",
+            )}
+          </p>
+          {revocation && (
+            <RevocationResult
+              result={revocation}
+              manager={manager}
+              deviceName={(id) =>
+                devices.find((device) => device.device_id === id)?.name || id
+              }
+              dismiss={dismissRevocation}
+              retry={() => revoke(revocation.device_id)}
+            />
+          )}
+          {revokedMembers.length > 0 && (
+            <details className="revoked-devices">
+              <summary>
+                {t("devices.revokedMembers", { count: revokedMembers.length })}
+              </summary>
+              {revokedMembers.map(renderDevice)}
+            </details>
+          )}
+          <TrafficSummary
+            status={status}
+            active={active && !paused && !inviteOpen}
+            devices={devices}
+          />
+          {!manager && (
+            <p className="footnote">{t("devices.memberDescription")}</p>
+          )}
+        </>
       )}
-      <p className="footnote">{t("devices.footnote")}</p>
       {manager && (
         <InvitationDialog
           open={inviteOpen}

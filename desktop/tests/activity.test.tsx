@@ -1,6 +1,12 @@
 import { expect, test } from "bun:test";
 import { act, fireEvent, screen, waitFor } from "@testing-library/react";
-import { fixture, task, event, operation } from "./fixtures";
+import {
+  fixture,
+  commandJob,
+  event,
+  activityJob,
+  findActivity,
+} from "./fixtures";
 import type { Attachment } from "../src/api";
 
 const retained: Attachment = {
@@ -20,7 +26,7 @@ test("an unsupported database stops automatic output reads but permits an explic
   const { page, poll } = await fixture({
     activity_history: () => ({
       db_id: "db-original",
-      entries: [task()],
+      entries: [commandJob()],
       next_cursor: null,
     }),
     job_output: () => {
@@ -28,8 +34,8 @@ test("an unsupported database stops automatic output reads but permits an explic
       throw { code: "DB_SCHEMA_MISMATCH", message: "unsupported schema" };
     },
   });
-  page("活动旅程");
-  fireEvent.click(await screen.findByRole("button", { name: /ABC123/ }));
+  await page("活动");
+  fireEvent.click(await findActivity("ABC123"));
   await screen.findByText("DB_SCHEMA_MISMATCH: unsupported schema");
   expect(reads).toBe(1);
   await poll();
@@ -37,18 +43,18 @@ test("an unsupported database stops automatic output reads but permits an explic
   fireEvent.click(screen.getByRole("button", { name: "刷新" }));
   await waitFor(() => expect(reads).toBe(2));
 });
-test("task output deduplicates sequences, decodes split UTF-8 and renders failures as text", async () => {
+test("command output deduplicates sequences, decodes split UTF-8 and renders failures as text", async () => {
   let reads = 0;
   const { calls, page, poll } = await fixture({
     activity_history: () => ({
       db_id: "db-original",
-      entries: [task()],
+      entries: [commandJob()],
       next_cursor: null,
     }),
     job_output: () =>
       ++reads === 1
         ? {
-            job: task(),
+            job: commandJob(),
             has_more: false,
             events: [
               event(1, "stdout", [0xe4, 0xb8]),
@@ -57,7 +63,7 @@ test("task output deduplicates sequences, decodes split UTF-8 and renders failur
             ],
           }
         : {
-            job: task("ABC123", {
+            job: commandJob("ABC123", {
               state: "failed",
               result: {
                 exit_code: 7,
@@ -78,24 +84,26 @@ test("task output deduplicates sequences, decodes split UTF-8 and renders failur
             ],
           },
   });
-  page("活动旅程");
-  fireEvent.click(await screen.findByRole("button", { name: /ABC123/ }));
+  await page("活动");
+  fireEvent.click(await findActivity("ABC123"));
   await waitFor(() =>
-    expect(document.getElementById("task-log")?.textContent).toContain("中"),
+    expect(document.getElementById("command-log")?.textContent).toContain("中"),
   );
-  expect(document.getElementById("task-log")?.textContent).not.toContain("�");
+  expect(document.getElementById("command-log")?.textContent).not.toContain(
+    "�",
+  );
   expect(document.getElementById("command-injected")).toBeNull();
   expect(document.getElementById("log-injected")).toBeNull();
   await poll();
   expect(
-    document.getElementById("task-log")?.textContent?.match(/中/g)?.length,
+    document.getElementById("command-log")?.textContent?.match(/中/g)?.length,
   ).toBe(1);
   expect(screen.getByText("异常退出")).toBeTruthy();
   expect(screen.getByText("退出码 7")).toBeTruthy();
-  expect(document.getElementById("task-warning")?.textContent).toContain(
+  expect(document.getElementById("command-warning")?.textContent).toContain(
     "输出已被截断",
   );
-  expect(document.getElementById("task-log")?.textContent).not.toContain(
+  expect(document.getElementById("command-log")?.textContent).not.toContain(
     "\u001b",
   );
   expect(calls.filter((call) => call.command === "job_output")[1].args).toEqual(
@@ -104,7 +112,7 @@ test("task output deduplicates sequences, decodes split UTF-8 and renders failur
   fireEvent.change(screen.getByLabelText("输出类型"), {
     target: { value: "stderr" },
   });
-  expect(document.getElementById("task-log")?.dataset.filter).toBe("stderr");
+  expect(document.getElementById("command-log")?.dataset.filter).toBe("stderr");
   await poll();
   expect(reads).toBe(2);
 });
@@ -114,7 +122,7 @@ test("file records show interrupted transfers safely without requesting other de
     activity_history: () => ({
       db_id: "db-original",
       entries: [
-        operation("push", {
+        activityJob("push", {
           path: '<img id="file-injected">',
           size: 2048,
           state: "lost",
@@ -123,7 +131,7 @@ test("file records show interrupted transfers safely without requesting other de
       next_cursor: null,
     }),
   });
-  page("活动旅程");
+  await page("活动");
   await screen.findByText("结果丢失");
   expect(screen.getByText("接收文件")).toBeTruthy();
   expect(screen.getByText(/2.0 KiB/)).toBeTruthy();
@@ -137,7 +145,7 @@ test("file records show interrupted transfers safely without requesting other de
   });
 });
 
-test("late output cannot replace another task and database reset stops automatic reads", async () => {
+test("late output cannot replace another command and database reset stops automatic reads", async () => {
   let completeOld!: (value: unknown) => void;
   let reads = 0;
   const pending = new Promise((resolve) => {
@@ -146,7 +154,7 @@ test("late output cannot replace another task and database reset stops automatic
   const { page, poll } = await fixture({
     activity_history: () => ({
       db_id: "db-original",
-      entries: [task("OLD"), task("NEW")],
+      entries: [commandJob("OLD"), commandJob("NEW")],
       next_cursor: null,
     }),
     job_output: ({ job }) => {
@@ -155,20 +163,20 @@ test("late output cannot replace another task and database reset stops automatic
       throw { code: "DB_RESET", message: "database replaced" };
     },
   });
-  page("活动旅程");
-  fireEvent.click(await screen.findByRole("button", { name: /OLD/ }));
-  fireEvent.click(screen.getByRole("button", { name: "← 返回活动旅程" }));
-  fireEvent.click(await screen.findByRole("button", { name: /NEW/ }));
+  await page("活动");
+  fireEvent.click(await findActivity("OLD"));
+  fireEvent.click(screen.getByRole("button", { name: "关闭活动详情" }));
+  fireEvent.click(await findActivity("NEW"));
   await screen.findByText("DB_RESET: database replaced");
   await act(async () => {
     completeOld({
-      job: task("OLD"),
+      job: commandJob("OLD"),
       events: [event(1, "stdout", "old output")],
       has_more: false,
     });
   });
-  expect(screen.getByText("任务 NEW · 查看详情")).toBeTruthy();
-  expect(document.getElementById("task-log")?.textContent).not.toContain(
+  expect(screen.getByText("NEW")).toBeTruthy();
+  expect(document.getElementById("command-log")?.textContent).not.toContain(
     "old output",
   );
   const previous = reads;
@@ -176,30 +184,28 @@ test("late output cannot replace another task and database reset stops automatic
   expect(reads).toBe(previous);
 });
 
-test("history pages and filters retain server cursors and stop polling while hidden", async () => {
+test("activity pages and filters retain server cursors and stop polling while hidden", async () => {
   const { page, calls, poll } = await fixture({
     activity_history: ({ before }) => ({
       db_id: "db-original",
-      entries: [task(before ? "PAGE2" : "PAGE1")],
+      entries: [commandJob(before ? "PAGE2" : "PAGE1")],
       next_cursor: before ? null : "page-2",
     }),
   });
-  page("活动旅程");
-  await screen.findByRole("button", { name: /PAGE1/ });
+  await page("活动");
+  await findActivity("PAGE1");
   fireEvent.click(screen.getByRole("button", { name: "下一页" }));
-  await screen.findByRole("button", { name: /PAGE2/ });
+  await findActivity("PAGE2");
   expect(
     calls.filter((call) => call.command === "activity_history").at(-1)?.args,
   ).toEqual({ before: "page-2", filter: "all" });
-  fireEvent.change(screen.getByLabelText("活动状态"), {
-    target: { value: "failed" },
-  });
+  fireEvent.click(screen.getByRole("button", { name: "失败" }));
   await waitFor(() =>
     expect(
       calls.filter((call) => call.command === "activity_history").at(-1)?.args,
     ).toEqual({ before: null, filter: "failed" }),
   );
-  page("设置");
+  await page("设置");
   const count = calls.filter(
     (call) => call.command === "activity_history",
   ).length;
@@ -214,23 +220,23 @@ test("scrolling up pauses automatic scrolling while new output continues to arri
   const { page, poll } = await fixture({
     activity_history: () => ({
       db_id: "db-original",
-      entries: [task()],
+      entries: [commandJob()],
       next_cursor: null,
     }),
     job_output: () => ({
-      job: task(),
+      job: commandJob(),
       has_more: false,
       events: [event(++reads, "stdout", `output ${reads}\n`)],
     }),
   });
-  page("活动旅程");
-  fireEvent.click(await screen.findByRole("button", { name: /ABC123/ }));
+  await page("活动");
+  fireEvent.click(await findActivity("ABC123"));
   await waitFor(() =>
-    expect(document.getElementById("task-log")?.textContent).toContain(
+    expect(document.getElementById("command-log")?.textContent).toContain(
       "output 1",
     ),
   );
-  const log = document.getElementById("task-log")!;
+  const log = document.getElementById("command-log")!;
   Object.defineProperty(log, "scrollHeight", {
     configurable: true,
     value: 1000,
@@ -253,26 +259,28 @@ test("scrolling up pauses automatic scrolling while new output continues to arri
   expect(log.scrollTop).toBeGreaterThanOrEqual(800);
 });
 
-test("returning from task details retains the current page and list scroll position", async () => {
+test("returning from command details retains the current page and list scroll position", async () => {
   const { calls, page } = await fixture({
     activity_history: ({ before }) => ({
       db_id: "db-original",
-      entries: [task(before ? "PAGE2" : "PAGE1")],
+      entries: [commandJob(before ? "PAGE2" : "PAGE1")],
       next_cursor: before ? null : "page-2",
     }),
-    job_output: () => ({ job: task("PAGE2"), has_more: false, events: [] }),
+    job_output: () => ({
+      job: commandJob("PAGE2"),
+      has_more: false,
+      events: [],
+    }),
   });
-  page("活动旅程");
-  await screen.findByRole("button", { name: /PAGE1/ });
+  await page("活动");
+  await findActivity("PAGE1");
   fireEvent.click(screen.getByRole("button", { name: "下一页" }));
-  const row = await screen.findByRole("button", { name: /PAGE2/ });
-  const list = document.querySelector(".history-record-panel")!;
+  const row = await findActivity("PAGE2");
+  const list = document.querySelector(".activity-record-panel")!;
   list.scrollTop = 120;
   fireEvent.click(row);
-  fireEvent.click(
-    await screen.findByRole("button", { name: "← 返回活动旅程" }),
-  );
-  await screen.findByRole("button", { name: /PAGE2/ });
+  fireEvent.click(await screen.findByRole("button", { name: "关闭活动详情" }));
+  await findActivity("PAGE2");
   expect(list.scrollTop).toBe(120);
   expect(screen.getByText("第 2 页")).toBeTruthy();
   expect(
@@ -280,16 +288,16 @@ test("returning from task details retains the current page and list scroll posit
   ).toEqual({ before: "page-2", filter: "all" });
 });
 
-test("one journey mixes commands, transfers and screenshots and previews and saves retained attachments", async () => {
+test("one activity timeline mixes commands, transfers and screenshots and previews and saves retained attachments", async () => {
   const now = Date.now();
   const { page, calls } = await fixture({
     activity_history: () => ({
       db_id: "db-original",
       next_cursor: null,
       entries: [
-        operation("screenshot", { attachment: retained, created_at_ms: now }),
-        task("MIXED", { created_at_ms: now - 60000 }),
-        operation("pull", {
+        activityJob("screenshot", { attachment: retained, created_at_ms: now }),
+        commandJob("MIXED", { created_at_ms: now - 60000 }),
+        activityJob("pull", {
           path: "/tmp/report.txt",
           created_at_ms: now - 86400000,
         }),
@@ -298,9 +306,9 @@ test("one journey mixes commands, transfers and screenshots and previews and sav
     activity_attachment: () => ({ attachment: retained, image, text: null }),
     save_activity_attachment: () => "/Users/test/Downloads/screenshot.png",
   });
-  page("活动旅程");
-  await screen.findByRole("button", { name: /MIXED/ });
-  const rows = [...document.querySelectorAll(".journey-record")];
+  await page("活动");
+  await findActivity("MIXED");
+  const rows = [...document.querySelectorAll(".activity-row")];
   expect(rows).toHaveLength(3);
   expect(rows[0].textContent).toContain("截图");
   expect(rows[1].textContent).toContain("执行命令");
@@ -324,7 +332,7 @@ test("expiry is checked when opening an attachment and the summary remains visib
       db_id: "db-original",
       next_cursor: null,
       entries: [
-        operation("push", {
+        activityJob("push", {
           path: "/repo/report.txt",
           attachment: retained,
         }),
@@ -336,16 +344,16 @@ test("expiry is checked when opening an attachment and the summary remains visib
       text: null,
     }),
   });
-  page("活动旅程");
+  await page("活动");
   fireEvent.click(await screen.findByRole("button", { name: /接收文件/ }));
   await screen.findByText("附件已到保留期限，活动摘要仍可查看。");
   expect(screen.queryByRole("button", { name: "另存为…" })).toBeNull();
-  expect(document.getElementById("job-detail")?.textContent).toContain(
+  expect(document.getElementById("activity-job-detail")?.textContent).toContain(
     "/repo/report.txt",
   );
 });
 
-test("late attachment previews cannot replace another operation and UTF-8 files remain plain text", async () => {
+test("late attachment previews cannot replace another activity and UTF-8 files remain plain text", async () => {
   let resolveOld!: (value: unknown) => void;
   const pending = new Promise((resolve) => {
     resolveOld = resolve;
@@ -356,8 +364,8 @@ test("late attachment previews cannot replace another operation and UTF-8 files 
       db_id: "db-original",
       next_cursor: null,
       entries: [
-        operation("screenshot", { attachment: retained }),
-        operation("pull", {
+        activityJob("screenshot", { attachment: retained }),
+        activityJob("pull", {
           attachment: textAttachment,
           path: "report.txt",
         }),
@@ -372,9 +380,9 @@ test("late attachment previews cannot replace another operation and UTF-8 files 
             text: '<img id="attachment-injected"> file content',
           },
   });
-  page("活动旅程");
+  await page("活动");
   fireEvent.click(await screen.findByRole("button", { name: /截图/ }));
-  fireEvent.click(screen.getByRole("button", { name: "← 返回活动旅程" }));
+  fireEvent.click(screen.getByRole("button", { name: "关闭活动详情" }));
   fireEvent.click(await screen.findByRole("button", { name: /发送文件/ }));
   await screen.findByText('<img id="attachment-injected"> file content');
   await act(async () => {
@@ -385,7 +393,7 @@ test("late attachment previews cannot replace another operation and UTF-8 files 
 });
 
 test("a running file job updates its original detail and reveals the retained attachment", async () => {
-  let job = operation("push", { state: "running", finished_at_ms: null });
+  let job = activityJob("push", { state: "running", finished_at_ms: null });
   const { page, poll } = await fixture({
     activity_history: () => ({
       db_id: job.db_id,
@@ -399,27 +407,30 @@ test("a running file job updates its original detail and reveals the retained at
       text: "finished file",
     }),
   });
-  page("活动旅程");
+  await page("活动");
   fireEvent.click(await screen.findByRole("button", { name: /接收文件/ }));
   await waitFor(() =>
-    expect(document.getElementById("job-detail")?.textContent).toContain(
-      "运行中",
-    ),
+    expect(
+      document.getElementById("activity-job-detail")?.textContent,
+    ).toContain("运行中"),
   );
   expect(screen.queryByText("finished file")).toBeNull();
   const id = job.job_id;
-  job = operation("push", { job_id: id, attachment: retained });
+  job = activityJob("push", { job_id: id, attachment: retained });
   await poll();
   await screen.findByText("finished file");
   expect(screen.getByText("已完成")).toBeTruthy();
-  expect(document.getElementById("job-detail")?.textContent).toContain(
+  expect(document.getElementById("activity-job-detail")?.textContent).toContain(
     "/repo/report.txt",
   );
 });
 
 test("a database replacement stops automatic file detail reads and explicit retry remains available", async () => {
   let reads = 0;
-  const job = operation("forward", { state: "running", finished_at_ms: null });
+  const job = activityJob("forward", {
+    state: "running",
+    finished_at_ms: null,
+  });
   const { page, poll } = await fixture({
     activity_history: () => ({
       db_id: job.db_id,
@@ -431,7 +442,7 @@ test("a database replacement stops automatic file detail reads and explicit retr
       throw { code: "DB_RESET", message: "database replaced" };
     },
   });
-  page("活动旅程");
+  await page("活动");
   fireEvent.click(await screen.findByRole("button", { name: /端口转发/ }));
   await screen.findByText("DB_RESET: database replaced");
   expect(reads).toBe(1);

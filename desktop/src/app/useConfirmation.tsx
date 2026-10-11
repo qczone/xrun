@@ -8,9 +8,9 @@ import {
 } from "react";
 import type { Confirm, ConfirmOptions } from "../api";
 import { Icon } from "../components/Icon";
-import type { Activity } from "./useOperations";
+import type { InteractionState } from "./useOperations";
 
-export function useConfirmation(activity: RefObject<Activity>) {
+export function useConfirmation(interactionState: RefObject<InteractionState>) {
   const [prompt, setPrompt] = useState<{
     title: string;
     message: string;
@@ -21,13 +21,13 @@ export function useConfirmation(activity: RefObject<Activity>) {
   const confirm: Confirm = useCallback(
     (title, message, options) => {
       if (resolve.current) return Promise.resolve(false);
-      activity.current.confirming = true;
+      interactionState.current.confirming = true;
       setPrompt({ title, message, options });
       return new Promise((reply) => {
         resolve.current = reply;
       });
     },
-    [activity],
+    [interactionState],
   );
   useEffect(() => {
     if (prompt && dialog.current && !dialog.current.open) {
@@ -39,15 +39,15 @@ export function useConfirmation(activity: RefObject<Activity>) {
     () => () => {
       resolve.current?.(false);
       resolve.current = null;
-      activity.current.confirming = false;
+      interactionState.current.confirming = false;
     },
-    [activity],
+    [interactionState],
   );
   const settle = () => {
     const accepted = dialog.current?.returnValue === "ok";
     resolve.current?.(accepted);
     resolve.current = null;
-    activity.current.confirming = false;
+    interactionState.current.confirming = false;
     setPrompt(null);
   };
   return { prompt, dialog, confirm, settle, active: prompt !== null };

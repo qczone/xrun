@@ -4,12 +4,12 @@ import { t } from "../../i18n";
 
 export function operationLabel(op: string) {
   const labels: Record<string, string> = {
-    exec: t("history.command"),
-    push: t("history.receiveFile"),
-    pull: t("history.sendFile"),
-    screenshot: t("history.screenshot"),
-    stream_exec: t("history.streamCommand"),
-    forward: t("history.forward"),
+    exec: t("activity.command"),
+    push: t("activity.receiveFile"),
+    pull: t("activity.sendFile"),
+    screenshot: t("activity.screenshot"),
+    stream_exec: t("activity.streamCommand"),
+    forward: t("activity.forward"),
   };
   return labels[op] || op;
 }
