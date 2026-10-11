@@ -27,14 +27,15 @@ export function useDevices(
     try {
       const result = await api.devices();
       if (token !== request.current || scope !== currentScope.current) return;
+      if (result.devices !== null)
+        setDevices(
+          (result.devices || []).sort(
+            (left, right) =>
+              Number(right.online) - Number(left.online) ||
+              left.name.localeCompare(right.name),
+          ),
+        );
       if (result.server_error) throw result.server_error;
-      setDevices(
-        (result.devices || []).sort(
-          (left, right) =>
-            Number(right.online) - Number(left.online) ||
-            left.name.localeCompare(right.name),
-        ),
-      );
       setError(null);
       setMessage("devices.empty");
     } catch (failure) {

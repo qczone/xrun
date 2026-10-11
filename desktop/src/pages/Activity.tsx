@@ -8,6 +8,7 @@ import {
 import type { Job, Device, Status, ActivityFilter } from "../api";
 import { Icon } from "../components/Icon";
 import { ErrorNotice } from "../components/ErrorNotice";
+import { compactIdentifier } from "../format";
 import { formatLocale, t } from "../i18n";
 import { CommandActivityDetail } from "./activity/CommandActivityDetail";
 import { ActivityDetail } from "./activity/ActivityDetail";
@@ -63,8 +64,12 @@ export function ActivityPage({
   } = activityFeed;
   const deviceLabel = useCallback(
     (id: string) => {
-      if (id === status?.local.device_id) return status.local.name || id;
-      return devices.find((device) => device.device_id === id)?.name || id;
+      if (id === status?.local.device_id)
+        return status.local.name || compactIdentifier(id);
+      return (
+        devices.find((device) => device.device_id === id)?.name ||
+        compactIdentifier(id)
+      );
     },
     [status, devices],
   );
@@ -90,7 +95,7 @@ export function ActivityPage({
   const query = search.toLocaleLowerCase();
   for (const job of jobs) {
     if (
-      !`${operationLabel(job.kind)} ${jobDescription(job)} ${deviceLabel(job.source_device_id)}`
+      !`${operationLabel(job.kind)} ${jobDescription(job)} ${deviceLabel(job.source_device_id)} ${job.source_device_id}`
         .toLocaleLowerCase()
         .includes(query)
     )

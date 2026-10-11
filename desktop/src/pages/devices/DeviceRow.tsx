@@ -1,7 +1,7 @@
 import type { Device, Status } from "../../api";
 import { useOperations } from "../../app/useOperations";
 import { Icon } from "../../components/Icon";
-import { osName } from "../../format";
+import { archName, compactIdentifier, osName } from "../../format";
 import { t } from "../../i18n";
 import { DeviceMenu } from "./DeviceMenu";
 interface Props {
@@ -50,7 +50,14 @@ export function DeviceRow({
             )}
           </div>
           <div className="device-info">
-            {device.os ? osName(device.os) : t("format.unknownOs")}
+            <span>
+              {device.os
+                ? [osName(device.os), archName(device.arch)]
+                    .filter(Boolean)
+                    .join(" · ")
+                : t("devices.infoPending")}
+            </span>
+            <code>{compactIdentifier(device.device_id)}</code>
           </div>
         </div>
       </div>

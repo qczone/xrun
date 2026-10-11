@@ -2,6 +2,8 @@ import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { Device } from "../../api";
 import { useOperations } from "../../app/useOperations";
 import { Icon } from "../../components/Icon";
+import { Identifier } from "../../components/Identifier";
+import { archName, dateTime, osName } from "../../format";
 import { t } from "../../i18n";
 
 interface Props {
@@ -54,7 +56,14 @@ export function DeviceMenu({
         ? "above"
         : "below",
     );
-  }, [open]);
+  }, [
+    open,
+    device.os,
+    device.arch,
+    device.daemon_version,
+    device.last_seen,
+    device.online,
+  ]);
   return (
     <details
       ref={menu}
@@ -89,7 +98,29 @@ export function DeviceMenu({
       </summary>
       <div ref={body} className="device-more-body">
         <span className="field-help">{t("common.deviceId")}</span>
-        <code>{device.device_id}</code>
+        <Identifier value={device.device_id} label={t("common.deviceId")} />
+        <dl className="device-facts">
+          <dt>{t("devices.system")}</dt>
+          <dd>{device.os ? osName(device.os) : t("devices.infoPending")}</dd>
+          {device.arch && (
+            <>
+              <dt>{t("devices.arch")}</dt>
+              <dd>{archName(device.arch)}</dd>
+            </>
+          )}
+          {device.daemon_version && (
+            <>
+              <dt>{t("devices.version")}</dt>
+              <dd>{device.daemon_version}</dd>
+            </>
+          )}
+          {!device.online && device.last_seen != null && (
+            <>
+              <dt>{t("devices.lastSeen")}</dt>
+              <dd>{dateTime(device.last_seen)}</dd>
+            </>
+          )}
+        </dl>
         {manager && !device.revoked && device.device_id !== managerId && (
           <button
             className="danger-button"

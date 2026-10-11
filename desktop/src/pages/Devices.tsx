@@ -3,6 +3,7 @@ import type { Device, Status } from "../api";
 import { useOperations } from "../app/useOperations";
 import type { useDevices } from "../app/useDevices";
 import { Icon } from "../components/Icon";
+import { compactIdentifier } from "../format";
 import { t } from "../i18n";
 import { ErrorNotice } from "../components/ErrorNotice";
 import { NetworkSetup } from "../components/NetworkSetup";
@@ -81,7 +82,7 @@ export function Devices({ active, paused, status, members, feedback }: Props) {
   const matchingMembers = currentMembers.filter(
     (device) =>
       (deviceFilter === "all" || device.online) &&
-      `${device.name} ${device.os || ""}`
+      `${device.name} ${device.os || ""} ${device.device_id} ${compactIdentifier(device.device_id)}`
         .toLocaleLowerCase()
         .includes(search.toLocaleLowerCase()),
   );
@@ -200,7 +201,8 @@ export function Devices({ active, paused, status, members, feedback }: Props) {
               result={revocation}
               manager={manager}
               deviceName={(id) =>
-                devices.find((device) => device.device_id === id)?.name || id
+                devices.find((device) => device.device_id === id)?.name ||
+                compactIdentifier(id)
               }
               dismiss={dismissRevocation}
               retry={() => revoke(revocation.device_id)}

@@ -14,11 +14,12 @@ use serde::{Deserialize, Serialize};
 use std::{collections::HashMap, time::Duration};
 
 use super::transport::{authenticate, open_via, peer_session, receive};
-use super::{authority, current, observe};
+use super::{authority, current, metadata, observe};
 
 const STATE_CONCURRENCY: usize = 2;
 const STATE_ADMISSION_ATTEMPTS: u32 = 4;
 const STATE_ADMISSION_BACKOFF: Duration = Duration::from_millis(50);
+const METADATA_REFRESH_MS: i64 = 60_000;
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct PeerState {
@@ -75,11 +76,13 @@ pub(super) async fn peer_state(
         if let Ok(Data::Error { code, message }) = serde_json::from_value(value.clone()) {
             bail!(crate::error::CodedError::from_wire(code, message))
         }
-        let state: PeerState = serde_json::from_value(value)?;
+        let mut state: PeerState = serde_json::from_value(value)?;
         if state.device.device_id != target || state.ack.device_id != target {
             bail!(ErrorCode::IdentityMismatch.error("state belongs to another device"))
         }
         state.ack.verify(&current(id)?)?;
+        state.device.last_seen = Some(now_ms());
+        metadata::observe(&via.roster.network_id, &state.device);
         Ok::<_, anyhow::Error>(state)
     })
     .await
@@ -168,6 +171,63 @@ pub(crate) async fn connected_devices(id: &Identity) -> Result<Vec<Device>> {
             device
         })
         .collect())
+}
+
+fn device_list_from(
+    roster: &SignedRoster,
+    metadata: &HashMap<String, Device>,
+    online: &[String],
+) -> Vec<Device> {
+    roster
+        .roster
+        .members
+        .iter()
+        .map(|member| {
+            let mut device = listed_device(roster, member, metadata.get(&member.device_id));
+            device.online = !member.revoked && online.contains(&member.device_id);
+            device
+        })
+        .collect()
+}
+
+pub(crate) fn cached_device_list(id: &Identity) -> Result<Vec<Device>> {
+    let roster = current(id)?;
+    Ok(device_list_from(
+        &roster,
+        &metadata::load(&roster.roster.network_id),
+        &[],
+    ))
+}
+
+/// Metadata is endpoint-reported over authenticated inner TLS, never relay-reported.
+/// Presence stays a fresh relay hint, independently of the last observed metadata.
+pub(crate) async fn device_list(id: &Identity) -> Result<Vec<Device>> {
+    let via = current(id)?;
+    let online = online_ids(id, &via).await?;
+    let mut cached = metadata::load(&via.roster.network_id);
+    let refresh = online
+        .iter()
+        .filter(|target| {
+            cached.get(*target).is_none_or(|device| {
+                device.os.is_none()
+                    || device
+                        .last_seen
+                        .is_none_or(|time| now_ms().saturating_sub(time) >= METADATA_REFRESH_MS)
+            })
+        })
+        .cloned()
+        .collect();
+    for state in states_for(id, &via, refresh).await? {
+        cached.insert(state.device.device_id.clone(), state.device);
+    }
+    let cfg = config::DaemonConfig::load()?;
+    let cwd = cfg
+        .default_cwd
+        .unwrap_or(config::home_dir()?)
+        .to_string_lossy()
+        .into();
+    cached.insert(id.device_id.clone(), local_device(id, cwd)?);
+    Ok(device_list_from(&current(id)?, &cached, &online))
 }
 
 pub(crate) async fn device(id: &Identity, selector: &str) -> Result<Device> {

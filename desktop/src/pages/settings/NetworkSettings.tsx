@@ -4,6 +4,7 @@ import { useOperations } from "../../app/useOperations";
 import { serviceState } from "../../format";
 import { t } from "../../i18n";
 import { Icon } from "../../components/Icon";
+import { Identifier } from "../../components/Identifier";
 
 export function NetworkSettings({
   status,
@@ -45,9 +46,23 @@ export function NetworkSettings({
               {network.relay_addresses.join("\n") || t("common.unavailable")}
             </dd>
             <dt>{t("network.id")}</dt>
-            <dd className="mono">{network.network_id}</dd>
+            <dd>
+              <Identifier
+                key={network.network_id}
+                value={network.network_id}
+                label={t("network.id")}
+              />
+            </dd>
             <dt>{t("common.deviceId")}</dt>
-            <dd className="mono">{local?.device_id}</dd>
+            <dd>
+              {local?.device_id && (
+                <Identifier
+                  key={local.device_id}
+                  value={local.device_id}
+                  label={t("common.deviceId")}
+                />
+              )}
+            </dd>
           </dl>
         )}
         <div className="setting-row">

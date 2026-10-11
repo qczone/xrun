@@ -101,7 +101,7 @@ async fn devices<R: tauri::Runtime>(
     ensure_upgrade(&app)
         .await
         .map_err(CommandError::from_error)?;
-    xrun::client::status()
+    xrun::client::device_status()
         .await
         .map_err(CommandError::from_error)
 }
@@ -264,6 +264,16 @@ fn copy_invitation<R: tauri::Runtime>(
 }
 
 #[tauri::command]
+fn copy_identifier<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    value: String,
+) -> Result<(), CommandError> {
+    app.clipboard()
+        .write_text(value)
+        .map_err(CommandError::from_error)
+}
+
+#[tauri::command]
 async fn create_network<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
     state: State<'_, Desktop>,
@@ -391,6 +401,7 @@ pub(super) fn register<R: tauri::Runtime>(builder: tauri::Builder<R>) -> tauri::
             invite,
             revoke,
             copy_invitation,
+            copy_identifier,
             create_network,
             join,
             start,

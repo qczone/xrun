@@ -62,6 +62,9 @@ export interface Device {
   revoked: boolean;
   admin: boolean;
   os: string | null;
+  arch?: string | null;
+  daemon_version?: string | null;
+  last_seen?: number | null;
 }
 
 export type TrafficPeriod = "today" | "month" | "all";
@@ -225,7 +228,11 @@ export type Confirm = (
   options: ConfirmOptions,
 ) => Promise<boolean>;
 export type PendingOperation =
-  ActionRequest["command"] | "invite" | "copy_invitation" | "revoke";
+  | ActionRequest["command"]
+  | "invite"
+  | "copy_invitation"
+  | "copy_identifier"
+  | "revoke";
 export type Operation = <T>(
   operation: () => Promise<T>,
   context: { name: PendingOperation; title: PlainMessageKey },
@@ -256,6 +263,7 @@ export const api = {
   invite: (allow: boolean) => invoke<Invitation>("invite", { allow }),
   revoke: (device: string) => invoke<Revocation>("revoke", { device }),
   copyInvitation: (link: string) => invoke<void>("copy_invitation", { link }),
+  copyIdentifier: (value: string) => invoke<void>("copy_identifier", { value }),
   devices: () =>
     invoke<{
       devices: Device[] | null;

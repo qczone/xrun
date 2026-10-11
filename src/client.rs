@@ -14,7 +14,8 @@ pub use settings::{
     ExecutionSettings, Settings, save_attachment_retention, save_settings, settings,
 };
 pub use status::{
-    LocalSnapshot, LocalStatus, NetworkStatus, Status, local_snapshot, local_status, status,
+    LocalSnapshot, LocalStatus, NetworkStatus, Status, device_status, local_snapshot, local_status,
+    status,
 };
 /// Query the current relay's persisted ciphertext counters. Managers see their
 /// network, other members see only their own device. No service is started.

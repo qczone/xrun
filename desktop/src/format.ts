@@ -1,10 +1,23 @@
 import type { Job, Status } from "./api";
 import { formatLocale, t } from "./i18n";
 
+export function compactIdentifier(value: string) {
+  const identifier = value.replace(/^(dev_|net_)/, "");
+  return identifier.length > 12
+    ? `${identifier.slice(0, 8)}…${identifier.slice(-4)}`
+    : identifier;
+}
+
 export const osName = (os: string | null | undefined) =>
   ({ macos: "macOS", windows: "Windows", linux: "Linux" })[os || ""] ||
   os ||
   t("format.unknownOs");
+export const archName = (arch: string | null | undefined) =>
+  ({ aarch64: "ARM64", arm64: "ARM64", x86_64: "x64", x86: "x86" })[
+    arch || ""
+  ] ||
+  arch ||
+  "";
 export const dateTime = (time: number) =>
   new Date(time).toLocaleString(formatLocale(), { hour12: false });
 export const clockTime = (time: number) =>

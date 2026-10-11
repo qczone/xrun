@@ -1,6 +1,7 @@
 //! Network operations backed by manager authority and encrypted peer sessions.
 mod bootstrap;
 mod links;
+mod metadata;
 mod pairing;
 mod peers;
 mod traffic;
@@ -14,7 +15,8 @@ pub use pairing::{invite, manager};
 pub(crate) use pairing::{join, renew, revoke, serve_pair};
 pub use peers::PeerState;
 pub(crate) use peers::{
-    connected_devices, device, devices, local_device, refresh_one, synchronize,
+    cached_device_list, connected_devices, device, device_list, devices, local_device, refresh_one,
+    synchronize,
 };
 pub use transport::authenticate;
 pub(crate) use transport::{attach, control, receive, session, session_with_expiry};

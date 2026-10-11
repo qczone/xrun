@@ -51,9 +51,16 @@
   overflow-wrap: anywhere;
 }
 .device-info {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
   font-size: 11px;
   color: var(--muted);
   margin-top: 3px;
+}
+.device-info code {
+  font-size: inherit;
 }
 .device-connection {
   font-size: 12px;
@@ -116,7 +123,7 @@
   position: absolute;
   top: 34px;
   right: 0;
-  width: 240px;
+  width: 200px;
   padding: 14px;
   background: var(--card);
   border: 1px solid var(--border);
@@ -128,16 +135,31 @@
   top: auto;
   bottom: calc(100% + 6px);
 }
-.device-more-body code {
+.device-more-body > .field-help {
   display: block;
-  color: var(--muted);
-  font-size: 12px;
-  overflow-wrap: anywhere;
-  margin-top: 5px;
 }
-.device-more-body button {
+.device-more-body .identifier {
+  display: flex;
+  margin: 3px 0 0 -5px;
+}
+.device-more-body .danger-button {
   margin-top: 12px;
   width: 100%;
+}
+.device-facts {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 8px 12px;
+  font-size: 11px;
+  margin: 14px 0 0;
+}
+.device-facts dt {
+  color: var(--muted);
+}
+.device-facts dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+  text-align: right;
 }
 .revoked-devices {
   border-bottom: 1px solid var(--border);

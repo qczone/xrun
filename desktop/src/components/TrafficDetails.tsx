@@ -3,6 +3,7 @@ import { useTraffic } from "../app/useTraffic";
 import { dateTime } from "../format";
 import { t } from "../i18n";
 import { ErrorNotice } from "./ErrorNotice";
+import { Identifier } from "./Identifier";
 
 export function trafficSize(bytes: number) {
   if (bytes < 1024) return `${bytes} B`;
@@ -158,8 +159,13 @@ export function TrafficDetails({
                   <tbody>
                     {report.devices.map((device) => (
                       <tr key={device.device_id}>
-                        <td title={device.device_id}>
-                          {names.get(device.device_id) || device.device_id}
+                        <td>
+                          {names.get(device.device_id) || (
+                            <Identifier
+                              value={device.device_id}
+                              label={t("common.deviceId")}
+                            />
+                          )}
                         </td>
                         <td>{trafficSize(device.sent_bytes)}</td>
                         <td>{trafficSize(device.received_bytes)}</td>

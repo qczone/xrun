@@ -57,6 +57,37 @@ button:disabled {
   font-size: 13px;
 }
 
+.identifier-field {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: flex-start;
+  vertical-align: middle;
+}
+
+.identifier-error {
+  color: var(--danger);
+  font-size: 11px;
+}
+
+.identifier {
+  min-height: 26px;
+  padding: 2px 5px;
+  border-color: transparent;
+  background: transparent;
+  color: var(--muted);
+  font-size: 12px;
+  vertical-align: middle;
+}
+
+.identifier code {
+  white-space: nowrap;
+}
+
+.identifier .icon {
+  width: 13px;
+  height: 13px;
+}
+
 .danger-button {
   color: var(--danger);
   background: transparent;

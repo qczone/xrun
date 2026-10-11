@@ -14,6 +14,8 @@ export type IconName =
   | "pause"
   | "plus"
   | "search"
+  | "copy"
+  | "check"
   | "close"
   | "image"
   | "up"
@@ -37,6 +39,13 @@ export function IconDefinitions() {
   return (
     <svg className="icon-defs" aria-hidden="true">
       <defs>
+        <symbol id="i-check" viewBox="0 0 24 24">
+          <path d="m5 12 4 4L19 6" />
+        </symbol>
+        <symbol id="i-copy" viewBox="0 0 24 24">
+          <rect x="8" y="8" width="12" height="12" rx="2" />
+          <path d="M16 8V4H4v12h4" />
+        </symbol>
         <symbol id="i-activity" viewBox="0 0 24 24">
           <path d="M3 12h4l3-7 4 14 3-7h4" />
         </symbol>

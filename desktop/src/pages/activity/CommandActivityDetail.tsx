@@ -1,6 +1,7 @@
 import { useLayoutEffect, useRef, useState } from "react";
 import type { Status } from "../../api";
 import { Icon } from "../../components/Icon";
+import { Identifier } from "../../components/Identifier";
 import { ErrorNotice } from "../../components/ErrorNotice";
 import { commandText, duration, isRunning, dateTime } from "../../format";
 import { t } from "../../i18n";
@@ -104,7 +105,10 @@ export function CommandActivityDetail({
           </div>
           <div className="panel-row">
             <span>{t("output.sourceId")}</span>
-            <code>{job.source_device_id}</code>
+            <Identifier
+              value={job.source_device_id}
+              label={t("output.sourceId")}
+            />
           </div>
           <div className="panel-row">
             <span>{t("output.cwd")}</span>

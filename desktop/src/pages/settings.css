@@ -95,6 +95,9 @@
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
+.network-facts .identifier {
+  margin: -4px 0 -4px -5px;
+}
 .concurrency-row {
   display: flex;
   justify-content: space-between;

@@ -10,6 +10,90 @@ use xrun::testing::{
     store::JobStore,
 };
 
+#[tokio::test]
+async fn desktop_device_status_fixture() -> Result<()> {
+    if std::env::var_os("XRUN_DEVICE_STATUS_FIXTURE").is_some() {
+        println!(
+            "XRUN_DEVICE_METADATA {}",
+            serde_json::to_string(&xrun::client::device_status().await?)?
+        );
+    }
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn desktop_device_metadata_survives_peer_shutdown_and_process_restart() -> Result<()> {
+    async fn query(home: &std::path::Path) -> Result<serde_json::Value> {
+        let output = tokio::time::timeout(
+            Duration::from_secs(15),
+            tokio::process::Command::new(std::env::current_exe()?)
+                .args(["--exact", "desktop_device_status_fixture", "--nocapture"])
+                .env("XRUN_DEVICE_STATUS_FIXTURE", "1")
+                .env("HOME", home)
+                .env("USERPROFILE", home)
+                .kill_on_drop(true)
+                .output(),
+        )
+        .await??;
+        let stdout = ok(output);
+        let data = stdout
+            .lines()
+            .find_map(|line| {
+                line.split_once("XRUN_DEVICE_METADATA ")
+                    .map(|(_, data)| data)
+            })
+            .ok_or_else(|| anyhow::anyhow!("device status fixture did not return metadata"))?;
+        Ok(serde_json::from_str(data)?)
+    }
+    tokio::time::timeout(Duration::from_secs(30), async {
+        let mut lab = Lab::new().await?;
+        let online = query(&lab.source).await?;
+        let device_id = lab.target_identity.device_id.clone();
+        let target = |status: &serde_json::Value| -> serde_json::Value {
+            status["devices"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|device| device["device_id"] == device_id)
+                .unwrap()
+                .clone()
+        };
+        let observed = target(&online);
+        assert_eq!(observed["online"], true);
+        assert_eq!(observed["os"], std::env::consts::OS);
+        assert_eq!(observed["arch"], std::env::consts::ARCH);
+        assert_eq!(observed["daemon_version"], xrun::protocol::VERSION);
+        assert!(observed["last_seen"].as_i64().is_some_and(|time| time > 0));
+        assert!(lab.source.join(".xrun/device-info.db").exists());
+        stop_daemon(&lab.target, &mut lab.daemon).await?;
+        let offline = target(&query(&lab.source).await?);
+        assert_eq!(offline["online"], false);
+        assert_eq!(offline["os"], observed["os"]);
+        assert_eq!(offline["arch"], observed["arch"]);
+        assert_eq!(offline["daemon_version"], observed["daemon_version"]);
+        assert_eq!(offline["last_seen"], observed["last_seen"]);
+        assert_eq!(offline["name"], "target1");
+        assert_eq!(offline["revoked"], false);
+        stop_daemon(&lab.source, &mut lab.source_daemon).await?;
+        lab.relay.stop().await?;
+        let disconnected = query(&lab.source).await?;
+        assert!(!disconnected["server_error"].is_null());
+        assert_eq!(target(&disconnected)["online"], false);
+        assert_eq!(target(&disconnected)["os"], observed["os"]);
+        let revoked = xrun::testing::membership::Manager::open(&lab.source.join(".xrun/manager"))?
+            .revoke(&device_id)?;
+        RosterCache::open(&lab.source.join(".xrun/roster.db"))?
+            .observe(&revoked.roster.network_id, &revoked)?;
+        let removed = target(&query(&lab.source).await?);
+        assert_eq!(removed["revoked"], true);
+        assert_eq!(removed["online"], false);
+        assert!(removed["os"].is_null());
+        assert!(removed["daemon_version"].is_null());
+        Ok::<_, anyhow::Error>(())
+    })
+    .await?
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn registration_permissions_migration_and_manager_offline_execution() -> Result<()> {
     tokio::time::timeout(Duration::from_secs(25), async {

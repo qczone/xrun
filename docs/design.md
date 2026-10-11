@@ -615,7 +615,9 @@ xrun win1 kill k3m9x2
 
 CLI JSON 包含 `local`、`devices`、`server_error`；`server_error` 表示中转或网络查询错误。未加入或查询失败时 devices 为 null。App 另外从本地签名清单返回 `network_id`、`manager_id`、`manager_name`、`is_manager` 和 `relay_addresses`，离线也能查看角色。
 
-设备列表与 info 中，`device_id`、`name`、`admin`（管理设备）、`revoked` 来自本机已验证清单。status 的 `online` 仅表示中转报告该成员的控制连接存在；未知 ID 不显示，已知撤销成员标记为未连接。中转可能误报连接，缓存也可能尚未收到撤销，不能据此确认目标可执行或成员清单已同步。列表的系统、主机名、版本等可选元数据为 null；CLI 显示 relay-connected/disconnected，App 显示“中转报告已连接/未连接中转”。
+设备列表与 info 中，`device_id`、`name`、`admin`（管理设备）、`revoked` 来自本机已验证清单。status 的 `online` 仅表示中转报告该成员的控制连接存在；未知 ID 不显示，已知撤销成员标记为未连接。中转可能误报连接，缓存也可能尚未收到撤销，不能据此确认目标可执行或成员清单已同步。CLI status 只查询中转连接，不主动获取系统、主机名、版本等元数据。
+
+App 的设备列表通过已认证的端到端状态会话读取系统、架构和版本，并在 `device-info.db` 中按网络和设备 ID 缓存最后一次观察结果。60 秒内复用已获取的信息；在线状态仍每次查询中转，不由缓存决定。设备离线或中转不可达时保留已获取的系统信息，中转查询错误仍明确显示。首次观察前离线或查询失败的设备显示“信息待同步”。缓存不提供身份、名称、角色、撤销状态或访问授权。界面的设备与网络 ID 去掉类型前缀，显示前 8 位与末 4 位；复制入口返回完整 ID，权限操作继续使用完整 ID。
 
 info 只连接指定目标，经端到端身份和清单验证后确认 `online` 并读取 `os`、`arch`、`hostname`、`version`、`execution_user`、`default_cwd`、`last_seen`，同时保留清单同步。目标不可达时显示已验证成员记录，online 为 false，可选元数据为 null。状态不作为执行授权依据。后台清单同步照常执行；revoke 继续查询端点签名回执，不用中转连接列表代替送达确认。
 
@@ -627,6 +629,7 @@ info 只连接指定目标，经端到端身份和清单验证后确认 `online`
 | `pending.toml` | 配对前持久化的私钥、根证书和指纹，身份保存后删除 |
 | `manager/root.key`、`manager/root.pem`、`manager/manager.db` | 仅管理设备持有的根密钥、权威成员清单、邀请摘要与签名配对结果 |
 | `roster.db` | 本机验证过的最高版本签名清单，不能当作可随意删除的缓存 |
+| `device-info.db` | 按网络和设备 ID 保存已认证端点的最近系统、架构、版本等信息；可重新获取的显示缓存，不参与授权 |
 | `last-address.json` | 网络根指纹和上次成功地址，只用于尝试顺序 |
 | `daemon.toml` | 单独允许/拒绝、全体信任、暂停及代次、默认目录、环境、任务并发上限、附件保留天数 |
 | `submissions.sqlite` | 本机 request_id、来源/目标 ID、根指纹、db_id、请求摘要、提交时间和任务引用；保留 7 天 |

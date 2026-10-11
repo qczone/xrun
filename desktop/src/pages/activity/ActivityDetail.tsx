@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { api, type Job } from "../../api";
 import { errorCode } from "../../errors";
 import { Icon } from "../../components/Icon";
+import { Identifier } from "../../components/Identifier";
 import { ErrorNotice } from "../../components/ErrorNotice";
 import { duration, errorText, isRunning, dateTime } from "../../format";
 import { t } from "../../i18n";
@@ -121,7 +122,10 @@ export function ActivityDetail({
           </div>
           <div className="panel-row">
             <span>{t("output.sourceId")}</span>
-            <code>{job.source_device_id}</code>
+            <Identifier
+              value={job.source_device_id}
+              label={t("output.sourceId")}
+            />
           </div>
           <div className="panel-row">
             <span>request_id</span>

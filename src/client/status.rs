@@ -177,3 +177,32 @@ pub async fn status() -> Result<Status> {
         server_error: error,
     })
 }
+
+/// Desktop device list with authenticated endpoint metadata. Offline devices retain
+/// their last observed information. Relay failures return the verified local roster
+/// with offline flags and an explicit server_error. No service is started.
+pub async fn device_status() -> Result<Status> {
+    let local = local_status()?;
+    let mut devices = None;
+    let mut error = None;
+    if local.joined {
+        let mut id = Identity::load()?;
+        let result = async {
+            net::renew_identity(&mut id).await?;
+            crate::network::device_list(&id).await
+        }
+        .await;
+        match result {
+            Ok(values) => devices = Some(values),
+            Err(failure) => {
+                devices = crate::network::cached_device_list(&id).ok();
+                error = Some(Data::error(&failure));
+            }
+        }
+    }
+    Ok(Status {
+        local,
+        devices,
+        server_error: error,
+    })
+}
