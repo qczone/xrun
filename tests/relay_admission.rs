@@ -1,5 +1,5 @@
 mod common;
-use anyhow::Result;
+use anyhow::{Context, Result};
 use common::*;
 use xrun::testing::{crypto, net, protocol::RelayMessage};
 
@@ -68,9 +68,24 @@ async fn first_manager_claim_survives_restart_and_other_devices_need_an_invitati
     let record: serde_json::Value = serde_json::from_slice(&owner)?;
     assert_eq!(record["manager_id"], winner["device_id"]);
     assert_eq!(record["network_id"], winner["network_id"]);
+    let assert_owner = || -> Result<()> {
+        let current: serde_json::Value = serde_json::from_slice(&std::fs::read(&owner_path)?)?;
+        assert_eq!(current["manager_id"], record["manager_id"]);
+        assert_eq!(current["network_id"], record["network_id"]);
+        let authority: xrun::protocol::AuthorityState =
+            serde_json::from_value(current["authority"].clone())?;
+        authority.verify(winner["network_id"].as_str().context("owned network")?)?;
+        assert!(
+            authority.roster.roster.version
+                >= record["authority"]["roster"]["roster"]["version"]
+                    .as_u64()
+                    .context("initial version")?
+        );
+        Ok(())
+    };
     let retry = json(cli(home, &["up", "--relay", &link, "--no-daemon", "--json"]).await);
     assert_eq!(retry["device_id"], winner["device_id"]);
-    assert_eq!(std::fs::read(&owner_path)?, owner);
+    assert_owner()?;
 
     relay.stop().await?;
     relay.start().await?;
@@ -87,7 +102,7 @@ async fn first_manager_claim_survives_restart_and_other_devices_need_an_invitati
     );
     assert!(!stranger.join(".xrun/identity.toml").exists());
     assert!(!stranger.join(".xrun/manager").exists());
-    assert_eq!(std::fs::read(&owner_path)?, owner);
+    assert_owner()?;
 
     let mut manager = logged(home, &["daemon"], "manager")?
         .kill_on_drop(true)
@@ -112,7 +127,7 @@ async fn first_manager_claim_survives_restart_and_other_devices_need_an_invitati
         xrun::testing::config::read(&member.join(".xrun/identity.toml"))?;
     assert_eq!(joined["device_id"], identity.device_id);
     assert_eq!(identity.network.unwrap().network_id, winner["network_id"]);
-    assert_eq!(std::fs::read(&owner_path)?, owner);
+    assert_owner()?;
     manager.start_kill()?;
     manager.wait().await?;
     relay.stop().await?;
