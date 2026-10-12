@@ -23,6 +23,14 @@ pub(super) async fn control_reconnect(rt: Arc<Runtime>) -> Result<()> {
         if let Err(e) = result {
             tracing::warn!(error=%e,"daemon disconnected");
             if crate::error::is(&e, ErrorCode::IdentityChanged) {
+                if crate::membership::backup::installation_retired(
+                    &crate::config::device_dir()?,
+                    &rt.id,
+                    &network::current(&rt.id)?,
+                )? {
+                    // Launch agents and scheduled tasks only restart failures.
+                    return Ok(());
+                }
                 return Err(e);
             }
         }

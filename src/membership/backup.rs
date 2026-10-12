@@ -615,6 +615,15 @@ pub(crate) fn authority_obsolete(dir: &Path, verified: &SignedRoster) -> Result<
     local.check_successor(verified)?;
     Ok(local.roster.authority_generation < verified.roster.authority_generation)
 }
+pub(crate) fn installation_retired(
+    dir: &Path,
+    identity: &Identity,
+    verified: &SignedRoster,
+) -> Result<bool> {
+    Ok(verified.roster.manager_id == identity.device_id
+        && !holds_authority(dir)?
+        && authority_obsolete(dir, verified)?)
+}
 pub(crate) fn retire_at(dir: &Path, roster: &SignedRoster, identity: &Identity) -> Result<()> {
     roster.verify(&roster.roster.network_id)?;
     if identity.network.as_ref().map(|network| &network.network_id)

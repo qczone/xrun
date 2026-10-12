@@ -191,5 +191,11 @@ async fn old_backup_merges_relay_revocations_before_replacing_the_management_gen
             .success()
     );
     stop_daemon(&restored, &mut daemon).await?;
+    assert!(
+        tokio::time::timeout(std::time::Duration::from_secs(15), lab.source_daemon.wait())
+            .await??
+            .success()
+    );
+    assert!(cli(&lab.source, &["daemon"]).await.status.success());
     Ok(())
 }

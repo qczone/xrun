@@ -344,6 +344,12 @@ pub async fn run() -> Result<()> {
     let local = crate::pool::run(local_listener, control.clone());
     tokio::pin!(local);
     let mut id = Identity::load()?;
+    if crate::membership::backup::installation_retired(&dir, &id, &network::current(&id)?)? {
+        tracing::warn!(
+            "management moved to another installation; this retired service stays stopped"
+        );
+        return Ok(());
+    }
     if network::current(&id)?.roster.manager_id == id.device_id {
         network::manager(&id)?.invalidate_codes()?;
         config::update_daemon_config(&dir, |cfg| {
