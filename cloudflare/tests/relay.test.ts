@@ -14,6 +14,9 @@ import { randomRoute } from "../src/auth";
 import { fixture as makeFixture, VERSION } from "./fixtures";
 import { RELAY_OBJECT } from "../src/routes";
 const secret = randomRoute();
+// Alarm delivery and individual socket reads each have a 5-second deadline.
+// The containing regression needs room to finish both and report their errors.
+const ALARM_TEST_TIMEOUT = 15_000;
 let runtime: Miniflare;
 let origin: string;
 let bundleSource: string;
@@ -627,7 +630,7 @@ test("invalid restored role fields fail closed and simultaneous peer expiry clea
     ((await inspect(fresh.network, "state")) as { alarm: number | null }).alarm,
   ).toBeNull();
   fresh.control.close();
-});
+}, ALARM_TEST_TIMEOUT);
 
 test("a delayed valid proof cannot register a control after its verification lease expires", async () => {
   const network = await fixture(),
@@ -658,7 +661,7 @@ test("a delayed valid proof cannot register a control after its verification lea
   expect((await valid.json()).type).toBe("hello_ack");
   valid.close();
   status.close();
-});
+}, ALARM_TEST_TIMEOUT);
 
 test("idle authentication sockets are capped and client headers cannot bypass the cap", async () => {
   const f = await fixture();
@@ -948,7 +951,7 @@ test("authentication deadlines close idle clients, recover admission slots and p
     waiting.push(socket);
   }
   for (const socket of [...waiting, control, status]) socket.close();
-});
+}, ALARM_TEST_TIMEOUT);
 
 test("pending callback deadlines invalidate attach URLs and release session capacity", async () => {
   const f = await fixture(),
@@ -983,7 +986,7 @@ test("pending callback deadlines invalidate attach URLs and release session capa
     expect((await control.json()).type).toBe("incoming");
   }
   for (const socket of [...pending, overflow, control]) socket.close();
-});
+}, ALARM_TEST_TIMEOUT);
 
 test("idle expiry closes both tunnel peers, preserves live traffic and restores the shared budget", async () => {
   const f = await fixture(),
@@ -1052,7 +1055,7 @@ test("idle expiry closes both tunnel peers, preserves live traffic and restores 
     full,
   ])
     socket.close();
-});
+}, ALARM_TEST_TIMEOUT);
 
 test("signed revocation persists across restoration and closes both ciphertext legs", async () => {
   const f = await fixture();
