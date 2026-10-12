@@ -25,6 +25,8 @@ pub struct DeployedRelay {
     pub account_id: String,
     /// Complete private relay deployment link.
     pub link: String,
+    /// Best-effort placement hint, applied only when creating new objects.
+    pub region: super::Region,
 }
 
 /// Account offered by Cloudflare after authorization.
@@ -59,16 +61,18 @@ pub(crate) async fn deploy(
     name: &str,
     account: Option<String>,
     no_browser: bool,
+    region: Option<super::Region>,
 ) -> Result<DeployedRelay> {
-    deploy_with_prompt(name, account, no_browser, None).await
+    deploy_with_prompt(name, account, no_browser, None, region).await
 }
 
 pub(crate) async fn deploy_selected(
     name: &str,
     account: String,
     prompt: &(dyn Fn(&str) + Send + Sync),
+    region: Option<super::Region>,
 ) -> Result<DeployedRelay> {
-    deploy_with_prompt(name, Some(account), false, Some(prompt)).await
+    deploy_with_prompt(name, Some(account), false, Some(prompt), region).await
 }
 
 async fn deploy_with_prompt(
@@ -76,8 +80,9 @@ async fn deploy_with_prompt(
     account: Option<String>,
     no_browser: bool,
     prompt: Option<&(dyn Fn(&str) + Send + Sync)>,
+    region: Option<super::Region>,
 ) -> Result<DeployedRelay> {
-    let result = deploy_operation(name, account, no_browser, prompt).await;
+    let result = deploy_operation(name, account, no_browser, prompt, region).await;
     auth::finish_temporary(result).await
 }
 
@@ -86,6 +91,7 @@ async fn deploy_operation(
     account: Option<String>,
     no_browser: bool,
     prompt: Option<&(dyn Fn(&str) + Send + Sync)>,
+    region: Option<super::Region>,
 ) -> Result<DeployedRelay> {
     state::validate_name(name)?;
     let bundle = Bundle::embedded()?;
@@ -109,7 +115,7 @@ async fn deploy_operation(
     let api = Api::new(auth::token_with_prompt(no_browser, prompt).await?)?;
     let account = select_account(&api, account).await?;
     eprintln!("[xrun] Deploying {name} to Cloudflare account {account}…");
-    deploy_with(api, &directory, name, &account, &bundle).await
+    deploy_with(api, &directory, name, &account, &bundle, region).await
 }
 
 async fn select_account(api: &Api, selected: Option<String>) -> Result<String> {
@@ -180,6 +186,7 @@ pub(super) async fn deploy_with(
     name: &str,
     account: &str,
     bundle: &Bundle,
+    region: Option<super::Region>,
 ) -> Result<DeployedRelay> {
     state::validate_name(name)?;
     state::validate_account(account)?;
@@ -193,14 +200,14 @@ pub(super) async fn deploy_with(
     }
     let script = format!("/accounts/{account}/workers/scripts/{name}");
     let published = api.worker(account, name).await?;
-    let state = match (previous, &published) {
+    let mut state = match (previous, &published) {
         (None, Some(_)) => bail!(
             ErrorCode::AlreadyExists
                 .error("a Worker with this name already exists; choose another --name")
         ),
         (Some(state), Some(published)) => {
             state.validate_ownership(published)?;
-            if published["migration_tag"] != "v1" {
+            if published["migration_tag"] != "v1" && published["migration_tag"] != "v2" {
                 bail!(
                     ErrorCode::VersionMismatch
                         .error("unsupported Cloudflare Durable Object migration tag")
@@ -216,8 +223,12 @@ pub(super) async fn deploy_with(
             ownership: crypto::random_token(),
             url: None,
             status: DeploymentStatus::Active,
+            region: super::Region::Auto,
         },
     };
+    if let Some(region) = region {
+        state.region = region;
+    }
     api.protect(&state.route);
     // Persist before upload: a timeout after a successful upload must be retryable
     // with the same private route and ownership marker.
@@ -228,13 +239,27 @@ pub(super) async fn deploy_with(
         "tags": ["xrun-relay", format!("xrun-deployment-{}", state.ownership)],
         "bindings": [
             {"type":"durable_object_namespace", "name":"NETWORKS", "class_name":"XrunRelay"},
+            {"type":"durable_object_namespace", "name":"DATA", "class_name":"XrunData"},
             {"type":"secret_text", "name":"RELAY_ROUTE", "text":state.route},
             {"type":"json", "name":"XRUN_PROTOCOL_MIN", "json":bundle.manifest.protocol.min},
             {"type":"json", "name":"XRUN_PROTOCOL_MAX", "json":bundle.manifest.protocol.max}
         ]
     });
+    if state.region != super::Region::Auto {
+        metadata["bindings"]
+            .as_array_mut()
+            .unwrap()
+            .push(json!({"type":"plain_text", "name":"XRUN_RELAY_REGION", "text":state.region}));
+    }
     if published.is_none() {
-        metadata["migrations"] = json!({"new_tag":"v1", "new_sqlite_classes":["XrunRelay"]});
+        metadata["migrations"] =
+            json!({"new_tag":"v2", "new_sqlite_classes":["XrunRelay","XrunData"]});
+    } else if published
+        .as_ref()
+        .is_some_and(|worker| worker["migration_tag"] == "v1")
+    {
+        metadata["migrations"] =
+            json!({"old_tag":"v1", "new_tag":"v2", "new_sqlite_classes":["XrunData"]});
     }
     api.upload(&script, &metadata, &bundle.source).await?;
     let subdomain = subdomain(&api, account).await?;
@@ -255,6 +280,7 @@ pub(super) async fn deploy_with(
         name: name.into(),
         account_id: account.into(),
         link: url,
+        region: state.region,
     })
 }
 

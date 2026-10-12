@@ -15,7 +15,7 @@ use serde::{Deserialize, Serialize};
 use std::time::Duration;
 
 use super::links::{discover_relay_ca, invitation_link, parse_link};
-use super::transport::{authenticate, receive};
+use super::transport::authenticate;
 use super::{archive_legacy, authority, cache, current, observe, synchronize};
 
 #[derive(Serialize, Deserialize)]
@@ -100,7 +100,15 @@ async fn pairing_at(
     let path = format!("/networks/{network}/connect/{manager}");
     let mut outer = net::websocket_at(address, &path, crypto::relay_tls_config(relay_ca)?).await?;
     authenticate(&mut outer, None, network, &path, None).await?;
-    let RelayMessage::Connected { flow_control } = receive(&mut outer).await? else {
+    let (outer, reply) = super::transport::follow_data_route(
+        outer,
+        address,
+        Some(network),
+        "source",
+        crypto::relay_tls_config(relay_ca)?,
+    )
+    .await?;
+    let RelayMessage::Connected { flow_control } = reply else {
         bail!(ErrorCode::InvalidMessage.error("expected pairing tunnel"))
     };
     secure::pairing_client_with_flow(outer, root_pin, manager, flow_control).await

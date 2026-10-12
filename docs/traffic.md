@@ -39,3 +39,5 @@ CLI 使用 `xrun traffic --period all --json`；桌面概览使用同一核心�
 2026-10-13，M2 Pro / 16 GiB / APFS SSD、Rust debug 构建的三轮中位数：64 MiB 原生转发从 210.1 到 390.1 MiB/s，64 字节回显 p50 从 0.241 到 0.134 ms，p95 从 0.330 到 0.152 ms。原始数据见 [原生结果](benchmarks/relay-traffic-native-2026-10-13.json)。测的是外层 WSS 和真实文件系统上的统计写入，不含内层 TLS 或端点任务执行。
 
 本地 workerd 的 1 / 4 / 8 会话、32 个控制连接、双向共 128 MiB 测量中，逐帧路径的逻辑 SQLite 行修改从 8192 降至 0，吞吐约从 218–222 到 243–246 MiB/s；关闭或查询时另有小批量检查点写入。见 [workerd 结果](benchmarks/relay-traffic-workerd-2026-10-13.json)。`total_changes()` 测的是逻辑行修改，不是 Cloudflare 计费账单；真实部署的地域、网络延迟与账单尚未测量。
+
+数据分片后的本地 workerd 回归，基线 `47af229`，同机 1 / 4 / 8 会话、32 个控制连接、双向 128 MiB：吞吐 236–243 MiB/s，控制与数据对象的逐帧逻辑行修改合计仍为 0，控制对象不接收密文。新数据见 [分片结果](benchmarks/relay-shards-workerd-2026-10-13.json)。这是本地串行帧基准，不能推导跨地域时延、平台并行扩展或实际账单。

@@ -222,15 +222,19 @@ xrun relay deploy --provider local --addr 192.168.1.10:9528
 
 CLI 使用 xrun 自己注册的 Cloudflare 公共 OAuth 客户端，以 Authorization Code + PKCE S256 授权；回调只监听 127.0.0.1:8976，校验独立随机 state，超时或取消后关闭监听。发布方通过 `CLOUDFLARE_OAUTH_CLIENT_ID` 仓库变量提供公共 Client ID，OAuth client secret 不进入二进制。默认只申请账户读取和 Worker 脚本写入权限，不申请 `offline_access` 或路由写入；凭据只留在进程内存，账号选择最长保留 5 分钟，部署、删除或取消后向 Cloudflare 撤销。强制终止进程时依赖提供方令牌到期，不宣称已经撤销。只有显式 `relay login --remember` 才申请刷新令牌，仅允许不接受远程业务的管理设备；Mac 使用 Keychain，Windows 使用 Credential Manager，Linux 使用 Secret Service，系统凭据库不可用就报错，不回退到明文文件。刷新失败的临时网络错误保留凭据，授权失效要求重登录。退出先确认服务端撤销，再删除系统凭据；失败保留可重试状态。旧明文凭据只用于撤销与清理，不再用于部署认证。用户也可通过环境变量提供 API token，CLI 不持久化该令牌。
 
-上传通过 Cloudflare 官方 Workers API 完成，包内 Worker、SQLite-backed DO 类 `XrunRelay`、协议范围和随机路由 secret 一起上传。首次部署应用 v1 迁移，更新不重建 DO；没有 workers.dev 子域名的账号自动注册。写入前保存私有部署记录，远端使用随机所有权标记识别本机部署；重试保留原路由，已有其他应用的同名 Worker 拒绝覆盖。登录退出只撤销凭据，保留中转和 DO 数据。
+上传通过 Cloudflare 官方 Workers API 完成，包内 Worker、SQLite-backed DO 类 `XrunRelay` / `XrunData`、协议范围和随机路由 secret 一起上传。首次部署应用 v2 迁移；已有 v1 部署只增加数据类，保留控制对象；更新不重建已存在的 DO。永久删除时使用 v3 迁移同时删除两个类；没有 workers.dev 子域名的账号自动注册。写入前保存私有部署记录，远端使用随机所有权标记识别本机部署；重试保留原路由，已有其他应用的同名 Worker 拒绝覆盖。登录退出只撤销凭据，保留中转和 DO 数据。
 
 开发者仍可用 `bun run --cwd cloudflare deploy --name xrun-relay` 从源码部署。该入口的私有状态在 `cloudflare/.deploy/`，与原生 CLI 部署记录分开；删除脚本只接受这个入口保存的本地部署记录。
 
-每个部署只有一个固定名称的 DO，只服务首次认领的网络；入口不会按未经授权的网络 ID 分配 DO。SQLite 的 `relay_owner` 表只存一条网络 ID 与管理设备 ID 的绑定，没有成员、配额、任务或文件数据表。在线控制连接、会话代次、接入 ID 和未确认密文字节数随 WebSocket attachment 保存，休眠后重建连接关系。alarm 仅清理认证超时、待接入和闲置传输；没有持续运行的 JS 心跳，原生 ping/pong 由 CF 运行时处理。
+每个部署的固定 `XrunRelay` 只负责一个已认领网络的身份、控制连接、短码 rendezvous、全局会话额度和统计汇总；每条获准的数据通道使用随机会话 ID 命名的独立 `XrunData`。认证完成后中转发出 `data_route`，CLI/daemon 在同一中转上跟随一次，在发送业务或配对内容前完成数据连接；控制对象不转发密文。源与目标票据各为独立随机 128 位值，绑定网络、设备、控制代次、管理代次和期限，接入时持久消费。Worker 先向控制对象核验票据，再查找数据对象，不为任意未经批准的名称创建数据实例。公共短码只暴露自己的临时数据票据，不暴露部署私有路径或成员清单。
 
-流量计数先累计到 WebSocket 附件，由共享的 10 秒 alarm、查询或连接收尾批量提交 SQLite 每日汇总；累计检查点保证关闭、重试或休眠恢复不重复、不清零。只计有效密文二进制帧，认证、ACK、缓存声明和心跳不计入；统计存储故障不阻断转发。查询范围、完整性和字段见 [流量统计](traffic.md)。
+管理更新通过内部 RPC 下发到数据对象；更新 ACK 与关闭状态持久记录，失败每 5 秒重试，控制替换和管理代次改变关闭旧通道。数据对象独立验证根签名与 freshness，休眠恢复时校验腿 ID、角色与窗口；异常绑定关闭两端并标记统计不完整。控制对象保存的关闭回执最多 4096 个、最长 24 小时；清理时删除对应累计计数水位。没有持续运行的 JS 心跳，原生 ping/pong 由 CF 运行时处理。
 
-每网络最多 512 个 WebSocket、256 个控制连接、8 个来源会话（含待接入）；每 IP 最多 8 个正在验证的连接；每目标匿名配对最多 4 个。`connected` 携带 `flow_control: true`；每方向最多 4 MiB 未确认密文，8 个双向会话的未确认密文预算合计最多 64 MiB，此外仍有运行时、连接和消息对象开销。接收端写入本地 TLS 通道后，每累计 256 KiB 回复 `{type:"ack",bytes:N}`，不足阈值的尾部计入下一批，中转校验确认量后通知发送端释放窗口。超过 64 KiB 的帧、超出窗口或非法确认会关闭两端。窗口不限制累计传输量，单文件大小不设固定上限。
+`relay deploy --provider cloudflare --region apac` 指定新对象的位置提示，桌面创建网络的高级选项也可选择；默认自动按连接边缘所在洲选择。已保存的 CLI 区域在更新时保留，`--region auto` 取消偏好。预连接对象靠近目标边缘，冷连接靠近来源边缘。提示仅在对象第一次创建时有效，不迁移既有对象，实际部署位置由 Cloudflare 决定；可选区域以 [Cloudflare 官方位置文档](https://developers.cloudflare.com/durable-objects/reference/data-location/) 为准。本地中转不接受此选项。
+
+数据流量计数先累计到各数据对象的 WebSocket 附件，每 10 秒、查询或连接收尾经内部 RPC 向控制对象提交累计快照，再批量写 SQLite 每日汇总；重复快照按会话腿水位去重。最后快照失败在数据对象持久保存并重试，统计故障不占业务逐帧写库路径。只计有效密文二进制帧，认证、ACK、缓存声明和心跳不计入；统计存储故障不阻断转发。查询范围、完整性和字段见 [流量统计](traffic.md)。
+
+控制协调对象最多 512 个 WebSocket、256 个控制连接，另有最多 32 个目标预连接；全网独立数据对象合计最多 8 个来源会话（含待接入），每 IP 最多 8 个正在验证的连接；每目标匿名配对最多 4 个。`connected` 携带 `flow_control: true`；每方向最多 4 MiB 未确认密文，8 个双向会话的未确认密文预算合计最多 64 MiB，此外仍有运行时、连接和消息对象开销。接收端写入本地 TLS 通道后，每累计 256 KiB 回复 `{type:"ack",bytes:N}`，不足阈值的尾部计入下一批，中转校验确认量后通知发送端释放窗口。超过 64 KiB 的帧、超出窗口或非法确认会关闭两端。窗口不限制累计传输量，单文件大小不设固定上限。
 
 签名清单中的 `relay_ca_pem` 为空时选择公共 WebPKI，邀请链接的中转指纹段为 `webpki`；网络根指纹仍固定，成员和执行权限仍在内层验证。中转信任方式也受管理签名约束。公共中转地址仅接受单段合法随机路径，不允许用户名、查询参数或 fragment。
 
@@ -818,13 +822,13 @@ status、traffic、control 和 connect 连接建立后，中转先发送 challen
 
 管理设备新增或撤销成员后立即尝试同步全部在线端点；成员同步和撤销回执查询并发联系最多 2 个已知未撤销端点，每个状态请求最多等待 5 秒；公共 HTTPS 中转包含更多握手往返，上限为 20 秒。建连遇到 `SESSION_LIMIT` 时最多尝试 4 次，间隔 50、100、200 ms，仍受上述总超时限制；其他错误不重试。日常设备操作从本地已验证的签名清单解析目标名称或 ID，直接新建或借用业务会话；`status` 只查询中转连接列表并过滤本地已知撤销，`info` 只查询指定端点。新建端到端会话时交换签名清单，复用前比对成员版本，发生变化时重建会话并重新交换。daemon 每次建立控制连接前同步一次：优先联系在线管理设备，管理设备离线时从随机起点选择其他在线端点。后台兜底同步每 5 分钟加最多 1 分钟随机抖动执行一次，按同样优先级选择端点，后备端点按游标轮换；管理设备联系失败时才尝试后备端点，不遍历全网。每次端点同步都需要经中转建立连接并完成一次双向 TLS 握手。端点保留最高版本，离线设备重连时可从其他在线端点获得已发布更新，不要求管理设备在线。完整成员清单、设备元数据和签名回执均在端到端 TLS 内传递。
 
-配对在内层验证管理设备 TLS 后传递带协议范围的 PairRequest；管理设备在消费邀请或签发前协商协议，响应包含范围与选中的协议。内层业务 TLS 后双方交换完整签名清单与协议范围，再检查成员公钥、撤销和业务权限。代码中 `/devices`、`/invites`、`/admin/revoke` 仅为客户端核心库的本地适配入口，不是中转公开 HTTP 接口。
+配对在内层验证管理设备 TLS 后传递带协议范围的 PairRequest；管理设备在消费邀请或签发前协商协议，响应包含范围与选中的协议。内层业务 TLS 后双方先交换管理代次、版本、清单摘要和协议范围；仅摘要不同才交换完整根签名清单，始终检查成员公钥、撤销、freshness 和业务权限。代码中 `/devices`、`/invites`、`/admin/revoke` 仅为客户端核心库的本地适配入口，不是中转公开 HTTP 接口。
 
 ### 6.2 会话消息
 
-新建端到端 TLS 后直接使用 WebSocket 帧，不再进行内层 HTTP Upgrade。来源连续发送带发布号、协议范围的签名清单和会话用途，省去用途声明的一次往返；执行参数和输入不提前发送。双方协商协议并验证签名清单和成员身份后处理会话用途。State 返回成员状态和回执后关闭；Execute 检查本机执行授权后，daemon 发送 `{"type":"ready","device_id":"…","db_id":"…","default_cwd":"…","version":"…","protocol":{"min":1,"max":1},"selected_protocol":1}`。CLI 核对协议选择和目标 ID 后才发送业务请求；控制连接也通过外层握手协商协议。
+新建端到端 TLS 后直接使用 WebSocket 帧，不再进行内层 HTTP Upgrade。来源连续发送带发布号、协议范围的签名清单和会话用途，省去用途声明的一次往返；执行参数和输入不提前发送。双方协商协议并验证签名清单和成员身份后处理会话用途。State 返回成员状态和回执后关闭；Execute 检查本机执行授权后，daemon 发送 `{"type":"ready","device_id":"…","db_id":"…","default_cwd":"…","version":"…","protocol":{"min":5,"max":5},"selected_protocol":5}`。CLI 核对协议选择和目标 ID 后才发送业务请求；控制连接也通过外层握手协商协议。
 
-Execute 会话可以依次处理多个请求，同时只有一个在途操作。daemon 在每次请求前检查来源授权、暂停代次和证书期限。缓存复用前先发送 `{"type":"session_probe","roster_version":N}`，目标重新检查成员版本及访问条件，返回包含当前默认目录和数据库 ID 的 ready。探测最多等待 5 秒；失败时可以关闭旧连接、重新建立会话，因为此时尚未发送业务操作。
+后台来源使用 Channel 会话，以 yamux 在一条端到端 TLS 上多路复用最多 32 条独立操作流，总接收窗口 8 MiB，分片 16 KiB。目标仅接受来源发起的流，每条操作流在 Ready 前重新校验权限、暂停代次、证书期限和 freshness；同一业务不会因中转或直连切换自动重发。没有本机 daemon 的 CLI 使用当前协议的 Execute 独立会话，每条 Execute 会话依次处理请求。daemon 在每次请求前检查来源授权、暂停代次和证书期限。缓存复用前先发送 `{"type":"session_probe","roster_version":N}`，目标重新检查成员版本及访问条件，返回包含当前默认目录和数据库 ID 的 ready。探测最多等待 5 秒；失败时可以关闭旧连接、重新建立会话，因为此时尚未发送业务操作。
 
 请求头为 JSON 文本 `{"type":"request","request":{"op":"…",参数…}}`。长度和 SHA-256 在执行或上传请求头中发送；stdin、脚本和文件内容用二进制块，每块不超过 64 KiB，最后发送 `{"type":"end"}`。下载和截图先返回 `file` 头（含长度和摘要），再返回二进制块和 end。
 
@@ -858,11 +862,11 @@ Rust 内部用 `error::ErrorCode` 和 `CodedError` 标识错误，协议边界�
 
 发布版本、协议版本和签名格式分别维护。发布版本用于 `xrun --version`、设备信息和诊断。本机 IPC 仍要求 CLI、App helper 与本机 daemon 的发布版本一致，替换程序后需要重启 daemon。
 
-网络协议从整数 1 开始。当前组件交换支持范围 `{"min":1,"max":4}`，选择共同的最高版本；无交集、范围非法或 Ready 的选择不一致，返回 `VERSION_MISMATCH`，不发送业务操作、不消费配对 Token。外层 WSS 请求头 `X-Xrun-Protocol` 使用 `min-max`，升级响应返回选中的整数，保存在该连接的传输上下文中，并带入端到端隧道；外层选择与端到端协商分别维护。`X-Xrun-Version` 仅供诊断。Cloudflare 部署写入 `XRUN_PROTOCOL_MIN` / `XRUN_PROTOCOL_MAX`，与代码实现的范围一致。端到端清单交换、配对请求与响应、Ready 也携带范围；Ready 与配对响应包含 `selected_protocol`。
+当前只实现协议 5。组件交换支持范围 `{"min":5,"max":5}`，只接受协议 5；无交集、范围非法或 Ready 的选择不一致，返回 `VERSION_MISMATCH`，不发送业务操作、不消费配对 Token。外层 WSS 请求头 `X-Xrun-Protocol` 使用 `min-max`，升级响应返回选中的整数，保存在该连接的传输上下文中，并带入端到端隧道；外层选择与端到端协商分别维护。`X-Xrun-Version` 仅供诊断。Cloudflare 部署写入 `XRUN_PROTOCOL_MIN` / `XRUN_PROTOCOL_MAX`，与代码实现的范围一致。端到端清单交换、配对请求与响应、Ready 也携带范围；Ready 与配对响应包含 `selected_protocol`。
 
 仅实现协议 5；删除协议 1–4 的认领、短码与缓存兼容分支。外层 WSS、内层消息和本机 IPC 均校验当前协议。不匹配时在提交业务或消费邀请前拒绝并提示一起升级。
 
-外层隧道提供 `{"type":"cache_state","idle":true|false}`，只允许已认证来源发送，中转原样确认，不转发给目标。来源消费 `Complete` 且本机 CLI 归还后才声明空闲；复用先声明活跃并等待确认，再发端到端探测，最后发送业务。空闲来源禁止发送密文；满额时中转可关闭最早声明空闲的配对连接。静默中的长任务不因此变成空闲。CF 将协商版本与空闲时间写入 WebSocket 附件，休眠恢复后仍按相同规则判断。
+外层隧道提供 `{"type":"cache_state","idle":true|false}`，只允许已认证来源发送，中转原样确认，不转发给目标。来源消费 `Complete` 且本机 CLI 归还后才声明空闲；复用先声明活跃并等待确认，再发端到端探测，最后发送业务。空闲提示仍允许 TLS/yamux 维护帧；应用请求必须先恢复活跃并通过端点探测；满额时中转可关闭最早声明空闲的配对连接。静默中的长任务不因此变成空闲。CF 将协商版本与空闲时间写入 WebSocket 附件，休眠恢复后仍按相同规则判断。
 
 普通消息忽略可以安全忽略的未知字段，必需字段和未知消息类型仍拒绝。正式发布前直接更新业务协议，不维护历史 Job 消息或混合版本运行；CLI 与 daemon 应使用同一份构建。外层中转协议范围只表示传输能力，不构成历史业务消息兼容承诺。签名记录、证书证明与本机安全配置继续严格拒绝未知字段。
 
@@ -870,7 +874,7 @@ Rust 内部用 `error::ErrorCode` 和 `CodedError` 标识错误，协议边界�
 
 此次统一 Job 使用 daemon schema 4、submissions schema 2；不迁移旧数据、不回填、不保留旧接口。更旧的活动库和提交记录库先完整备份，再以事务重建；设备身份、授权和成员清单保留。App 打开时正常停止旧 daemon、换用当前 helper 并恢复先前运行状态，活动查询等待存储准备完成。CLI 更新前按 4.2 等待任务结束并停止本机服务，参与业务操作的端点统一更新。当前发布版本为 `0.1.0-rc.6`，各发布入口统一维护。
 
-单条业务消息不超过 1 MiB，可靠执行用 stdin/脚本各不超过 1 MiB，截图 PNG 不超过 64 MiB。接收时检查，超限拒绝。push/pull 文件与 push 从 stdin 读取时不设固定总量上限，按 64 KiB 分块读写，附件缓存也按块保存与导出；截图缓冲上限独立于文件传输。任务列表分页，CLI 可逐页展示。流式输入和 TCP 转发不设固定总量上限，单块最多 64 KiB，内存受有界缓冲约束。
+单条业务消息不超过 1 MiB，可靠执行用 stdin/脚本各不超过 1 MiB，截图 PNG/JPEG/WebP 编码后不超过 64 MiB（解码最多 3200 万像素、128 MiB）。接收时检查，超限拒绝。push/pull 文件与 push 从 stdin 读取时不设固定总量上限，按 64 KiB 分块读写，附件缓存也按块保存与导出；截图缓冲上限独立于文件传输。任务列表分页，CLI 可逐页展示。流式输入和 TCP 转发不设固定总量上限，单块最多 64 KiB，内存受有界缓冲约束。
 
 程序、参数、环境和路径不得含 NUL；输入与文件原始字节不受此限制。Windows 环境名大小写重复、负数超时、未知字段或类型错误返回 INVALID_REQUEST。
 
@@ -898,7 +902,7 @@ Rust 内部用 `error::ErrorCode` 和 `CodedError` 标识错误，协议边界�
 
 根目录 `rust-toolchain.toml` 固定 Rust 工具链版本及 rustfmt、clippy 组件；本地开发、三平台测试和 Package 工作流统一读取该文件。升级时显式修改固定版本并重新验证，CI 保留 `-D warnings`。
 
-Rust workspace 的核心 package 提供 CLI、daemon 和 Rust 中转；桌面 package 位于 `desktop/src-tauri`。按现有职责划分：membership 管理签名清单与权威状态，network 处理创建/加入和端点同步，relay 接通外层连接，secure 建立端到端 TLS，ipc/session/pool 处理本机通信、CLI 会话与后台连接缓存，daemon/store 管理可靠任务，process 处理原生进程，transfer/screenshot/forwarding/streaming 处理相应业务，service/control/history 提供本机服务与只读历史。Cloudflare Worker、部署脚本和 workerd 测试位于 `cloudflare/`。
+Rust workspace 的核心 package 提供 CLI、daemon 和 Rust 中转；桌面 package 位于 `desktop/src-tauri`。按现有职责划分：membership 管理签名清单与权威状态，network 处理创建/加入和端点同步，relay 接通外层连接，secure 建立端到端 TLS，ipc/session/pool 处理本机通信、CLI 会话与后台连接缓存，daemon/store 管理可靠任务，process 处理原生进程，transfer/screenshot/forwarding/streaming 处理相应业务，service/control/history 提供本机服务与只读活动。Cloudflare Worker、部署脚本和 workerd 测试位于 `cloudflare/`。
 
 支持的公开边界为 `xrun::client` 的用户操作、设置和只读历史，`xrun::runtime` 的进程入口，以及 `protocol` / `error` 的协议类型和错误分类。App 通过这些边界访问核心；config、network、daemon、store、secure 等实现模块保持私有。`xrun::testing` 仅供集成测试夹具，不属于稳定应用 API；`deny(unreachable_pub)` 检查意外公开，client/runtime 边界要求文档注释。
 
@@ -912,7 +916,7 @@ App 使用 Tauri 2、React、TypeScript、Vite 和 Bun，生产包包含静态�
 
 发布矩阵为 Linux、macOS、Windows 各自的 x86_64 / arm64，共六组。Linux 提供只含二进制的 CLI 压缩包，macOS / Windows 提供上述桌面产物，不单独分发 CLI 包；清单与文件名使用目标系统和架构，不使用构建机器的架构。自动安装脚本按设备架构选择对应清单，安装程序和用户 PATH。Package 只构建和检查 Actions 产物；独立的 Release 工作流通过手动指定成功的 Package 运行 ID，复用其产物和提交创建版本化 Release，分别提供程序、安装脚本和校验文件。
 
-Rust 与 Cloudflare 中转使用同一套连接认证和端到端会话协议，CLI 与 daemon 不依赖中转保存成员状态。
+Rust 与 Cloudflare 中转使用同一套连接认证和端到端会话协议，端点保留本地签名成员状态，中转保存单调的根签名权威状态和租期以拒绝撤销成员。
 
 ### 7.2 自动化验证
 
@@ -936,7 +940,7 @@ App 网络界面此前通过本机 TypeScript/UI 测试、Rust 检查、App 自�
 | 范围 | 已验证 | 待验收 |
 | --- | --- | --- |
 | Mac ARM64 + cloud-ubuntu | 公网 TCP 8080、管理/普通成员分离、双向 argv/env 与实际 Cargo/gcc 构建、原身份历史保留 | 整机重启、Mac 重新登录与睡眠唤醒、磁盘故障 |
-| Cloudflare 中转 | Mac/Linux workerd 测试、真实成员证书互通、64 MiB 文件往返、双向执行/传输、二进制流、TCP/HTTP 转发、管理设备离线、空闲恢复与撤销 | 长时间压力、Windows 实机、App 使用 CF 地址创建网络 |
+| Cloudflare 中转 | Mac/Linux workerd 分片、票据、恢复、全局额度与计数测试、真实成员证书互通、65 MiB 文件往返、双向执行/传输、二进制流、TCP/HTTP 转发、管理设备离线、空闲恢复与撤销 | 长时间压力、Windows 实机、App 使用 CF 地址创建网络 |
 | 会话缓存与资源优化 | Mac/Linux 核心回归；cloud-ubuntu 经真实 CF 中转以独立 CLI 进程验证复用、空闲过期与撤销；64 MiB push/pull 分块传输和摘要一致 | Windows 私有命名管道实机、长期资源压力 |
 | 文件与可靠任务 | 二进制/BOM/CRLF 双向摘要、不覆盖/摘要覆盖、本地符号链接保护、后台任务、等待/日志/取消、中转断线后结果补读 | 长时间运行与持续资源压力 |
 | 流式执行与转发 | 双向 3 MiB 流式输入输出、EOF、stderr、退出码/超时、HTTP、多连接与 TCP 半关闭、双向转发 | 大规模慢接收与长期连接 |

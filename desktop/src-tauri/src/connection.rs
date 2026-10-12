@@ -112,10 +112,12 @@ pub(super) async fn deploy_cloudflare<R: tauri::Runtime>(
     state: State<'_, Desktop>,
     name: String,
     account: String,
+    region: Option<xrun::client::relay::Region>,
 ) -> Result<DeployedRelay, CommandError> {
     let _guard = state.action.lock().await;
     let prompt = |url: &str| authorization(&app, url);
-    let result = xrun::client::relay::deploy_cloudflare(name.trim(), account, &prompt).await;
+    let result =
+        xrun::client::relay::deploy_cloudflare(name.trim(), account, &prompt, region).await;
     state.cloudflare_authorization.lock().unwrap().take();
     record(&app, result)
 }

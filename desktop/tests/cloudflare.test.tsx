@@ -30,7 +30,7 @@ test("Cloudflare creates a relay and manager with one account without exposing i
   await screen.findByRole("button", { name: "邀请设备" });
   expect(
     calls.find((call) => call.command === "deploy_cloudflare")?.args,
-  ).toEqual({ name: "xrun-relay", account: account.id });
+  ).toEqual({ name: "xrun-relay", account: account.id, region: "auto" });
   expect(calls.find((call) => call.command === "connect")?.args).toEqual({
     link: relay.link,
     name: "mac-pro",
@@ -220,4 +220,22 @@ test("manager settings explicitly opt into remembered login and keep it when rev
   fireEvent.click(screen.getByRole("button", { name: "退出授权" }));
   await screen.findByText("授权已撤销");
   expect(remembered).toBe(false);
+});
+
+test("Cloudflare deployment passes an explicitly selected region to the native deployer", async () => {
+  const { calls } = await fixture(
+    { cloudflare_accounts: () => [account], deploy_cloudflare: () => relay },
+    false,
+  );
+  fireEvent.click(screen.getByRole("button", { name: "新建网络" }));
+  const advanced =
+    document.querySelector<HTMLDetailsElement>(".setup-advanced")!;
+  await act(async () => {
+    advanced.open = true;
+  });
+  await selectOption(screen.getByLabelText("中转区域"), "apac-ne");
+  await create();
+  expect(
+    calls.find((call) => call.command === "deploy_cloudflare")?.args.region,
+  ).toBe("apac-ne");
 });

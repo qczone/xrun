@@ -260,6 +260,9 @@ pub(super) enum RelayCommand {
         /// Cloudflare account ID (otherwise reuse the saved account or choose at login)
         #[arg(long)]
         account: Option<String>,
+        /// Cloudflare: best-effort location for new objects (existing locations remain)
+        #[arg(long, value_enum)]
+        region: Option<crate::cloudflare::Region>,
         /// Cloudflare: print the authorization URL without opening a browser
         #[arg(long)]
         no_browser: bool,

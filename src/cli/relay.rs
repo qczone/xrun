@@ -29,6 +29,7 @@ pub(super) async fn manage(operation: RelayCommand, json: bool) -> Result<()> {
             provider,
             name,
             account,
+            region,
             no_browser,
             dry_run,
             port,
@@ -44,7 +45,8 @@ pub(super) async fn manage(operation: RelayCommand, json: bool) -> Result<()> {
                 }
                 let name = name.as_deref().unwrap_or("xrun-relay");
                 if dry_run {
-                    let bundle = crate::cloudflare::check(name)?;
+                    let mut bundle = crate::cloudflare::check(name)?;
+                    bundle["region"] = serde_json::json!(region.unwrap_or_default());
                     print(json, &bundle, || {
                         println!(
                             "Cloudflare relay {} is bundled (OAuth configured: {})",
@@ -53,7 +55,8 @@ pub(super) async fn manage(operation: RelayCommand, json: bool) -> Result<()> {
                         )
                     });
                 } else {
-                    let relay = crate::cloudflare::deploy(name, account, no_browser).await?;
+                    let relay =
+                        crate::cloudflare::deploy(name, account, no_browser, region).await?;
                     print(json, &relay, || {
                         println!("relay: {}", relay.link);
                         println!("xrun up --relay '{}'", relay.link);
@@ -61,8 +64,9 @@ pub(super) async fn manage(operation: RelayCommand, json: bool) -> Result<()> {
                 }
             }
             RelayProvider::Local => {
-                if name.is_some() || account.is_some() || no_browser || dry_run {
-                    bail!(ErrorCode::InvalidRequest.error("--name, --account, --no-browser and --dry-run require --provider cloudflare"))
+                if name.is_some() || account.is_some() || region.is_some() || no_browser || dry_run
+                {
+                    bail!(ErrorCode::InvalidRequest.error("--name, --account, --region, --no-browser and --dry-run require --provider cloudflare"))
                 }
                 deploy_local(port, addr, no_detect, json).await?;
             }

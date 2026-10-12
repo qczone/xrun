@@ -155,6 +155,7 @@ try {
         compatibilityDate: "2026-10-03",
         durableObjects: {
           NETWORKS: { className: "XrunRelay", useSQLite: true },
+          DATA: { className: "XrunData", useSQLite: true },
         },
         bindings: {
           RELAY_ROUTE: route,

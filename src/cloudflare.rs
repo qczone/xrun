@@ -4,6 +4,8 @@ pub(crate) mod auth;
 mod bundle;
 mod deploy;
 mod manage;
+mod region;
+pub use region::Region;
 mod state;
 
 pub(crate) use auth::reopen_browser;

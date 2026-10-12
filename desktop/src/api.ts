@@ -390,8 +390,8 @@ export const api = {
     invoke<void>("cancel_cloudflare_authorization"),
   openCloudflareAuthorization: () =>
     invoke<void>("open_cloudflare_authorization"),
-  deployCloudflare: (name: string, account: string) =>
-    invoke<RelayDeployment>("deploy_cloudflare", { name, account }),
+  deployCloudflare: (name: string, account: string, region = "auto") =>
+    invoke<RelayDeployment>("deploy_cloudflare", { name, account, region }),
   cloudflareRelays: () => invoke<RelayDeployment[]>("cloudflare_relays"),
   cloudflareRememberedLogin: () =>
     invoke<boolean>("cloudflare_remembered_login"),

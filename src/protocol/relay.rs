@@ -183,6 +183,11 @@ impl Proof {
 #[serde(tag = "type", rename_all = "snake_case")]
 /// Relay routing and handshake messages, outside the encrypted peer payload.
 pub enum RelayMessage {
+    /// Coordinator-issued one-use same-relay data route, after member admission.
+    DataRoute {
+        /// Relative route bound to network, session, side and opaque ticket.
+        path: String,
+    },
     /// An authenticated idle callback is registered for this control generation.
     StandbyReady,
     /// Protocol 2: declare a completed source tunnel reclaimable, or reactivate

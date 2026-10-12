@@ -1,3 +1,5 @@
+import type { DurableObjectLocationHint } from "@cloudflare/workers-types";
+import { region } from "./regions";
 import { DEVICE, object } from "./auth";
 import { WINDOW } from "./limits";
 import { PROTOCOL } from "./protocol";
@@ -15,6 +17,7 @@ export interface ConnectionBase {
   ip: string;
   protocol: number;
   pairing?: string;
+  region?: DurableObjectLocationHint;
 }
 export type ChallengeState = ConnectionBase &
   ChallengeRoute & {
@@ -85,7 +88,15 @@ export type Attachment =
   | TunnelState
   | ClosedState;
 
-const BASE_KEYS = ["id", "role", "network", "ip", "protocol", "pairing"];
+const BASE_KEYS = [
+  "id",
+  "role",
+  "network",
+  "ip",
+  "protocol",
+  "pairing",
+  "region",
+];
 const BINDING_KEYS = ["target", "generation", "sid", "authorityGeneration"];
 const TUNNEL_KEYS = [
   ...BASE_KEYS,
@@ -149,6 +160,7 @@ export function attachment(value: unknown): Attachment | undefined {
     typeof value.ip !== "string"
   )
     return;
+  if (value.region !== undefined && !region(value.region)) return;
   const protocol = value.protocol;
   if (
     typeof protocol !== "number" ||
@@ -171,6 +183,7 @@ export function attachment(value: unknown): Attachment | undefined {
     network: value.network,
     ip: value.ip,
     protocol,
+    ...(value.region === undefined ? {} : { region: region(value.region) }),
     ...(value.pairing === undefined
       ? {}
       : { pairing: value.pairing as string }),
@@ -383,6 +396,7 @@ export function base(state: ConnectionBase): ConnectionBase {
     network: state.network,
     ip: state.ip,
     protocol: state.protocol,
+    ...(state.region ? { region: state.region } : {}),
     ...(state.pairing ? { pairing: state.pairing } : {}),
   };
 }

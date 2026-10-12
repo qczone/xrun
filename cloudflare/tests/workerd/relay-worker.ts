@@ -1,7 +1,16 @@
 import worker, { XrunRelay, type Env } from "../../src/index";
 import type { ChallengeState } from "../../src/state";
 
-export default worker;
+// Low-level coordinator regressions exercise its framing directly. Production
+// and shard fixtures require a real DATA namespace and never use this adapter.
+export default {
+  fetch(request: Request, env: Env) {
+    return worker.fetch(request, {
+      ...env,
+      DATA: env.DATA ?? (env.NETWORKS as unknown as NonNullable<Env["DATA"]>),
+    });
+  },
+};
 
 interface Reads {
   enumeration: number;

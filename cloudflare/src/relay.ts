@@ -1,3 +1,7 @@
+import { region } from "./regions";
+import type { XrunData } from "./data";
+import { Shards, dataPath, legs, type ShardSlot } from "./shards";
+import { trafficCounters, type TrafficLeg } from "./traffic-state";
 import { DurableObject } from "cloudflare:workers";
 import { Admission, AdmissionError } from "./admission";
 import { object, randomRoute, verifyProof, type VerifiedProof } from "./auth";
@@ -37,6 +41,8 @@ import {
 
 export interface Env {
   NETWORKS: DurableObjectNamespace<XrunRelay>;
+  DATA?: DurableObjectNamespace<XrunData>;
+  XRUN_RELAY_REGION?: DurableObjectLocationHint;
   RELAY_ROUTE: string;
   XRUN_PROTOCOL_MIN: number;
   XRUN_PROTOCOL_MAX: number;
@@ -48,23 +54,168 @@ export function error(code: string, message: string, status = 400): Response {
 /** Live routing bindings and ciphertext windows survive with hibernating sockets. */
 export class XrunRelay extends DurableObject<Env> {
   private traffic: Traffic;
+  private shards: Shards;
   private admission: Admission;
   private pairings: Pairings;
   private connections: Connections;
   private nextAlarm: number | null = null;
   private retryAuthorityAt: number | null = null;
 
+  private data(sid: string) {
+    if (!this.env.DATA) throw new Error("Missing data namespace");
+    const hint = this.shards.get(sid)?.region ?? this.env.XRUN_RELAY_REGION;
+    return this.env.DATA.getByName(
+      sid,
+      hint ? { locationHint: hint } : undefined,
+    );
+  }
+  async dataTicket(
+    network: string,
+    sid: string,
+    side: string,
+    ticket: string,
+  ): Promise<boolean> {
+    const slot = this.shards.get(sid);
+    const authority = this.admission.state();
+    if (
+      !slot ||
+      !authority ||
+      !this.shards.ticket(network, sid, side, ticket) ||
+      this.connections.control(slot.target)?.state.generation !==
+        slot.generation ||
+      slot.authority.roster.roster.authority_generation !==
+        authority.roster.roster.authority_generation
+    )
+      return false;
+    try {
+      requireFresh(authority);
+    } catch {
+      return false;
+    }
+    const active = (id: string | null) =>
+      id === null ||
+      authority.roster.roster.members.some(
+        (member) => member.device_id === id && !member.revoked,
+      );
+    return active(slot.source) && active(slot.target);
+  }
+  async shardReady(sid: string, ticket: string): Promise<void> {
+    const slot = this.shards.get(sid);
+    if (!slot || slot.releaseTicket !== ticket || slot.closed || !slot.warm)
+      throw new Error("Invalid warm registration");
+    slot.ready = true;
+    this.shards.save(slot);
+  }
+  async shardIdle(sid: string, ticket: string, idle: boolean): Promise<void> {
+    const slot = this.shards.get(sid);
+    if (!slot || slot.releaseTicket !== ticket || slot.closed || slot.warm)
+      throw new Error("Invalid data admission");
+    slot.cachedSince = idle ? Date.now() : null;
+    if (!slot.pairing) slot.deadline = Date.now() + IDLE;
+    this.shards.save(slot);
+  }
+  async shardCheckpoint(
+    sid: string,
+    ticket: string,
+    snapshots: TrafficLeg[],
+    finished: boolean,
+    incomplete = false,
+  ): Promise<void> {
+    const slot = this.shards.get(sid);
+    if (
+      !slot ||
+      slot.releaseTicket !== ticket ||
+      snapshots.length > 2 ||
+      new Set(snapshots.map((leg) => leg.id)).size !== snapshots.length
+    )
+      throw new Error("Unknown data accounting binding");
+    const bindings = legs(slot);
+    const safe = snapshots.map((leg) => {
+      const binding = bindings.find((value) => value.id === leg.id);
+      const counters = trafficCounters(leg.traffic);
+      if (
+        !binding ||
+        !counters ||
+        binding.network !== leg.network ||
+        binding.role !== leg.role ||
+        binding.source !== leg.source ||
+        binding.target !== leg.target
+      )
+        throw new Error("Invalid data accounting");
+      return { ...binding, traffic: counters };
+    });
+    if (incomplete)
+      this.traffic.markIncomplete(
+        "Data channel recovery lost a peer or a checkpoint",
+      );
+    if (!this.traffic.checkpoint(safe))
+      throw new Error("Traffic checkpoint unavailable");
+    slot.closed ||= finished;
+    if (finished) {
+      slot.closePending = false;
+      slot.accounted = true;
+    }
+    if (!slot.pairing) slot.deadline = Date.now() + IDLE;
+    this.shards.save(slot);
+  }
+  private closeShard(slot: ShardSlot): void {
+    slot.closed = true;
+    slot.closePending = true;
+    this.shards.save(slot);
+    this.ctx.waitUntil(
+      this.data(slot.sid)
+        .close()
+        .then(() => {
+          const current = this.shards.get(slot.sid);
+          if (current) {
+            current.closePending = false;
+            this.shards.save(current);
+          }
+        })
+        .catch(async () => {
+          this.retryAuthorityAt = Date.now() + 5000;
+          await this.schedule();
+        }),
+    );
+  }
+  private async refreshShards(): Promise<void> {
+    if (!this.env.DATA) return;
+    for (const slot of this.shards
+      .all()
+      .filter((slot) => !slot.warm && !slot.accounted)) {
+      try {
+        const snapshot = await this.data(slot.sid).snapshot();
+        if (
+          snapshot.legs.length !== 2 &&
+          !snapshot.finished &&
+          slot.deadline <= Date.now()
+        )
+          this.traffic.markIncomplete("Data peer missing");
+        await this.shardCheckpoint(
+          slot.sid,
+          slot.releaseTicket,
+          snapshot.legs,
+          snapshot.finished,
+          snapshot.incomplete,
+        );
+      } catch {
+        this.traffic.markIncomplete("Data shard snapshot unavailable");
+      }
+    }
+  }
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
     this.admission = new Admission(ctx.storage);
+    this.shards = new Shards(ctx.storage);
     this.pairings = new Pairings(ctx.storage);
     this.traffic = new Traffic(ctx.storage);
     this.connections = new Connections(ctx.getWebSockets());
     this.validateRestoredBindings();
-    this.traffic.recover(this.trafficLegs());
+    this.traffic.recover(this.trafficLegs(), this.shards.ids());
     ctx.blockConcurrencyWhile(async () => {
       await this.admission.validate();
       this.nextAlarm = await ctx.storage.getAlarm();
+      this.publishAuthority();
       await this.schedule();
     });
   }
@@ -76,7 +227,7 @@ export class XrunRelay extends DurableObject<Env> {
     this.traffic = new Traffic(this.ctx.storage);
     await this.admission.validate();
     this.validateRestoredBindings();
-    this.traffic.recover(this.trafficLegs());
+    this.traffic.recover(this.trafficLegs(), this.shards.ids());
     this.publishAuthority();
   }
   private validateRestoredBindings(): void {
@@ -118,6 +269,52 @@ export class XrunRelay extends DurableObject<Env> {
     const roster = authority.roster.roster;
     const active = (device: string) =>
       roster.members.some((m) => m.device_id === device && !m.revoked);
+    if (this.env.DATA) {
+      for (const slot of this.shards.all()) {
+        if (slot.closePending) {
+          this.closeShard(slot);
+          continue;
+        }
+        if (slot.closed) continue;
+        if (
+          slot.authority.roster.roster.authority_generation !==
+            roster.authority_generation ||
+          !active(slot.target) ||
+          (slot.source !== null && !active(slot.source))
+        ) {
+          this.closeShard(slot);
+          continue;
+        }
+        if (
+          slot.authority.lease.lease.issued_at_ms >=
+            authority.lease.lease.issued_at_ms &&
+          slot.authority.roster.roster.version >= roster.version
+        )
+          continue;
+        this.ctx.waitUntil(
+          this.data(slot.sid)
+            .authority(authority)
+            .then(() => {
+              // Merge only the acknowledged lease; other events may have closed or idled this admission meanwhile.
+              const current = this.shards.get(slot.sid);
+              if (
+                current &&
+                (current.authority.roster.roster.version < roster.version ||
+                  (current.authority.roster.roster.version === roster.version &&
+                    current.authority.lease.lease.issued_at_ms <=
+                      authority.lease.lease.issued_at_ms))
+              ) {
+                current.authority = authority;
+                this.shards.save(current);
+              }
+            })
+            .catch(async () => {
+              this.retryAuthorityAt = Date.now() + 5000;
+              await this.schedule();
+            }),
+        );
+      }
+    }
     const pending = new Set(this.admission.pending());
     for (const { socket, state } of [...this.connections.all()]) {
       if (state.role === "control") {
@@ -176,6 +373,18 @@ export class XrunRelay extends DurableObject<Env> {
     const state = this.connections.get(ws)?.state;
     if (!state) return;
     if (tunnel(state)) this.traffic.finish(state);
+    if (state.role === "control" && this.env.DATA) {
+      for (const slot of this.shards
+        .all()
+        .filter(
+          (slot) =>
+            !slot.closed &&
+            slot.target === state.device &&
+            slot.generation === state.generation,
+        )) {
+        this.closeShard(slot);
+      }
+    }
     // Capture bindings before discarding all role-specific fields.
     const peer = tunnel(state)
       ? this.connections.find(state.peer)?.socket
@@ -218,6 +427,10 @@ export class XrunRelay extends DurableObject<Env> {
       if ("deadline" in state && (next === null || state.deadline < next))
         next = state.deadline;
     }
+    for (const slot of this.shards.all()) {
+      const deadline = slot.closed ? slot.updated + 86_400_000 : slot.deadline;
+      if (next === null || deadline < next) next = deadline;
+    }
     if (next === null) {
       if (this.nextAlarm !== null) {
         this.nextAlarm = null;
@@ -231,10 +444,18 @@ export class XrunRelay extends DurableObject<Env> {
   async alarm(): Promise<void> {
     this.nextAlarm = null;
     const now = Date.now();
+    this.shards.prune();
     if (this.traffic.nextFlush !== null && this.traffic.nextFlush <= now)
       this.traffic.flush(this.trafficLegs());
     if (this.retryAuthorityAt !== null && this.retryAuthorityAt <= now)
       this.publishAuthority(true);
+    if (this.env.DATA) {
+      for (const slot of this.shards
+        .all()
+        .filter((slot) => !slot.closed && slot.deadline <= now)) {
+        this.closeShard(slot);
+      }
+    }
     for (const { socket, state } of [...this.connections.all()]) {
       if (!this.connections.get(socket) || !expired(state, now)) continue;
       const message =
@@ -308,6 +529,30 @@ export class XrunRelay extends DurableObject<Env> {
     ) {
       return error("CONNECTION_LIMIT", "Too many unverified connections", 429);
     }
+    if (this.env.DATA && parsed.action === "attach") {
+      const slot = this.shards.get(parsed.sid);
+      const control = this.connections.control(parsed.target);
+      if (
+        !slot ||
+        slot.closed ||
+        slot.target !== parsed.target ||
+        slot.generation !== parsed.generation ||
+        control?.state.generation !== parsed.generation ||
+        slot.deadline <= Date.now()
+      )
+        return error("INVALID_SESSION", "Data reservation unavailable");
+      const [client, server] = Object.values(new WebSocketPair());
+      server.accept();
+      server.send(
+        JSON.stringify({ type: "data_route", path: dataPath(slot, "target") }),
+      );
+      server.close();
+      return new Response(null, {
+        status: 101,
+        webSocket: client,
+        headers: { "X-Xrun-Protocol": String(PROTOCOL.max) },
+      });
+    }
     const pending =
       parsed.action === "attach" ? this.pending(parsed) : undefined;
     if (parsed.action === "attach" && !pending)
@@ -332,6 +577,9 @@ export class XrunRelay extends DurableObject<Env> {
       network: parsed.network,
       ip,
       protocol,
+      ...(region(request.headers.get("X-Xrun-Region"))
+        ? { region: region(request.headers.get("X-Xrun-Region")) }
+        : {}),
       ...(pairing ? { pairing: pairing.invitation_id } : {}),
     };
     this.ctx.acceptWebSocket(server);
@@ -466,6 +714,50 @@ export class XrunRelay extends DurableObject<Env> {
       });
       this.close(ws);
     } else if (state.action === "standby") {
+      if (this.env.DATA) {
+        const control = this.connections.control(state.target);
+        if (
+          !proof ||
+          proof.device !== state.target ||
+          control?.state.generation !== state.generation
+        )
+          throw new Error("Standby control mismatch");
+        const warm = this.shards
+          .all()
+          .filter(
+            (slot) => slot.warm && !slot.closed && slot.deadline > Date.now(),
+          );
+        if (
+          warm.length >= 32 ||
+          warm.some(
+            (slot) =>
+              slot.target === state.target &&
+              slot.generation === state.generation,
+          )
+        )
+          throw new Error("Standby capacity reached");
+        const authority = this.admission.state();
+        if (!authority) throw new Error("Missing authority");
+        const slot = this.shards.create(
+          state.network,
+          state.target,
+          state.generation,
+          null,
+          state.ip,
+          false,
+          false,
+          authority,
+          true,
+        );
+        slot.region = state.region;
+        this.shards.prune();
+        this.shards.save(slot);
+        await this.data(slot.sid).prepare(slot);
+        this.send(ws, { type: "data_route", path: dataPath(slot, "target") });
+        this.close(ws);
+        await this.schedule();
+        return;
+      }
       const control = this.connections.control(state.target);
       if (
         !proof ||
@@ -509,7 +801,7 @@ export class XrunRelay extends DurableObject<Env> {
       if (!proof) throw new Error("Member proof required");
       this.registerControl(ws, state, proof);
     } else {
-      this.startSession(ws, state, proof);
+      await this.startSession(ws, state, proof);
     }
   }
   private registerControl(
@@ -537,11 +829,11 @@ export class XrunRelay extends DurableObject<Env> {
     if (authority) this.send(ws, { type: "authority", state: authority });
     this.retryAuthorityAt = Date.now() + 5000;
   }
-  private startSession(
+  private async startSession(
     ws: WebSocket,
     state: ChallengeState & { action: "connect"; target: string },
     proof: VerifiedProof | undefined,
-  ): void {
+  ): Promise<void> {
     const target = this.connections.control(state.target);
     if (!target) {
       this.reject(ws, "DEVICE_OFFLINE", "Target is offline");
@@ -566,7 +858,18 @@ export class XrunRelay extends DurableObject<Env> {
         this.connections.control(proof.device)?.state.manager === true);
     const anonymousFull =
       !proof &&
-      this.connections.anonymous(state.target) >= ANONYMOUS_PER_TARGET;
+      this.connections.anonymous(state.target) +
+        this.shards
+          .all()
+          .filter(
+            (slot) =>
+              !slot.warm &&
+              !slot.closed &&
+              slot.source === null &&
+              slot.target === state.target &&
+              slot.deadline > Date.now(),
+          ).length >=
+        ANONYMOUS_PER_TARGET;
     if (anonymousFull) {
       this.reject(ws, "SESSION_LIMIT", "Too many concurrent relay sessions");
       return;
@@ -594,6 +897,84 @@ export class XrunRelay extends DurableObject<Env> {
         return;
       }
       this.close(cached.socket, 1000, "Cached session reclaimed");
+    }
+    if (this.env.DATA) {
+      const warm =
+        proof && !state.pairing
+          ? this.shards
+              .all()
+              .find(
+                (slot) =>
+                  slot.warm &&
+                  slot.ready &&
+                  !slot.closed &&
+                  slot.target === state.target &&
+                  slot.generation === target.state.generation &&
+                  slot.deadline > Date.now(),
+              )
+          : undefined;
+      const slot =
+        warm ??
+        this.shards.create(
+          state.network,
+          state.target,
+          target.state.generation,
+          source,
+          state.ip,
+          management,
+          !!state.pairing,
+          authority,
+        );
+      slot.region ??= state.region;
+      slot.warm = false;
+      slot.source = source;
+      slot.ip = state.ip;
+      slot.management = management;
+      slot.pairing = !!state.pairing;
+      slot.authority = authority;
+      slot.deadline = Date.now() + (slot.pairing ? 20_000 : IDLE);
+      let reclaimed: ShardSlot[];
+      try {
+        reclaimed = this.shards.reserve(slot);
+      } catch {
+        this.reject(ws, "SESSION_LIMIT", "Too many concurrent data channels");
+        return;
+      }
+      for (const old of reclaimed) this.closeShard(old);
+      try {
+        if (warm) await this.data(slot.sid).assign(slot);
+        else await this.data(slot.sid).prepare(slot);
+      } catch (error) {
+        this.closeShard(slot);
+        throw error;
+      }
+      if (
+        ws.readyState !== WebSocket.OPEN ||
+        this.connections.control(state.target)?.state.generation !==
+          slot.generation
+      ) {
+        this.closeShard(slot);
+        return;
+      }
+      for (const leg of legs(slot)) this.traffic.begin(leg);
+      if (!warm)
+        this.send(
+          target.socket,
+          state.pairing
+            ? {
+                type: "pairing_incoming",
+                session_id: slot.sid,
+                invitation_id: state.pairing,
+              }
+            : { type: "incoming", session_id: slot.sid },
+        );
+      this.send(ws, {
+        type: "data_route",
+        path: dataPath(slot, "source", !!state.pairing),
+      });
+      this.close(ws);
+      await this.schedule();
+      return;
     }
     const sid = crypto.randomUUID().replaceAll("-", "");
     this.connections.save(ws, {
@@ -903,6 +1284,7 @@ export class XrunRelay extends DurableObject<Env> {
           return;
         }
         try {
+          await this.refreshShards();
           const report = this.traffic.report(
             state.network,
             state.manager ? null : state.device,

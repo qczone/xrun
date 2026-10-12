@@ -28,6 +28,7 @@ test("the distributable Worker includes its dependencies and runs without a sour
         compatibilityDate: manifest.compatibility_date,
         durableObjects: {
           NETWORKS: { className: "XrunRelay", useSQLite: true },
+          DATA: { className: "XrunData", useSQLite: true },
         },
         bindings: {
           RELAY_ROUTE: secret,

@@ -18,6 +18,7 @@ export function CloudflareSetup({
   onRetry: () => void;
 }) {
   const { busy, operate, notify, error } = useOperations();
+  const [relayRegion, setRelayRegion] = useState("auto");
   const [workerName, setWorkerName] = useState("xrun-relay");
   const [accounts, setAccounts] = useState<CloudflareAccount[] | null>(null);
   const [account, setAccount] = useState("");
@@ -77,6 +78,7 @@ export function CloudflareSetup({
             relay = await api.deployCloudflare(
               workerName.trim(),
               selectedAccount,
+              relayRegion,
             );
             setDeployment(relay);
           }
@@ -128,6 +130,34 @@ export function CloudflareSetup({
                 setWorkerName(event.target.value);
               }}
             />
+            <label htmlFor="relay-region">{t("cloudflare.region")}</label>
+            <Select
+              id="relay-region"
+              value={relayRegion}
+              onChange={setRelayRegion}
+              disabled={busy}
+              fullWidth
+              options={(
+                [
+                  "auto",
+                  "apac",
+                  "apac-ne",
+                  "apac-se",
+                  "wnam",
+                  "enam",
+                  "sam",
+                  "weur",
+                  "eeur",
+                  "oc",
+                  "afr",
+                  "me",
+                ] as const
+              ).map((value) => ({
+                value,
+                label: t(`cloudflare.region.${value}`),
+              }))}
+            />
+            <p className="setup-help">{t("cloudflare.regionHint")}</p>
           </details>
         )}
         {!deployment && (accounts || error) && (

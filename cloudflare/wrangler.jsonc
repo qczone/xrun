@@ -6,7 +6,29 @@
   "workers_dev": true,
   "preview_urls": false,
   "durable_objects": {
-    "bindings": [{ "name": "NETWORKS", "class_name": "XrunRelay" }]
+    "bindings": [
+      {
+        "name": "NETWORKS",
+        "class_name": "XrunRelay"
+      },
+      {
+        "name": "DATA",
+        "class_name": "XrunData"
+      }
+    ]
   },
-  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["XrunRelay"] }]
+  "migrations": [
+    {
+      "tag": "v1",
+      "new_sqlite_classes": [
+        "XrunRelay"
+      ]
+    },
+    {
+      "tag": "v2",
+      "new_sqlite_classes": [
+        "XrunData"
+      ]
+    }
+  ]
 }

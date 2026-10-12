@@ -70,6 +70,7 @@ pub(super) fn link_in(directory: &Path, name: &str) -> Result<DeployedRelay> {
     }
     Ok(DeployedRelay {
         provider: "cloudflare",
+        region: state.region,
         name: state.name,
         account_id: state.account_id,
         link: state.url.context(ErrorCode::InvalidConfig.error(
@@ -105,7 +106,9 @@ pub(super) async fn remove_with(
     if let Some(worker) = api.worker(&state.account_id, name).await? {
         state.validate_ownership(&worker)?;
         let migration = worker["migration_tag"].as_str().unwrap_or_default();
-        if migration != "v1" && !(migration == "v2" && state.status == DeploymentStatus::Removing) {
+        if !["v1", "v2"].contains(&migration)
+            && !(migration == "v3" && state.status == DeploymentStatus::Removing)
+        {
             bail!(
                 ErrorCode::VersionMismatch
                     .error("unsupported Cloudflare Durable Object migration tag")
@@ -114,12 +117,17 @@ pub(super) async fn remove_with(
         state.status = DeploymentStatus::Removing;
         state.save(directory)?;
         let script = format!("/accounts/{}/workers/scripts/{name}", state.account_id);
-        if migration == "v1" {
+        if migration != "v3" {
+            let classes = if migration == "v1" {
+                vec!["XrunRelay"]
+            } else {
+                vec!["XrunRelay", "XrunData"]
+            };
             let metadata = json!({
                 "main_module":"relay.mjs", "compatibility_date":"2026-10-03",
                 "tags":["xrun-relay",format!("xrun-deployment-{}",state.ownership)],
                 "bindings":[],
-                "migrations":{"old_tag":"v1","new_tag":"v2","deleted_classes":["XrunRelay"]}
+                "migrations":{"old_tag":migration,"new_tag":"v3","deleted_classes":classes}
             });
             api.upload(&script, &metadata, CLEANUP).await?;
         }

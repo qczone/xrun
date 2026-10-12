@@ -38,6 +38,7 @@ async function measure(
   sessions: number,
   fixtures = { fixture, VERSION },
   protocol = PROTOCOL,
+  sharded = false,
 ) {
   const build = await Bun.build({
     entrypoints: [entry],
@@ -52,7 +53,12 @@ async function measure(
       modules: true,
       script: await build.outputs[0].text(),
       compatibilityDate: "2026-10-03",
-      durableObjects: { NETWORKS: { className: "TestRelay", useSQLite: true } },
+      durableObjects: sharded
+        ? {
+            NETWORKS: { className: "TestShardRelay", useSQLite: true },
+            DATA: { className: "TestShardData", useSQLite: true },
+          }
+        : { NETWORKS: { className: "TestRelay", useSQLite: true } },
       bindings: {
         RELAY_ROUTE: secret,
         XRUN_VERSION: fixtures.VERSION,
@@ -122,17 +128,23 @@ async function measure(
       await device.json();
       controls.push(device);
     }
-    const pairs: { sender: Socket; receiver: Socket }[] = [];
+    const pairs: { sender: Socket; receiver: Socket; sid: string }[] = [];
     for (let index = 0; index < sessions; index++) {
       const path = `/networks/${network.network}/connect/${target.device}`;
-      const sender = await authenticate(path, sources[index % sources.length]);
+      let sender = await authenticate(path, sources[index % sources.length]);
       const incoming = await control.json();
-      const receiver = await open(
+      let receiver = await open(
         `/networks/${network.network}/attach/${target.device}/${hello.generation}/${incoming.session_id}`,
       );
+      if (sharded) {
+        const sourceRoute = await sender.json();
+        const targetRoute = await receiver.json();
+        sender = await open(sourceRoute.path);
+        receiver = await open(targetRoute.path);
+      }
       await sender.json();
       await receiver.json();
-      pairs.push({ sender, receiver });
+      pairs.push({ sender, receiver, sid: incoming.session_id });
     }
     const namespace = await runtime.getDurableObjectNamespace("NETWORKS");
     const object = namespace.get(
@@ -144,6 +156,20 @@ async function measure(
         alarm: number;
         rowsWritten: number;
       }>;
+    const dataChanges = async () => {
+      if (!sharded) return 0;
+      const namespace = await runtime.getDurableObjectNamespace("DATA");
+      let sum = 0;
+      for (const pair of pairs) {
+        const response = await namespace
+          .get(namespace.idFromName(pair.sid))
+          .fetch("https://test/test/metrics");
+        const value = (await response.json()) as { changes: number };
+        sum += value.changes;
+      }
+      return sum;
+    };
+    const beforeData = await dataChanges();
     const before = await metrics();
     const frame = new Uint8Array(64 * 1024).buffer;
     const latency: number[] = [];
@@ -169,6 +195,7 @@ async function measure(
       }
     const elapsedMs = performance.now() - started;
     const after = await metrics();
+    const afterData = await dataChanges();
     for (const pair of pairs) {
       pair.sender.close();
       pair.receiver.close();
@@ -183,7 +210,10 @@ async function measure(
       mibPerSecond: 128 / (elapsedMs / 1000),
       frameP50Ms: latency[Math.floor(latency.length / 2)],
       frameP95Ms: latency[Math.floor(latency.length * 0.95)],
-      rowsWritten: after.rowsWritten - before.rowsWritten,
+      rowsWritten:
+        after.rowsWritten - before.rowsWritten + afterData - beforeData,
+      coordinatorRowsWritten: after.rowsWritten - before.rowsWritten,
+      dataObjects: sharded ? sessions : 0,
       socketEnumerations: after.enumeration - before.enumeration,
       alarmReads: after.alarm - before.alarm,
     };
@@ -247,7 +277,13 @@ try {
         previousFixtures,
         previousProtocol,
       ),
-      after = await measure(currentEntry, sessions);
+      after = await measure(
+        resolve(import.meta.dir, "../tests/workerd/shard-worker.ts"),
+        sessions,
+        { fixture, VERSION },
+        PROTOCOL,
+        true,
+      );
     results.push({
       baseline,
       before,

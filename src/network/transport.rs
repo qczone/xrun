@@ -206,7 +206,9 @@ pub(crate) async fn attach(
         roster.roster.network_id, id.device_id
     );
     let mut ws = open_at(&roster, address, &path).await?;
-    let RelayMessage::Connected { flow_control } = receive(&mut ws).await? else {
+    let (routed, reply) = data_route(ws, id, address, "target").await?;
+    ws = routed;
+    let RelayMessage::Connected { flow_control } = reply else {
         bail!(ErrorCode::InvalidMessage.error("expected attached tunnel"))
     };
     Ok((ws, flow_control))
@@ -221,7 +223,9 @@ pub(super) async fn peer_session(
     let path = format!("/networks/{}/connect/{target}", network.network_id);
     let (mut outer, address) = open_via(id, via, &path).await?;
     authenticate(&mut outer, Some(id), &network.network_id, &path, None).await?;
-    let RelayMessage::Connected { flow_control } = receive(&mut outer).await? else {
+    let (routed, reply) = data_route(outer, id, &address, "source").await?;
+    outer = routed;
+    let RelayMessage::Connected { flow_control } = reply else {
         bail!(ErrorCode::InvalidMessage.error("expected an encrypted tunnel"))
     };
     let (mut ws, cert) = tokio::time::timeout(
@@ -300,7 +304,9 @@ pub(crate) async fn standby(id: &Identity, address: &str, generation: &str) -> R
     );
     let mut ws = open_at(&roster, address, &path).await?;
     authenticate(&mut ws, Some(id), &roster.roster.network_id, &path, None).await?;
-    if !matches!(receive(&mut ws).await?, RelayMessage::StandbyReady) {
+    let (routed, reply) = data_route(ws, id, address, "target").await?;
+    ws = routed;
+    if !matches!(reply, RelayMessage::StandbyReady) {
         bail!(ErrorCode::InvalidMessage.error("standby registration rejected"));
     }
     Ok(ws)
@@ -318,4 +324,70 @@ fn record_route(target: &str, kind: &str) -> Result<()> {
     }
     routes.insert(target.into(), kind.into());
     crate::config::atomic_private_write(&path, &serde_json::to_vec(&routes)?)
+}
+
+async fn data_route(
+    ws: Ws,
+    id: &Identity,
+    address: &str,
+    side: &str,
+) -> Result<(Ws, RelayMessage)> {
+    let roster = current(id)?;
+    follow_data_route(
+        ws,
+        address,
+        Some(&roster.roster.network_id),
+        side,
+        crypto::relay_tls_config(&roster.roster.relay_ca_pem)?,
+    )
+    .await
+}
+
+/// Delegate once, on the same relay and before any business or enrollment payload is sent.
+pub(super) async fn follow_data_route(
+    mut ws: Ws,
+    address: &str,
+    network: Option<&str>,
+    side: &str,
+    tls: std::sync::Arc<rustls::ClientConfig>,
+) -> Result<(Ws, RelayMessage)> {
+    let reply = receive(&mut ws).await?;
+    if let RelayMessage::DataRoute { path } = reply {
+        let parts: Vec<_> = path.split('/').collect();
+        let fields =
+            if path.starts_with("/.well-known/xrun/data/") && network.is_none() && parts.len() == 8
+            {
+                [parts[4], parts[5], parts[6], parts[7]]
+            } else if parts.len() == 7
+                && parts[0].is_empty()
+                && parts[1] == "networks"
+                && parts[3] == "data"
+            {
+                [parts[2], parts[4], parts[5], parts[6]]
+            } else {
+                bail!(ErrorCode::InvalidMessage.error("invalid delegated data route"));
+            };
+        let token =
+            |value: &str| value.len() == 32 && value.bytes().all(|byte| byte.is_ascii_hexdigit());
+        if !(fields[0].len() == 56
+            && fields[0].starts_with("net_")
+            && fields[0][4..]
+                .bytes()
+                .all(|byte| byte.is_ascii_lowercase() || (b'2'..=b'7').contains(&byte)))
+            || network.is_some_and(|expected| fields[0] != expected)
+            || fields[2] != side
+            || !token(fields[1])
+            || !token(fields[3])
+        {
+            bail!(ErrorCode::InvalidMessage.error("invalid delegated data binding"));
+        }
+        ws = net::websocket_at(address, &path, tls).await?;
+        let reply = receive(&mut ws).await?;
+        if matches!(reply, RelayMessage::DataRoute { .. }) {
+            bail!(ErrorCode::InvalidMessage.error("repeated data redirect"));
+        }
+        Ok((ws, reply))
+    } else {
+        Ok((ws, reply))
+    }
 }

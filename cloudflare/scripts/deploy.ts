@@ -1,8 +1,12 @@
 import { readFile, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { load, nameArgument, root, save, wrangler } from "./config";
+import { region } from "../src/regions";
 import { PROTOCOL } from "../src/protocol";
 const state = await load(nameArgument(), true);
+const hint = process.env.XRUN_RELAY_REGION;
+if (hint && !region(hint))
+  throw new Error("Invalid XRUN_RELAY_REGION location hint");
 if (state.account && process.env.CLOUDFLARE_ACCOUNT_ID !== state.account)
   throw new Error("Use the same CLOUDFLARE_ACCOUNT_ID as the saved deployment");
 const cargo = await readFile(resolve(root, "../Cargo.toml"), "utf8");
@@ -14,6 +18,7 @@ const config = JSON.parse(
 config.name = state.name;
 config.main = "../src/index.ts";
 config.vars = {
+  ...(hint ? { XRUN_RELAY_REGION: hint } : {}),
   XRUN_PROTOCOL_MIN: PROTOCOL.min,
   XRUN_PROTOCOL_MAX: PROTOCOL.max,
 };

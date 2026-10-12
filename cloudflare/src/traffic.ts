@@ -89,6 +89,9 @@ export class Traffic {
       this.fail(error);
     }
   }
+  markIncomplete(reason: string): void {
+    this.fail(reason);
+  }
   private fail(error: unknown): void {
     if (!this.incomplete)
       console.warn(
@@ -220,10 +223,10 @@ export class Traffic {
   finish(leg: TrafficLeg): void {
     this.checkpoint([leg], [leg.id]);
   }
-  recover(legs: TrafficLeg[]): void {
+  recover(legs: TrafficLeg[], remoteIds: string[] = []): void {
     if (this.unavailable) return;
     try {
-      const live = new Set(legs.map((leg) => leg.id));
+      const live = new Set([...legs.map((leg) => leg.id), ...remoteIds]);
       const missing = this.storage.sql
         .exec<{ id: string }>("SELECT id FROM traffic_checkpoints")
         .toArray()

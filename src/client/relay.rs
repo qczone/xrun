@@ -1,5 +1,5 @@
 //! Desktop-safe Cloudflare deployment, using the same native OAuth and Worker as CLI.
-pub use crate::cloudflare::{Account, DeployedRelay};
+pub use crate::cloudflare::{Account, DeployedRelay, Region};
 use anyhow::Result;
 
 /// Authorize in the browser when needed and list accounts without reading terminal
@@ -19,8 +19,9 @@ pub async fn deploy_cloudflare(
     name: &str,
     account: String,
     prompt: &(dyn Fn(&str) + Send + Sync),
+    region: Option<Region>,
 ) -> Result<DeployedRelay> {
-    crate::cloudflare::deploy_selected(name, account, prompt).await
+    crate::cloudflare::deploy_selected(name, account, prompt, region).await
 }
 
 /// Locally saved, completed, active deployments; this does not authorize or contact Cloudflare.

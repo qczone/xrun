@@ -118,10 +118,16 @@ async fn bootstrap(address: &str, code: &str, key: &str) -> Result<String> {
         bail!(ErrorCode::InvalidSession.error("invalid pairing rendezvous"));
     }
     super::authenticate(&mut ws, None, "", "", None).await?;
-    if !matches!(
-        super::receive(&mut ws).await?,
-        RelayMessage::Connected { .. }
-    ) {
+    let (routed, reply) = super::transport::follow_data_route(
+        ws,
+        address,
+        None,
+        "source",
+        crypto::pairing_tls_config(),
+    )
+    .await?;
+    ws = routed;
+    if !matches!(reply, RelayMessage::Connected { .. }) {
         bail!(ErrorCode::InvalidMessage.error("pairing tunnel unavailable"));
     }
     let csr = crypto::renew_device_request(key)?;

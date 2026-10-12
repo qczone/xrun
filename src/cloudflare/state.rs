@@ -49,6 +49,8 @@ pub(super) struct Deployment {
     pub url: Option<String>,
     #[serde(default)]
     pub status: DeploymentStatus,
+    #[serde(default)]
+    pub region: super::Region,
 }
 
 #[derive(Clone, Copy, Default, PartialEq, Eq, Deserialize, Serialize)]

@@ -1,0 +1,105 @@
+{
+  "environment": {
+    "platform": "darwin",
+    "arch": "arm64",
+    "bun": "1.4.2"
+  },
+  "results": [
+    {
+      "baseline": "47af229",
+      "before": {
+        "sessions": 1,
+        "controls": 32,
+        "bytesEachDirection": 67108864,
+        "elapsedMs": 751.4099170000002,
+        "mibPerSecond": 170.34643422200134,
+        "frameP50Ms": 0.3530000000000655,
+        "frameP95Ms": 0.4055000000000746,
+        "rowsWritten": 8192,
+        "coordinatorRowsWritten": 8192,
+        "dataObjects": 0,
+        "socketEnumerations": 0,
+        "alarmReads": 0
+      },
+      "after": {
+        "sessions": 1,
+        "controls": 32,
+        "bytesEachDirection": 67108864,
+        "elapsedMs": 535.1276660000003,
+        "mibPerSecond": 239.19525775368888,
+        "frameP50Ms": 0.25004200000012133,
+        "frameP95Ms": 0.2962080000002061,
+        "rowsWritten": 0,
+        "coordinatorRowsWritten": 0,
+        "dataObjects": 1,
+        "socketEnumerations": 0,
+        "alarmReads": 0
+      },
+      "speedup": 1.404169443558539
+    },
+    {
+      "baseline": "47af229",
+      "before": {
+        "sessions": 4,
+        "controls": 32,
+        "bytesEachDirection": 67108864,
+        "elapsedMs": 646.545458,
+        "mibPerSecond": 197.9752520355653,
+        "frameP50Ms": 0.28358399999979156,
+        "frameP95Ms": 0.3734999999996944,
+        "rowsWritten": 8192,
+        "coordinatorRowsWritten": 8192,
+        "dataObjects": 0,
+        "socketEnumerations": 0,
+        "alarmReads": 0
+      },
+      "after": {
+        "sessions": 4,
+        "controls": 32,
+        "bytesEachDirection": 67108864,
+        "elapsedMs": 541.23225,
+        "mibPerSecond": 236.4973631929731,
+        "frameP50Ms": 0.24675000000024738,
+        "frameP95Ms": 0.300042000000758,
+        "rowsWritten": 0,
+        "coordinatorRowsWritten": 0,
+        "dataObjects": 4,
+        "socketEnumerations": 0,
+        "alarmReads": 0
+      },
+      "speedup": 1.1945804375108837
+    },
+    {
+      "baseline": "47af229",
+      "before": {
+        "sessions": 8,
+        "controls": 32,
+        "bytesEachDirection": 67108864,
+        "elapsedMs": 720.7870419999999,
+        "mibPerSecond": 177.58365861410704,
+        "frameP50Ms": 0.3354159999998956,
+        "frameP95Ms": 0.38337500000034197,
+        "rowsWritten": 8192,
+        "coordinatorRowsWritten": 8192,
+        "dataObjects": 0,
+        "socketEnumerations": 0,
+        "alarmReads": 0
+      },
+      "after": {
+        "sessions": 8,
+        "controls": 32,
+        "bytesEachDirection": 67108864,
+        "elapsedMs": 527.411583000001,
+        "mibPerSecond": 242.69470774971538,
+        "frameP50Ms": 0.24308399999972607,
+        "frameP95Ms": 0.290207999998529,
+        "rowsWritten": 0,
+        "coordinatorRowsWritten": 0,
+        "dataObjects": 8,
+        "socketEnumerations": 0,
+        "alarmReads": 0
+      },
+      "speedup": 1.3666500039685299
+    }
+  ]
+}

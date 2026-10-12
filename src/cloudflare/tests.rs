@@ -103,7 +103,7 @@ async fn mock(State(state): State<Arc<Mutex<Mock>>>, request: Request<Body>) -> 
     if path.ends_with("/workers/scripts") {
         return match &state.metadata {
             Some(metadata) => reply(
-                json!([{"id":"xrun-relay","tags":metadata["tags"],"migration_tag":state.migration.as_deref().unwrap_or("v1") }]),
+                json!([{"id":"xrun-relay","tags":metadata["tags"],"migration_tag":state.migration.as_deref().unwrap_or("v2") }]),
             ),
             None => reply(json!([])),
         };
@@ -178,26 +178,42 @@ async fn new_deployment_and_updates_keep_the_private_route_and_durable_objects()
     let directory = tempfile::tempdir()?;
     let api =
         || Api::new("test-api-token".into()).map(|api| api.test_origin(server.origin.clone()));
-    let first = deploy_with(api()?, directory.path(), "xrun-relay", ACCOUNT, &bundle()?).await?;
+    let first = deploy_with(
+        api()?,
+        directory.path(),
+        "xrun-relay",
+        ACCOUNT,
+        &bundle()?,
+        None,
+    )
+    .await?;
     let saved = Deployment::load(directory.path(), "xrun-relay")?.unwrap();
     assert_eq!(
         first.link,
         format!("https://xrun-relay.example.workers.dev/{}", saved.route)
     );
-    let second = deploy_with(api()?, directory.path(), "xrun-relay", ACCOUNT, &bundle()?).await?;
+    let second = deploy_with(
+        api()?,
+        directory.path(),
+        "xrun-relay",
+        ACCOUNT,
+        &bundle()?,
+        None,
+    )
+    .await?;
     assert_eq!(first.link, second.link);
     let state = server.state.lock().unwrap();
     assert!(state.enabled);
     assert_eq!(state.uploads.len(), 2);
     assert_eq!(
         state.uploads[0]["migrations"],
-        json!({"new_tag":"v1","new_sqlite_classes":["XrunRelay"]})
+        json!({"new_tag":"v2","new_sqlite_classes":["XrunRelay","XrunData"]})
     );
     assert!(state.uploads[1].get("migrations").is_none());
     assert_eq!(state.uploads[0]["bindings"], state.uploads[1]["bindings"]);
-    assert_eq!(state.uploads[0]["bindings"][1]["text"], saved.route);
+    assert_eq!(state.uploads[0]["bindings"][2]["text"], saved.route);
     assert_eq!(
-        state.uploads[0]["bindings"][2]["json"],
+        state.uploads[0]["bindings"][3]["json"],
         ProtocolRange::CURRENT.min
     );
     #[cfg(unix)]
@@ -222,14 +238,29 @@ async fn failed_enable_can_be_retried_without_recreating_the_relay() -> Result<(
     let api =
         || Api::new("test-api-token".into()).map(|api| api.test_origin(server.origin.clone()));
     assert!(
-        deploy_with(api()?, directory.path(), "xrun-relay", ACCOUNT, &bundle()?)
-            .await
-            .is_err()
+        deploy_with(
+            api()?,
+            directory.path(),
+            "xrun-relay",
+            ACCOUNT,
+            &bundle()?,
+            None
+        )
+        .await
+        .is_err()
     );
     let saved = Deployment::load(directory.path(), "xrun-relay")?.unwrap();
     assert!(saved.url.is_none());
     server.state.lock().unwrap().fail_enable = false;
-    let result = deploy_with(api()?, directory.path(), "xrun-relay", ACCOUNT, &bundle()?).await?;
+    let result = deploy_with(
+        api()?,
+        directory.path(),
+        "xrun-relay",
+        ACCOUNT,
+        &bundle()?,
+        None,
+    )
+    .await?;
     assert!(result.link.ends_with(&saved.route));
     let state = server.state.lock().unwrap();
     assert!(state.uploads[1].get("migrations").is_none());
@@ -247,6 +278,7 @@ async fn existing_unmanaged_workers_are_not_overwritten() -> Result<()> {
         "xrun-relay",
         ACCOUNT,
         &bundle()?,
+        None,
     )
     .await
     .err()
@@ -268,6 +300,7 @@ async fn new_accounts_get_a_workers_dev_subdomain() -> Result<()> {
         "xrun-relay",
         ACCOUNT,
         &bundle()?,
+        None,
     )
     .await?;
     assert!(
@@ -293,6 +326,7 @@ async fn denied_api_calls_are_not_missing_workers_and_tokens_are_redacted() -> R
         "xrun-relay",
         ACCOUNT,
         &bundle()?,
+        None,
     )
     .await
     .err()
@@ -339,7 +373,15 @@ async fn saved_links_are_offline_and_removal_never_deletes_an_unowned_worker() -
             .await
             .is_err()
     );
-    let relay = deploy_with(api()?, directory.path(), "xrun-relay", ACCOUNT, &bundle()?).await?;
+    let relay = deploy_with(
+        api()?,
+        directory.path(),
+        "xrun-relay",
+        ACCOUNT,
+        &bundle()?,
+        None,
+    )
+    .await?;
     assert_eq!(link_in(directory.path(), "xrun-relay")?.link, relay.link);
     server.state.lock().unwrap().metadata = Some(json!({"tags":["another-app"]}));
     let error = remove_with(api()?, directory.path(), "xrun-relay")
@@ -365,7 +407,15 @@ async fn interrupted_removal_retries_without_repeating_the_namespace_deletion() 
     let directory = tempfile::tempdir()?;
     let api =
         || Api::new("test-api-token".into()).map(|api| api.test_origin(server.origin.clone()));
-    deploy_with(api()?, directory.path(), "xrun-relay", ACCOUNT, &bundle()?).await?;
+    deploy_with(
+        api()?,
+        directory.path(),
+        "xrun-relay",
+        ACCOUNT,
+        &bundle()?,
+        None,
+    )
+    .await?;
     server.state.lock().unwrap().fail_delete = true;
     assert!(
         remove_with(api()?, directory.path(), "xrun-relay")
@@ -380,16 +430,23 @@ async fn interrupted_removal_retries_without_repeating_the_namespace_deletion() 
     );
     assert!(link_in(directory.path(), "xrun-relay").is_err());
     assert!(
-        deploy_with(api()?, directory.path(), "xrun-relay", ACCOUNT, &bundle()?)
-            .await
-            .is_err()
+        deploy_with(
+            api()?,
+            directory.path(),
+            "xrun-relay",
+            ACCOUNT,
+            &bundle()?,
+            None
+        )
+        .await
+        .is_err()
     );
     {
         let mut remote = server.state.lock().unwrap();
         assert_eq!(remote.uploads.len(), 2);
         assert_eq!(
             remote.uploads[1]["migrations"],
-            json!({"old_tag":"v1","new_tag":"v2","deleted_classes":["XrunRelay"]})
+            json!({"old_tag":"v2","new_tag":"v3","deleted_classes":["XrunRelay","XrunData"]})
         );
         assert_eq!(remote.uploads[1]["bindings"], json!([]));
         remote.fail_delete = false;
@@ -403,9 +460,16 @@ async fn interrupted_removal_retries_without_repeating_the_namespace_deletion() 
             == DeploymentStatus::Removed
     );
     assert!(
-        deploy_with(api()?, directory.path(), "xrun-relay", ACCOUNT, &bundle()?)
-            .await
-            .is_err()
+        deploy_with(
+            api()?,
+            directory.path(),
+            "xrun-relay",
+            ACCOUNT,
+            &bundle()?,
+            None
+        )
+        .await
+        .is_err()
     );
     {
         let mut remote = server.state.lock().unwrap();
@@ -439,5 +503,67 @@ async fn desktop_accounts_are_listed_without_terminal_selection_and_validate_ids
         &super::deploy::account_list(&api).await.err().unwrap(),
         ErrorCode::InvalidConfig
     ));
+    Ok(())
+}
+
+#[tokio::test]
+async fn region_hints_persist_and_v1_upgrade_adds_only_the_data_namespace() -> Result<()> {
+    use super::Region;
+    let server = server().await?;
+    let directory = tempfile::tempdir()?;
+    let api =
+        || Api::new("test-api-token".into()).map(|api| api.test_origin(server.origin.clone()));
+    let first = deploy_with(
+        api()?,
+        directory.path(),
+        "xrun-relay",
+        ACCOUNT,
+        &bundle()?,
+        Some(Region::ApacNe),
+    )
+    .await?;
+    assert_eq!(first.region, Region::ApacNe);
+    server.state.lock().unwrap().migration = Some("v1".into());
+    let second = deploy_with(
+        api()?,
+        directory.path(),
+        "xrun-relay",
+        ACCOUNT,
+        &bundle()?,
+        None,
+    )
+    .await?;
+    assert_eq!(first.link, second.link);
+    assert_eq!(second.region, Region::ApacNe);
+    {
+        let remote = server.state.lock().unwrap();
+        assert_eq!(
+            remote.uploads[1]["migrations"],
+            json!({"old_tag":"v1","new_tag":"v2","new_sqlite_classes":["XrunData"]})
+        );
+        assert!(
+            remote.uploads[1]["bindings"].as_array().unwrap().contains(
+                &json!({"type":"plain_text","name":"XRUN_RELAY_REGION","text":"apac-ne"})
+            )
+        );
+    }
+    let automatic = deploy_with(
+        api()?,
+        directory.path(),
+        "xrun-relay",
+        ACCOUNT,
+        &bundle()?,
+        Some(Region::Auto),
+    )
+    .await?;
+    assert_eq!(automatic.region, Region::Auto);
+    assert!(
+        !server.state.lock().unwrap().uploads[2]["bindings"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|binding| binding["name"] == "XRUN_RELAY_REGION")
+    );
+    assert!(serde_json::from_str::<Region>("\"arbitrary\"").is_err());
     Ok(())
 }
