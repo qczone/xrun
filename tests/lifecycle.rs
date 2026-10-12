@@ -336,11 +336,24 @@ async fn peers_deliver_revocation_after_relay_restart_with_manager_offline() -> 
         assert!(!before.member(&removed_id)?.revoked);
         stop_daemon(&lab.target, &mut lab.daemon).await?;
         let revoked = json(cli(&lab.source, &["revoke", "removed1", "--json"]).await);
-        assert_eq!(
-            revoked["undelivered"],
-            serde_json::json!([lab.target_identity.device_id])
-        );
-        assert!(roster(&keeper)?.member(&removed_id)?.revoked);
+        // Relay publication is durable before return. Delivery is acknowledged
+        // asynchronously, so an online peer may still be pending in this snapshot.
+        let pending = revoked["undelivered"]
+            .as_array()
+            .context("pending revocation delivery")?;
+        assert!(pending.contains(&serde_json::json!(lab.target_identity.device_id)));
+        assert!(!pending.contains(&serde_json::json!(removed_id)));
+        assert!(revoked["sync_error"].is_null());
+        tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                if roster(&keeper)?.member(&removed_id)?.revoked {
+                    return Ok::<_, anyhow::Error>(());
+                }
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+        })
+        .await
+        .context("online peer received the durable revocation")??;
         stop_daemon(&lab.source, &mut lab.source_daemon).await?;
         lab.relay.stop().await?;
         assert!(!lab.relay.config.data_dir.join("relay.db").exists());
