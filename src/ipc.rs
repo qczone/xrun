@@ -16,6 +16,8 @@ use tokio_tungstenite::{
     WebSocketStream,
     tungstenite::protocol::{Role, WebSocketConfig},
 };
+#[cfg(windows)]
+mod windows;
 
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -145,9 +147,18 @@ async fn open(address: &str) -> std::io::Result<Io> {
 }
 #[cfg(windows)]
 async fn open(address: &str) -> std::io::Result<Io> {
+    if !address
+        .strip_prefix(r"\\.\pipe\xrun-")
+        .is_some_and(|suffix| uuid::Uuid::parse_str(suffix).is_ok())
+    {
+        return Err(std::io::ErrorKind::PermissionDenied.into());
+    }
     loop {
         match tokio::net::windows::named_pipe::ClientOptions::new().open(address) {
-            Ok(pipe) => return Ok(Box::new(pipe)),
+            Ok(pipe) => {
+                windows::verify_server(&pipe)?;
+                return Ok(Box::new(pipe));
+            }
             Err(e) if e.raw_os_error() == Some(231) => {
                 tokio::time::sleep(Duration::from_millis(10)).await
             }
