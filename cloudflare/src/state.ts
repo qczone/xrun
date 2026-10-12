@@ -1,6 +1,7 @@
 import { DEVICE, object } from "./auth";
 import { WINDOW } from "./limits";
 import { PROTOCOL } from "./protocol";
+import { trafficCounters, type TrafficCounter } from "./traffic-state";
 import {
   NETWORK,
   relativeRoute,
@@ -52,6 +53,7 @@ interface TunnelFields extends ConnectionBase, SessionBinding {
   peer: string;
   outstanding: number;
   deadline: number;
+  traffic: TrafficCounter[];
 }
 export interface SourceState extends TunnelFields {
   role: "source";
@@ -83,6 +85,7 @@ const TUNNEL_KEYS = [
   "peer",
   "outstanding",
   "deadline",
+  "traffic",
 ];
 
 function binding(value: Record<string, unknown>): SessionBinding | undefined {
@@ -284,6 +287,7 @@ export function attachment(value: unknown): Attachment | undefined {
     case "source":
     case "target": {
       const session = binding(value);
+      const traffic = trafficCounters(value.traffic);
       const keys =
         value.role === "source"
           ? [...TUNNEL_KEYS, "anonymous", "cachedSince", "source", "management"]
@@ -291,6 +295,7 @@ export function attachment(value: unknown): Attachment | undefined {
       if (
         !object(value, keys) ||
         !session ||
+        !traffic ||
         !identifier(value.peer) ||
         !deadline(value.deadline) ||
         typeof value.outstanding !== "number" ||
@@ -305,6 +310,7 @@ export function attachment(value: unknown): Attachment | undefined {
         peer: value.peer,
         deadline: value.deadline,
         outstanding: value.outstanding,
+        traffic,
       };
       if (value.role === "target") return { ...tunnel, role: "target" };
       if (typeof value.anonymous !== "boolean" || !admission(value)) return;

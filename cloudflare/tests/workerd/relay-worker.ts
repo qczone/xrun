@@ -69,7 +69,12 @@ export class TestRelay extends XrunRelay {
 
   override async fetch(request: Request): Promise<Response> {
     const path = new URL(request.url).pathname;
-    if (path === "/test/metrics") return Response.json(this.reads);
+    if (path === "/test/metrics") {
+      const { changes } = this.ctx.storage.sql
+        .exec<{ changes: number }>("SELECT total_changes() AS changes")
+        .one();
+      return Response.json({ ...this.reads, rowsWritten: changes });
+    }
     if (path === "/test/pause") {
       this.paused = true;
       return Response.json({ paused: true });

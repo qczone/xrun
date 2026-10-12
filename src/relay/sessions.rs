@@ -275,18 +275,15 @@ async fn bridge(
         )
     };
     let activity = Activity::new(tokio::time::Instant::now());
+    let _statistics = app.traffic.session().await;
     let source_usage = Usage {
-        traffic: &app.traffic,
-        network: &network,
-        from: device.as_deref(),
-        to: Some(&target_id),
+        from: app.traffic.counter(&network, device.as_deref()),
+        to: app.traffic.counter(&network, Some(&target_id)),
         activity: &activity,
     };
     let target_usage = Usage {
-        traffic: &app.traffic,
-        network: &network,
-        from: Some(&target_id),
-        to: device.as_deref(),
+        from: app.traffic.counter(&network, Some(&target_id)),
+        to: app.traffic.counter(&network, device.as_deref()),
         activity: &activity,
     };
     let (source_tx, source_rx) = source.split();
@@ -302,32 +299,16 @@ async fn bridge(
 }
 type Activity = std::sync::Mutex<tokio::time::Instant>;
 struct Usage<'a> {
-    traffic: &'a Arc<traffic::Traffic>,
-    network: &'a str,
-    from: Option<&'a str>,
-    to: Option<&'a str>,
+    from: traffic::Counter,
+    to: traffic::Counter,
     activity: &'a Activity,
 }
 impl Usage<'_> {
-    async fn record(&self, bytes: usize, outgoing: bool) {
-        if bytes == 0 {
-            return;
-        }
-        let device = if outgoing { self.to } else { self.from };
-        if !self.traffic.persistent {
-            self.traffic.record(self.network, device, bytes, outgoing);
-            return;
-        }
-        let traffic = self.traffic.clone();
-        let network = self.network.to_owned();
-        let device = device.map(str::to_owned);
-        if let Err(error) = tokio::task::spawn_blocking(move || {
-            traffic.record(&network, device.as_deref(), bytes, outgoing)
-        })
-        .await
-        {
-            self.traffic.recording_task_failed();
-            tracing::warn!(%error, "relay traffic recorder stopped; forwarding remains enabled");
+    fn record(&self, bytes: usize, outgoing: bool) {
+        if outgoing {
+            self.to.record(bytes, true);
+        } else {
+            self.from.record(bytes, false);
         }
     }
 }
@@ -397,9 +378,9 @@ where
         } else {
             0
         };
-        usage.record(bytes, false).await;
+        usage.record(bytes, false);
         forward(target, message).await?;
-        usage.record(bytes, true).await;
+        usage.record(bytes, true);
     }
 }
 async fn direction<R, W>(mut reader: R, writer: &Mutex<W>, usage: &Usage<'_>) -> Result<()>
@@ -426,9 +407,9 @@ where
         } else {
             0
         };
-        usage.record(bytes, false).await;
+        usage.record(bytes, false);
         forward(writer, message).await?;
-        usage.record(bytes, true).await;
+        usage.record(bytes, true);
     }
 }
 async fn forward<W>(writer: &Mutex<W>, message: Message) -> Result<()>
@@ -473,10 +454,8 @@ mod tests {
             let source_tx = sink();
             let target_tx = sink();
             let usage = Usage {
-                traffic: &app.traffic,
-                network: "test",
-                from: Some("a"),
-                to: Some("b"),
+                from: app.traffic.counter("test", Some("a")),
+                to: app.traffic.counter("test", Some("b")),
                 activity: &activity,
             };
             tokio::select! {

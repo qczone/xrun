@@ -228,7 +228,7 @@ CLI 使用 xrun 自己注册的 Cloudflare 公共 OAuth 客户端，以 Authoriz
 
 每个部署只有一个固定名称的 DO，只服务首次认领的网络；入口不会按未经授权的网络 ID 分配 DO。SQLite 的 `relay_owner` 表只存一条网络 ID 与管理设备 ID 的绑定，没有成员、配额、任务或文件数据表。在线控制连接、会话代次、接入 ID 和未确认密文字节数随 WebSocket attachment 保存，休眠后重建连接关系。alarm 仅清理认证超时、待接入和闲置传输；没有持续运行的 JS 心跳，原生 ping/pong 由 CF 运行时处理。
 
-流量计数按网络与设备聚合到 DO SQLite 的每日汇总，与 WebSocket 附件分开持久保存；关闭连接或休眠恢复不清零。只计有效密文二进制帧，认证、ACK、缓存声明和心跳不计入；统计存储故障不阻断转发。查询范围、完整性和字段见 [流量统计](traffic.md)。
+流量计数先累计到 WebSocket 附件，由共享的 10 秒 alarm、查询或连接收尾批量提交 SQLite 每日汇总；累计检查点保证关闭、重试或休眠恢复不重复、不清零。只计有效密文二进制帧，认证、ACK、缓存声明和心跳不计入；统计存储故障不阻断转发。查询范围、完整性和字段见 [流量统计](traffic.md)。
 
 每网络最多 512 个 WebSocket、256 个控制连接、8 个来源会话（含待接入）；每 IP 最多 8 个正在验证的连接；每目标匿名配对最多 4 个。`connected` 携带 `flow_control: true`；每方向最多 4 MiB 未确认密文，8 个双向会话的未确认密文预算合计最多 64 MiB，此外仍有运行时、连接和消息对象开销。接收端写入本地 TLS 通道后，每累计 256 KiB 回复 `{type:"ack",bytes:N}`，不足阈值的尾部计入下一批，中转校验确认量后通知发送端释放窗口。超过 64 KiB 的帧、超出窗口或非法确认会关闭两端。窗口不限制累计传输量，单文件大小不设固定上限。
 
@@ -912,7 +912,7 @@ Rust 与 Cloudflare 中转使用同一套连接认证和端到端会话协议，
 - [Readability](../.github/workflows/quality.yml) 检查源码行长、文件规模、Cloudflare 判别联合及非空断言，并测试检查器自身。
 - 三平台普通核心测试验证已有会话的输出送达与授权失效，等待上限为 5 秒。受控空闲机器另单独执行 `tests/latency.rs` 的 ignored 验收，保留输出 100 ms、授权失效 200 ms 的产品预算；共享 CI 不以这些时延作硬门槛，功能通过不能代替时延通过。
 - Linux 使用当前源码构建 CLI、daemon 与 Worker，在 Rust 中转和 Cloudflare workerd 上验证端到端操作，不构建历史版本。
-- [Measure performance](../.github/workflows/performance.yml) 手动对照选定 Git ref，在三平台测空闲 CPU、日志与同期查询，Linux 另统计文件读取和数据库同步；结果上传为报告，不设吞吐门槛。缓存测量与真实 CF 休眠验收按开发文档单独运行。
+- [Measure performance](../.github/workflows/performance.yml) 手动对照选定 Git ref，在三平台测空闲 CPU、日志、同期查询、真实文件系统上的中转吞吐／回显延迟与本地 workerd 行修改，Linux 另统计文件读取和数据库同步；结果上传为报告，不设吞吐门槛。缓存测量与真实 CF 休眠验收按开发文档单独运行。
 
 - Linux、Windows 的测试工作流分别覆盖 x86_64 与 arm64，macOS 测试工作流使用 ARM runner；均运行格式检查、clippy 和原生核心测试，覆盖配对、TLS、成员签名、授权、可靠任务、传输、流式执行、端口转发与故障恢复。测试直接调用中转库，不开放非 Linux 的中转部署命令。
 - 核心测试包含前台提交与日志共用会话，以及独立 CLI 进程之间的缓存复用、配置更新、授权变化、数据库重建、并发请求隔离、私有 IPC 认证、提前归还、缓存上限、证书过期和上传期间源文件变化。

@@ -151,6 +151,7 @@ pub(super) async fn bridge(
     target: &mut WebSocket,
     closed: &mut watch::Receiver<bool>,
 ) -> Result<()> {
+    let _statistics = app.traffic.session().await;
     let deadline = tokio::time::sleep(std::time::Duration::from_secs(20));
     tokio::pin!(deadline);
     let mut transferred = 0;
@@ -163,6 +164,11 @@ pub(super) async fn bridge(
         };
         let message =
             message.context(ErrorCode::ConnectionClosed.error("pairing tunnel closed"))??;
+        let bytes = if let Message::Binary(bytes) = &message {
+            bytes.len()
+        } else {
+            0
+        };
         match &message {
             Message::Binary(bytes) => {
                 transferred += bytes.len();
@@ -174,12 +180,6 @@ pub(super) async fn bridge(
                     if from_source { None } else { Some(manager) },
                     bytes.len(),
                     false,
-                );
-                app.traffic.record(
-                    network,
-                    if from_source { Some(manager) } else { None },
-                    bytes.len(),
-                    true,
                 );
             }
             Message::Close(_) => return Ok(()),
@@ -196,5 +196,11 @@ pub(super) async fn bridge(
             _ = &mut deadline => bail!(ErrorCode::PairingTimeout.error("pairing tunnel timed out")),
             _ = closed.changed() => return Ok(()),
         }
+        app.traffic.record(
+            network,
+            if from_source { Some(manager) } else { None },
+            bytes,
+            true,
+        );
     }
 }

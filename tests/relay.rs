@@ -617,3 +617,67 @@ async fn relay_routes_only_proven_members_and_keeps_binding_and_resource_limits(
     })
     .await?
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore = "owned localhost throughput and latency benchmark; run explicitly"]
+async fn relay_disk_throughput_and_frame_latency_benchmark() -> Result<()> {
+    let root = tempfile::tempdir()?;
+    let (mut relay, _) = common::TestRelay::new(&root.path().join("relay")).await?;
+    let n = network(&root.path().join("manager"), &relay.config)?;
+    claim(&relay.config, &n).await?;
+    let (mut control, generation) = control(&relay.config, &n.id, &n.target, None).await?;
+    let mut sender = source(&relay.config, &n.id, &n.target.device_id, Some(&n.source)).await?;
+    let sid = incoming(&mut control).await?;
+    let mut receiver = attach(&relay.config, &n.id, &n.target.device_id, &generation, &sid).await?;
+    assert!(matches!(
+        net::receive(&mut sender).await?,
+        RelayMessage::Connected { .. }
+    ));
+    let count = 1024usize;
+    let frame = vec![7u8; 64 * 1024];
+    let started = std::time::Instant::now();
+    let producer = async {
+        for _ in 0..count {
+            sender.send(Message::Binary(frame.clone().into())).await?;
+        }
+        Ok::<_, anyhow::Error>(())
+    };
+    let consumer = async {
+        for _ in 0..count {
+            let Message::Binary(bytes) = receiver.next().await.context("benchmark receiver")??
+            else {
+                anyhow::bail!("expected binary frame");
+            };
+            assert_eq!(bytes.len(), frame.len());
+        }
+        Ok::<_, anyhow::Error>(())
+    };
+    tokio::try_join!(producer, consumer)?;
+    let seconds = started.elapsed().as_secs_f64();
+    let mut latency = Vec::new();
+    for index in 0..250 {
+        let started = std::time::Instant::now();
+        sender.send(Message::Binary(vec![9; 64].into())).await?;
+        let _ = receiver.next().await.context("small frame")??;
+        receiver.send(Message::Binary(vec![9; 64].into())).await?;
+        let _ = sender.next().await.context("echo")??;
+        if index >= 50 {
+            latency.push(started.elapsed().as_secs_f64() * 1000.0);
+        }
+    }
+    latency.sort_by(f64::total_cmp);
+    let report = usage(&relay.config, &n, &n.manager_identity, Some(&n.manager)).await?;
+    assert!(report.totals.ingress_bytes >= (count * frame.len()) as u64);
+    println!(
+        "relay_disk_benchmark {}",
+        serde_json::json!({
+            "build": if cfg!(debug_assertions) {"debug"} else {"release"}, "transport":"WSS ciphertext relay over localhost",
+            "bytes":count*frame.len(), "seconds":seconds, "mib_per_second":64.0/seconds,
+            "echo_p50_ms":latency[latency.len()/2], "echo_p95_ms":latency[latency.len()*95/100],
+            "traffic_complete":report.complete,
+        })
+    );
+    drop((sender, receiver, control));
+    relay.stop().await?;
+    Ok(())
+}

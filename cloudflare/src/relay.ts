@@ -61,6 +61,7 @@ export class XrunRelay extends DurableObject<Env> {
     this.traffic = new Traffic(ctx.storage);
     this.connections = new Connections(ctx.getWebSockets());
     this.validateRestoredBindings();
+    this.traffic.recover(this.trafficLegs());
     ctx.blockConcurrencyWhile(async () => {
       await this.admission.validate();
       this.nextAlarm = await ctx.storage.getAlarm();
@@ -72,8 +73,10 @@ export class XrunRelay extends DurableObject<Env> {
     this.admission = new Admission(this.ctx.storage);
     this.pairings = new Pairings(this.ctx.storage);
     this.connections = new Connections(this.ctx.getWebSockets());
+    this.traffic = new Traffic(this.ctx.storage);
     await this.admission.validate();
     this.validateRestoredBindings();
+    this.traffic.recover(this.trafficLegs());
     this.publishAuthority();
   }
   private validateRestoredBindings(): void {
@@ -154,6 +157,11 @@ export class XrunRelay extends DurableObject<Env> {
   private send(ws: WebSocket, value: object): void {
     ws.send(JSON.stringify(value));
   }
+  private trafficLegs(): TunnelState[] {
+    return [...this.connections.all()].flatMap(({ state }) =>
+      tunnel(state) ? [state] : [],
+    );
+  }
   private close(
     ws: WebSocket,
     code = 1000,
@@ -161,6 +169,7 @@ export class XrunRelay extends DurableObject<Env> {
   ): void {
     const state = this.connections.get(ws)?.state;
     if (!state) return;
+    if (tunnel(state)) this.traffic.finish(state);
     // Capture bindings before discarding all role-specific fields.
     const peer = tunnel(state)
       ? this.connections.find(state.peer)?.socket
@@ -194,6 +203,11 @@ export class XrunRelay extends DurableObject<Env> {
   }
   private async schedule(): Promise<void> {
     let next: number | null = this.retryAuthorityAt;
+    if (
+      this.traffic.nextFlush !== null &&
+      (next === null || this.traffic.nextFlush < next)
+    )
+      next = this.traffic.nextFlush;
     for (const { state } of this.connections.all()) {
       if ("deadline" in state && (next === null || state.deadline < next))
         next = state.deadline;
@@ -211,6 +225,8 @@ export class XrunRelay extends DurableObject<Env> {
   async alarm(): Promise<void> {
     this.nextAlarm = null;
     const now = Date.now();
+    if (this.traffic.nextFlush !== null && this.traffic.nextFlush <= now)
+      this.traffic.flush(this.trafficLegs());
     if (this.retryAuthorityAt !== null && this.retryAuthorityAt <= now)
       this.publishAuthority(true);
     for (const { socket, state } of [...this.connections.all()]) {
@@ -329,6 +345,7 @@ export class XrunRelay extends DurableObject<Env> {
         peer: connection.id,
         outstanding: 0,
         cachedSince: null,
+        traffic: [],
         deadline,
       });
       this.connections.save(server, {
@@ -338,7 +355,12 @@ export class XrunRelay extends DurableObject<Env> {
         peer: source.id,
         outstanding: 0,
         deadline,
+        traffic: [],
       });
+      for (const socket of [pending.socket, server]) {
+        const leg = this.connections.get(socket)?.state;
+        if (leg && tunnel(leg)) this.traffic.begin(leg);
+      }
       this.send(server, { type: "connected", flow_control: true });
       this.send(pending.socket, { type: "connected", flow_control: true });
     } else if (parsed.action !== "attach") {
@@ -754,9 +776,11 @@ export class XrunRelay extends DurableObject<Env> {
         this.reject(ws, "MESSAGE_TOO_LARGE", "Ciphertext window exceeded");
         return;
       }
-      const device = state.role === "source" ? state.source : state.target;
-      this.traffic.record(state.network, device, message.byteLength, false);
-      state = { ...state, outstanding: state.outstanding + message.byteLength };
+      state = {
+        ...state,
+        outstanding: state.outstanding + message.byteLength,
+        traffic: this.traffic.recordLeg(state, message.byteLength, false),
+      };
     }
     // Budget changes must always survive eviction. Persist the exact idle expiry
     // in the same write, so wake-up cannot expire a recently active peer early.
@@ -766,13 +790,10 @@ export class XrunRelay extends DurableObject<Env> {
     });
     peer.socket.send(message);
     if (typeof message !== "string") {
-      const device =
-        state.role === "source"
-          ? state.target
-          : peer.state.role === "source"
-            ? peer.state.source
-            : null;
-      this.traffic.record(state.network, device, message.byteLength, true);
+      this.connections.save(peer.socket, {
+        ...peer.state,
+        traffic: this.traffic.recordLeg(peer.state, message.byteLength, true),
+      });
     }
   }
   async webSocketMessage(
@@ -811,6 +832,8 @@ export class XrunRelay extends DurableObject<Env> {
             state.network,
             state.manager ? null : state.device,
             query,
+            Date.now(),
+            this.trafficLegs(),
           );
           this.send(ws, { type: "traffic", report });
           this.close(ws);
@@ -823,6 +846,11 @@ export class XrunRelay extends DurableObject<Env> {
         this.tunnelMessage(ws, state, message);
         // Extending an idle expiry cannot bring the next alarm forward. No
         // connection enumeration or storage read is needed for ordinary frames.
+        if (
+          this.traffic.nextFlush !== null &&
+          (this.nextAlarm === null || this.nextAlarm > this.traffic.nextFlush)
+        )
+          await this.schedule();
         return;
       } else {
         throw new Error("Unexpected relay message");

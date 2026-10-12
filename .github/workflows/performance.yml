@@ -6,7 +6,7 @@ on:
       baseline:
         description: Git ref used for the before measurement
         type: string
-        default: 21a60c5
+        default: 34411cc
         required: true
 
 permissions:
@@ -70,6 +70,14 @@ jobs:
         env:
           XRUN_BENCH_LOG_MODE: bursts
         run: bun desktop/scripts/benchmark-core.ts
+      - name: Measure relay throughput and frame latency on the runner filesystem
+        run: bun scripts/benchmark-relay.ts
+      - name: Install local Cloudflare benchmark dependencies
+        working-directory: cloudflare
+        run: bun install --frozen-lockfile
+      - name: Measure workerd relay latency and SQLite row changes
+        shell: bash
+        run: bun cloudflare/scripts/benchmark-relay.ts > output/benchmarks/relay-workerd.json
       - name: Count file reads and database sync calls separately
         if: runner.os == 'Linux'
         shell: bash

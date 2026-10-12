@@ -17,7 +17,7 @@ import { Socket } from "../tests/socket";
 // Isolate the forwarding loop from Rust/TLS overhead. The interoperability
 // suite separately times actual 65 MiB push/pull using the production Worker.
 const repository = resolve(import.meta.dir, "../..");
-const baseline = process.argv[2];
+const baseline = process.argv[2] ?? process.env.XRUN_BASELINE_REF;
 if (!baseline)
   throw new Error(
     "Usage: bun cloudflare/scripts/benchmark-relay.ts <baseline git ref>",
@@ -67,6 +67,8 @@ async function measure(
     const network = await fixtures.fixture(),
       target = await network.member(),
       source = await network.member();
+    const owner = await network.member();
+    const sources = [source, await network.member(), owner];
     async function open(path: string) {
       const response = await runtime.dispatchFetch(
         `${origin}/${secret}${path}`,
@@ -89,13 +91,16 @@ async function measure(
       const challenge = await socket.json();
       socket.send({
         type: "authenticate",
-        proof: await member.proof(path, challenge.nonce),
+        proof: await member.proof(
+          path,
+          challenge.nonce,
+          member.device === owner.device,
+        ),
       });
       return socket;
     }
     if (protocol.max >= 3) {
       const path = `/networks/${network.network}/claim`;
-      const owner = await network.member();
       const socket = await open(path);
       const challenge = await socket.json();
       socket.send({
@@ -120,7 +125,7 @@ async function measure(
     const pairs: { sender: Socket; receiver: Socket }[] = [];
     for (let index = 0; index < sessions; index++) {
       const path = `/networks/${network.network}/connect/${target.device}`;
-      const sender = await authenticate(path, source);
+      const sender = await authenticate(path, sources[index % sources.length]);
       const incoming = await control.json();
       const receiver = await open(
         `/networks/${network.network}/attach/${target.device}/${hello.generation}/${incoming.session_id}`,
@@ -137,15 +142,18 @@ async function measure(
       (await object.fetch("https://test/test/metrics")).json() as Promise<{
         enumeration: number;
         alarm: number;
+        rowsWritten: number;
       }>;
     const before = await metrics();
     const frame = new Uint8Array(64 * 1024).buffer;
+    const latency: number[] = [];
     const started = performance.now();
     for (const reverse of [false, true])
       for (let index = 0; index < 1024; index++) {
         const pair = pairs[index % pairs.length];
         const sender = reverse ? pair.receiver : pair.sender;
         const receiver = reverse ? pair.sender : pair.receiver;
+        const frameStarted = performance.now();
         sender.send(frame);
         const received = await receiver.next();
         if (
@@ -157,6 +165,7 @@ async function measure(
         const ack = await sender.json();
         if (ack.type !== "ack" || ack.bytes !== frame.byteLength)
           throw new Error("Credit changed");
+        latency.push(performance.now() - frameStarted);
       }
     const elapsedMs = performance.now() - started;
     const after = await metrics();
@@ -165,11 +174,16 @@ async function measure(
       pair.receiver.close();
     }
     for (const device of controls) device.close();
+    latency.sort((a, b) => a - b);
     return {
       sessions,
       controls: controls.length,
       bytesEachDirection: 64 * 1024 * 1024,
       elapsedMs,
+      mibPerSecond: 128 / (elapsedMs / 1000),
+      frameP50Ms: latency[Math.floor(latency.length / 2)],
+      frameP95Ms: latency[Math.floor(latency.length * 0.95)],
+      rowsWritten: after.rowsWritten - before.rowsWritten,
       socketEnumerations: after.enumeration - before.enumeration,
       alarmReads: after.alarm - before.alarm,
     };
@@ -226,7 +240,7 @@ try {
   );
   await writeFile(oldEntry, source);
   const results = [];
-  for (const sessions of [1, 8]) {
+  for (const sessions of [1, 4, 8]) {
     const before = await measure(
         oldEntry,
         sessions,

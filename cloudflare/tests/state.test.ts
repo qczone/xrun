@@ -25,6 +25,7 @@ test("restored roles require their own complete fields and reject malformed budg
     cachedSince: null,
     peer: crypto.randomUUID(),
     outstanding: 0,
+    traffic: [],
     deadline: Date.now() + 1000,
   };
   expect(attachment(live)).toEqual(live);

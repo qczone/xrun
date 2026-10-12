@@ -1,0 +1,78 @@
+{
+  "baseline": "34411cc",
+  "after": [
+    {
+      "build": "debug",
+      "bytes": 67108864,
+      "echo_p50_ms": 0.134,
+      "echo_p95_ms": 0.15187499999999998,
+      "mib_per_second": 400.8798485861779,
+      "seconds": 0.159648833,
+      "traffic_complete": true,
+      "transport": "WSS ciphertext relay over localhost"
+    },
+    {
+      "build": "debug",
+      "bytes": 67108864,
+      "echo_p50_ms": 0.13379200000000002,
+      "echo_p95_ms": 0.15787500000000002,
+      "mib_per_second": 381.55916677326974,
+      "seconds": 0.167732833,
+      "traffic_complete": true,
+      "transport": "WSS ciphertext relay over localhost"
+    },
+    {
+      "build": "debug",
+      "bytes": 67108864,
+      "echo_p50_ms": 0.135666,
+      "echo_p95_ms": 0.151791,
+      "mib_per_second": 390.1309072067541,
+      "seconds": 0.1640475,
+      "traffic_complete": true,
+      "transport": "WSS ciphertext relay over localhost"
+    }
+  ],
+  "scope": "localhost WSS opaque frames, native SQLite on the real filesystem; no inner TLS",
+  "environment": {
+    "platform": "darwin",
+    "arch": "arm64",
+    "cpu": "Apple M2 Pro",
+    "memoryBytes": 17179869184,
+    "bun": "1.4.2"
+  },
+  "before": [
+    {
+      "build": "debug",
+      "bytes": 67108864,
+      "echo_p50_ms": 0.24075,
+      "echo_p95_ms": 0.339125,
+      "mib_per_second": 206.25231860638712,
+      "seconds": 0.310299542,
+      "traffic_complete": true,
+      "transport": "WSS ciphertext relay over localhost"
+    },
+    {
+      "build": "debug",
+      "bytes": 67108864,
+      "echo_p50_ms": 0.24425,
+      "echo_p95_ms": 0.330375,
+      "mib_per_second": 210.36133714290702,
+      "seconds": 0.304238416,
+      "traffic_complete": true,
+      "transport": "WSS ciphertext relay over localhost"
+    },
+    {
+      "build": "debug",
+      "bytes": 67108864,
+      "echo_p50_ms": 0.24058400000000002,
+      "echo_p95_ms": 0.32516700000000004,
+      "mib_per_second": 210.08564249541735,
+      "seconds": 0.304637667,
+      "traffic_complete": true,
+      "transport": "WSS ciphertext relay over localhost"
+    }
+  ],
+  "afterRef": "working-tree for batched traffic commit",
+  "recorded_at": "2026-10-13 Asia/Shanghai",
+  "storage": "APFS, Apple Fabric, Solid State Yes"
+}
