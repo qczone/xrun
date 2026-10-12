@@ -452,6 +452,8 @@ async fn device_operations_connect_directly_while_info_still_queries_live_state(
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn relay_rejects_revocations_and_status_synchronizes_signed_membership() -> Result<()> {
+    use futures_util::{SinkExt, StreamExt};
+    use tokio_tungstenite::tungstenite::Message;
     use xrun::testing::{net, protocol::RelayMessage};
     tokio::time::timeout(Duration::from_secs(25), async {
         let mut lab = Lab::new().await?;
@@ -493,6 +495,11 @@ async fn relay_rejects_revocations_and_status_synchronizes_signed_membership() -
             net::receive(&mut control).await?,
             RelayMessage::Error { code, .. } if code == "DEVICE_REVOKED"
         ));
+        assert!(matches!(
+            tokio::time::timeout(Duration::from_secs(2), control.next()).await?,
+            Some(Ok(Message::Close(_)))
+        ));
+        control.flush().await?;
         let target = |status: serde_json::Value| {
             status["devices"]
                 .as_array()

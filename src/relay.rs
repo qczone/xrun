@@ -242,7 +242,19 @@ async fn finish(ws: &mut WebSocket, result: Result<()>) {
     if let Err(error) = result {
         let _ = send(ws, &RelayMessage::error(&error)).await;
     }
-    let _ = tokio::time::timeout(CLOSE_TIMEOUT, ws.close()).await;
+    // Sending Close only flushes our frame. Keep reading until the peer closes
+    // too so dropping the TLS socket cannot reset an unread error on Windows.
+    let _ = tokio::time::timeout(CLOSE_TIMEOUT, async {
+        ws.close().await?;
+        while let Some(message) = ws.next().await {
+            if matches!(message?, Message::Close(_)) {
+                ws.flush().await?;
+                break;
+            }
+        }
+        Ok::<_, axum::Error>(())
+    })
+    .await;
 }
 pub async fn run(config: ServerConfig) -> Result<()> {
     let _lock = server::instance_lock(&config.data_dir)?;
