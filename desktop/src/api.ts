@@ -276,6 +276,9 @@ export interface Invitation {
   link: string;
   allow: boolean;
   expires_in: number;
+  invitation_id?: string;
+  address?: string;
+  code?: string;
 }
 
 export interface Revocation {
@@ -328,7 +331,12 @@ export const api = {
   settings: () => invoke<Settings>("settings"),
   traffic: (period: TrafficPeriod, offset = 0) =>
     invoke<TrafficReport>("traffic", { query: { period, offset, limit: 50 } }),
-  invite: (allow: boolean) => invoke<Invitation>("invite", { allow }),
+  invite: (allow: boolean, replace?: string) =>
+    invoke<Invitation>("invite", { allow, replace: replace ?? null }),
+  cancelInvitation: (invitationId: string) =>
+    invoke<void>("cancel_invitation", { invitationId }),
+  copyInvitationCommand: (address: string, code: string) =>
+    invoke<void>("copy_invitation_command", { address, code }),
   revoke: (device: string) => invoke<Revocation>("revoke", { device }),
   copyInvitation: (link: string) => invoke<void>("copy_invitation", { link }),
   copyIdentifier: (value: string) => invoke<void>("copy_identifier", { value }),

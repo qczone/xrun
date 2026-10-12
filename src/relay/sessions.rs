@@ -91,7 +91,10 @@ pub(super) async fn source_route(
                     peer.ip(),
                     &mut ws,
                     &permit,
-                    selected,
+                    SourceOptions {
+                        protocol: selected,
+                        pairing: None,
+                    },
                 )
                 .await;
                 finish(&mut ws, result).await;
@@ -99,15 +102,20 @@ pub(super) async fn source_route(
         selected,
     ))
 }
-async fn source(
+pub(super) struct SourceOptions<'a> {
+    pub(super) protocol: u32,
+    pub(super) pairing: Option<&'a super::pairing::Room>,
+}
+pub(super) async fn source(
     app: &App,
     network: &str,
     target: &str,
     source: std::net::IpAddr,
     ws: &mut WebSocket,
     permit: &TransportPermit,
-    protocol: u32,
+    options: SourceOptions<'_>,
 ) -> Result<()> {
+    let SourceOptions { protocol, pairing } = options;
     let path = format!("/networks/{network}/connect/{target}");
     let device = authenticate(ws, network, &path, permit)
         .await?
@@ -128,11 +136,21 @@ async fn source(
             bail!(ErrorCode::Unauthenticated.error("member proof required"))
         }
         let generation = control.generation.clone();
+        if pairing.is_some_and(|room| room.generation != generation || room.expires_at <= now_ms())
+        {
+            bail!(ErrorCode::CodeExpired.error("pairing session is no longer active"));
+        }
         let target_control = control.tx.clone();
         connections.reserve_session(network, target, source, device.as_deref())?;
         target_control
-            .try_send(RelayMessage::Incoming {
-                session_id: sid.clone(),
+            .try_send(match pairing {
+                Some(room) => RelayMessage::PairingIncoming {
+                    session_id: sid.clone(),
+                    invitation_id: room.id.clone(),
+                },
+                None => RelayMessage::Incoming {
+                    session_id: sid.clone(),
+                },
             })
             .context(ErrorCode::DeviceBusy.error("control queue is full"))?;
         connections.sessions.insert(
@@ -157,7 +175,9 @@ async fn source(
             _ = ws.next() => bail!(ErrorCode::ConnectionClosed.error("source disconnected before session establishment")),
         };
         send(ws, &RelayMessage::Connected { flow_control: false }).await?;
-        let result = bridge(app, &sid, ws, &mut target, &mut closed, !anonymous && protocol >= 2).await;
+        let result = if let Some(room) = pairing {
+            super::pairing::bridge(app, network, &room.manager, ws, &mut target, &mut closed).await
+        } else { bridge(app, &sid, ws, &mut target, &mut closed, !anonymous && protocol >= 2).await };
         let _ = tokio::time::timeout(CLOSE_TIMEOUT, target.close()).await;
         result
     }.await;

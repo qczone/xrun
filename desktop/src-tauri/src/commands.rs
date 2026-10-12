@@ -230,10 +230,41 @@ async fn invite<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
     state: State<'_, Desktop>,
     allow: bool,
+    replace: Option<String>,
+    full_link: Option<bool>,
 ) -> Result<Invitation, CommandError> {
     let _guard = state.action.lock().await;
-    let result = xrun::client::invite(allow).await;
+    let result = if full_link.unwrap_or(false) {
+        xrun::client::invite_link(allow).await
+    } else {
+        xrun::client::invite_code(allow, replace.as_deref()).await
+    };
     record(&app, result)
+}
+
+#[tauri::command]
+async fn cancel_invitation<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    state: State<'_, Desktop>,
+    invitation_id: String,
+) -> Result<(), CommandError> {
+    let _guard = state.action.lock().await;
+    record(&app, xrun::client::cancel_invitation(&invitation_id).await)
+}
+#[tauri::command]
+fn copy_invitation_command<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    address: String,
+    code: String,
+) -> Result<(), CommandError> {
+    let link = xrun::client::code_link(&address, &code).map_err(CommandError::from_error)?;
+    let (address, code) = link
+        .trim_start_matches("xrun://")
+        .split_once('#')
+        .expect("validated code link");
+    app.clipboard()
+        .write_text(format!("xrun connect {address} {code}"))
+        .map_err(CommandError::from_error)
 }
 
 #[tauri::command]
@@ -399,6 +430,8 @@ pub(super) fn register<R: tauri::Runtime>(builder: tauri::Builder<R>) -> tauri::
             save_activity_attachment,
             save_attachment_retention,
             invite,
+            cancel_invitation,
+            copy_invitation_command,
             revoke,
             copy_invitation,
             copy_identifier,
@@ -1267,7 +1300,8 @@ pub(crate) mod tests {
                 let manager = xrun::testing::network::manager(&id)?;
                 let mut members = vec![];
                 for (name, allow) in [("reader", false), ("operator", true)] {
-                    let invite = invoke(&window, "invite", json!({"allow":allow})).unwrap();
+                    let invite =
+                        invoke(&window, "invite", json!({"allow":allow,"fullLink":true})).unwrap();
                     assert_eq!(invite["allow"], allow);
                     assert_eq!(invite["expires_in"], 600);
                     let token = invite["link"].as_str().unwrap().rsplit_once('#').unwrap().1;

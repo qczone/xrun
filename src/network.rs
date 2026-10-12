@@ -1,5 +1,6 @@
 //! Network operations backed by manager authority and encrypted peer sessions.
 mod bootstrap;
+pub(crate) mod code;
 mod links;
 mod metadata;
 mod pairing;
@@ -31,6 +32,10 @@ use anyhow::{Context, Result, bail};
 use serde::de::DeserializeOwned;
 
 pub(crate) fn validate_connection_link(link: &str) -> Result<()> {
+    if let Some(short) = crate::pairing::short_link(link) {
+        short?;
+        return Ok(());
+    }
     if link.starts_with("xrun://") {
         links::parse_link(link)?;
     } else {

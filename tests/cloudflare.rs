@@ -95,8 +95,10 @@ async fn lab() -> Result<CloudLab> {
     ok(run(
         &target,
         &[
-            "join",
-            invite["link"].as_str().context("invite")?,
+            "connect",
+            invite["address"].as_str().context("short invite address")?,
+            invite["code"].as_str().context("short access code")?,
+            "--allow-manager",
             "--name",
             "target1",
             "--no-daemon",

@@ -40,7 +40,8 @@ pub(super) struct LocalCli {
 pub(super) enum Local {
     /// Connect using a relay deployment link or a member invitation
     #[command(after_help = concat!(
-        "Examples:\n  xrun connect '<deployment link>' --name mac-pro\n",
+        "Examples:\n  xrun connect relay.example K7M4-P9Q2\n",
+        "  xrun connect '<deployment link>' --name mac-pro\n",
         "  xrun connect '<invitation>' --name linux1 --allow-manager\n",
         "The link selects creation or joining. --allow-manager grants access to this device only.\n",
         "Full documentation: xrun doc quickstart"
@@ -48,6 +49,8 @@ pub(super) enum Local {
     Connect {
         /// Complete deployment link or one-use xrun:// invitation
         link: String,
+        /// Eight-character access code when the first argument is a relay host
+        code: Option<String>,
         /// Name for this device (defaults to the local hostname)
         #[arg(long)]
         name: Option<String>,
@@ -109,12 +112,15 @@ pub(super) enum Local {
     /// Create a ten-minute invitation (registration only by default)
     #[command(
         after_help = concat!(
-        "Examples: xrun invite; xrun invite --allow\n",
+        "Examples: xrun invite; xrun invite --allow; xrun invite --link\n",
         "Only the manager can invite. --allow grants mutual access between the manager and the joining device.\n",
         "Full documentation: xrun doc access"
     )
     )]
     Invite {
+        /// Print a self-contained invitation instead of a short access code
+        #[arg(long)]
+        link: bool,
         /// Grant mutual access between the manager and joining device
         #[arg(long)]
         allow: bool,

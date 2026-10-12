@@ -15,6 +15,7 @@ mod history;
 mod membership;
 mod net;
 mod network;
+mod pairing;
 mod process;
 pub mod protocol;
 mod relay;

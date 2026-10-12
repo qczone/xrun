@@ -12,10 +12,13 @@ import type { Status } from "../src/api";
 import { NetworkSetup } from "../src/components/NetworkSetup";
 import { setLanguage } from "../src/i18n";
 
-const fillLink = (link: string) =>
+const fillLink = (link: string) => {
+  if (!screen.queryByLabelText("接入链接"))
+    fireEvent.click(screen.getByRole("button", { name: "使用链接" }));
   fireEvent.change(screen.getByLabelText("接入链接"), {
     target: { value: link },
   });
+};
 const submit = async () => {
   await act(async () => {
     fireEvent.submit(document.getElementById("connect-form")!);

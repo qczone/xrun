@@ -127,6 +127,108 @@ async function relayInfo() {
   return info;
 }
 
+test("short pairing locators route only to the proven manager and survive restoration", async () => {
+  const f = await fixture();
+  const path = `/networks/${f.network}/control`;
+  const control = await authenticated(path, (nonce) =>
+    f.manager.proof(path, nonce, true),
+  );
+  const hello = await control.json();
+  const invitation_id = "a".repeat(32);
+  control.send({
+    type: "pairing_register",
+    invitation_id,
+    locator: "K7",
+    expires_at: Date.now() + 600_000,
+  });
+  expect(await control.json()).toEqual({
+    type: "pairing_registered",
+    invitation_id,
+    error: null,
+  });
+  await inspect(f.network, "restore");
+  const response = await runtime.dispatchFetch(
+    `${origin}/.well-known/xrun/pair/K7`,
+    { headers: { Upgrade: "websocket", "X-Xrun-Protocol": PROTOCOL_HEADER } },
+  );
+  expect(response.status).toBe(101);
+  const source = new Socket(response.webSocket!);
+  expect(await source.json()).toEqual({
+    type: "pairing_info",
+    invitation_id,
+    locator: "K7",
+  });
+  expect((await source.json()).type).toBe("challenge");
+  source.send({ type: "authenticate", proof: null });
+  const incoming = await control.json();
+  expect(incoming.type).toBe("pairing_incoming");
+  expect(incoming.invitation_id).toBe(invitation_id);
+  const target = await open(
+    `/networks/${f.network}/attach/${f.manager.device}/${hello.generation}/${incoming.session_id}`,
+  );
+  expect((await source.json()).type).toBe("connected");
+  expect((await target.json()).type).toBe("connected");
+  await inspect(f.network, "restore");
+  source.send(new Uint8Array([1, 2, 3]).buffer);
+  expect(new Uint8Array((await target.next()) as ArrayBuffer)).toEqual(
+    new Uint8Array([1, 2, 3]),
+  );
+  source.close();
+  target.close();
+  control.send({ type: "pairing_cancel", invitation_id });
+  expect((await control.json()).error).toBeNull();
+  const missing = await runtime.dispatchFetch(
+    `${origin}/.well-known/xrun/pair/K7`,
+    { headers: { Upgrade: "websocket", "X-Xrun-Protocol": PROTOCOL_HEADER } },
+  );
+  expect(await missing.json()).toMatchObject({type:"error",code:"INVALID_CODE"});
+  control.close();
+});
+
+test("short pairing registration rejects ordinary members and duplicate or expired locators", async () => {
+  const f = await fixture();
+  const path = `/networks/${f.network}/control`;
+  const control = await authenticated(path, (nonce) =>
+    f.manager.proof(path, nonce, true),
+  );
+  await control.json();
+  control.send({
+    type: "pairing_register",
+    invitation_id: "a".repeat(32),
+    locator: "K7",
+    expires_at: Date.now() + 600_000,
+  });
+  expect((await control.json()).error).toBeNull();
+  control.send({
+    type: "pairing_register",
+    invitation_id: "b".repeat(32),
+    locator: "K7",
+    expires_at: Date.now() + 600_000,
+  });
+  expect((await control.json()).error.code).toBe("PAIRING_BUSY");
+  control.send({
+    type: "pairing_register",
+    invitation_id: "c".repeat(32),
+    locator: "M4",
+    expires_at: Date.now() - 1,
+  });
+  expect((await control.json()).error.code).toBe("INVALID_REQUEST");
+  const member = await f.member();
+  const ordinary = await authenticated(path, (nonce) =>
+    member.proof(path, nonce),
+  );
+  await ordinary.json();
+  ordinary.send({
+    type: "pairing_register",
+    invitation_id: "d".repeat(32),
+    locator: "M4",
+    expires_at: Date.now() + 600_000,
+  });
+  expect((await ordinary.json()).code).toBe("NOT_MANAGER");
+  ordinary.close();
+  control.close();
+});
+
 test("probing, anonymous clients and invalid manager proofs cannot claim an unused relay", async () => {
   const f = await makeFixture();
   const member = await f.member();

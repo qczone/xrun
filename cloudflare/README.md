@@ -52,7 +52,7 @@ beta.5 支持协议 1–2，签名格式不变。协议 2 允许已认证来源�
 标记随 WebSocket 附件保存，休眠恢复后继续生效；新版 daemon 连接协议 1
 中转时不保留空闲缓存。
 
-当前支持协议 1–3。协议 3 增加中转归属探测与管理设备认领，新的创建流程要求协议 3；
+当前支持协议 1–4。协议 3 增加中转归属探测与管理设备认领，新的创建流程要求协议 3；
 已有管理设备连接尚未绑定的中转时也会自动完成签名认领，普通成员不能抢占绑定。
 
 ## 流量统计
@@ -109,3 +109,5 @@ Worker。清理后再次部署请换一个名称。
 参考：[WebSocket 休眠](https://developers.cloudflare.com/durable-objects/best-practices/websockets/)、
 [WebCrypto](https://developers.cloudflare.com/workers/runtime-apis/web-crypto/)、
 [DO migration](https://developers.cloudflare.com/durable-objects/reference/durable-object-class-migrations-legacy/)。
+
+短码接入要求协议 4。管理设备在已认证控制连接登记一次性公开编号；`/.well-known/xrun/pair/<编号>` 将受限的二进制 PAKE 帧接通该管理设备。DO 保存公开编号、邀请 ID 和过期时间，休眠恢复保留配对类型及控制代次绑定。秘密和验证预算归管理设备，中转不接收接入码秘密或可离线枚举的秘密摘要。

@@ -335,6 +335,9 @@ pub async fn run() -> Result<()> {
     let local = crate::pool::run(local_listener, control.clone());
     tokio::pin!(local);
     let mut id = Identity::load()?;
+    if network::authority(&id)?.manager_id == id.device_id {
+        network::manager(&id)?.invalidate_codes()?;
+    }
     tokio::select! { result=&mut local=>{return result}, _=net::renew_identity(&mut id)=>{}, result=control.shutdown()=>{result?;return Ok(())} }
     if !dir.join("daemon.initialized").exists() {
         bail!(ErrorCode::DaemonNotInitialized.error("run daemon install"))

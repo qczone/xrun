@@ -17,7 +17,7 @@ const NETWORK_CA_VALIDITY_DAYS: i64 = 20 * 365;
 /// the newly signed version together. Concurrent CLI/daemon processes serialize
 /// on BEGIN IMMEDIATE rather than each maintaining a version counter.
 pub struct Manager {
-    db: Mutex<Connection>,
+    pub(super) db: Mutex<Connection>,
     ca_pem: String,
     key_pem: String,
 }
@@ -133,12 +133,16 @@ impl Manager {
         let token = crypto::random_token();
         let db = self.db.lock().unwrap();
         db.execute("DELETE FROM invitations WHERE expires<=?1", [now_ms()])?;
-        let count: i64 = db.query_row("SELECT COUNT(*) FROM invitations", [], |r| r.get(0))?;
+        let count: i64 = db.query_row(
+            "SELECT COUNT(*) FROM invitations WHERE status IN ('active','verified')",
+            [],
+            |r| r.get(0),
+        )?;
         if count >= MAX_ACTIVE_INVITATIONS {
             bail!(ErrorCode::InvitationLimit.error("too many active invitations"))
         }
         db.execute(
-            "INSERT INTO invitations VALUES(?1,?2,?3)",
+            "INSERT INTO invitations(hash,expires,allow) VALUES(?1,?2,?3)",
             params![
                 sha256(token.as_bytes()),
                 now_ms() + INVITATION_LIFETIME.as_millis() as i64,
@@ -180,8 +184,8 @@ impl Manager {
             }
             let allow: bool = tx
                 .query_row(
-                    "SELECT allow FROM invitations WHERE hash=?1 AND expires>?2",
-                    params![sha256(token.as_bytes()), now_ms()],
+                    "SELECT allow FROM invitations WHERE hash=?1 AND expires>?2 AND (kind='link' OR (status='verified' AND key_fp=?3))",
+                    params![sha256(token.as_bytes()), now_ms(), fp],
                     |r| r.get(0),
                 )
                 .optional()?
@@ -207,7 +211,7 @@ impl Manager {
                 params![member.device_id, serde_json::to_string(&receipt)?],
             )?;
             tx.execute(
-                "DELETE FROM invitations WHERE hash=?1",
+                "DELETE FROM invitations WHERE hash=?1 AND kind='link'",
                 [sha256(token.as_bytes())],
             )?;
             roster.roster.members.push(member.clone());
@@ -218,6 +222,11 @@ impl Manager {
             save_state(&tx, &roster)?;
             member
         };
+        tx.execute(
+            "UPDATE invitations SET status='consumed'
+            WHERE hash=?1 AND kind='code' AND status='verified' AND key_fp=?2",
+            params![sha256(token.as_bytes()), member.key_fp],
+        )?;
         let receipt = if member.device_id == roster.roster.manager_id {
             let receipt = PairReceipt {
                 network_id: roster.roster.network_id.clone(),

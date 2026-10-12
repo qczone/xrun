@@ -18,9 +18,36 @@ pub(super) fn database(path: &Path, create: bool) -> Result<Connection> {
         use std::os::unix::fs::PermissionsExt;
         std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))?;
     }
-    crate::database::initialize(&mut db, "membership", 1, "CREATE TABLE state(id INTEGER PRIMARY KEY CHECK(id=1),data TEXT NOT NULL);
-        CREATE TABLE invitations(hash TEXT PRIMARY KEY,expires INTEGER NOT NULL,allow INTEGER NOT NULL);
-        CREATE TABLE receipts(device TEXT PRIMARY KEY,data TEXT NOT NULL);")?;
+    let tx = db.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+    let version: i64 = tx.pragma_query_value(None, "user_version", |row| row.get(0))?;
+    if version == 0 {
+        let tables: i64 = tx.query_row(
+            "SELECT COUNT(*) FROM sqlite_schema WHERE type='table' AND name NOT LIKE 'sqlite_%'",
+            [],
+            |row| row.get(0),
+        )?;
+        if tables != 0 {
+            bail!(ErrorCode::DbSchemaMismatch.error("unknown membership database layout"));
+        }
+        tx.execute_batch("CREATE TABLE state(id INTEGER PRIMARY KEY CHECK(id=1),data TEXT NOT NULL);
+            CREATE TABLE invitations(hash TEXT PRIMARY KEY,expires INTEGER NOT NULL,allow INTEGER NOT NULL);
+            CREATE TABLE receipts(device TEXT PRIMARY KEY,data TEXT NOT NULL);")?;
+    }
+    if version == 0 || version == 1 {
+        tx.execute_batch(
+            "ALTER TABLE invitations ADD COLUMN kind TEXT NOT NULL DEFAULT 'link';
+            ALTER TABLE invitations ADD COLUMN invitation_id TEXT;
+            ALTER TABLE invitations ADD COLUMN locator TEXT;
+            ALTER TABLE invitations ADD COLUMN attempts INTEGER NOT NULL DEFAULT 0;
+            ALTER TABLE invitations ADD COLUMN status TEXT NOT NULL DEFAULT 'active';
+            ALTER TABLE invitations ADD COLUMN key_fp TEXT;
+            CREATE UNIQUE INDEX invitation_identity ON invitations(invitation_id);",
+        )?;
+        tx.pragma_update(None, "user_version", 2)?;
+    } else if version != 2 {
+        bail!(ErrorCode::DbSchemaMismatch.error("unsupported membership database schema"));
+    }
+    tx.commit()?;
     Ok(db)
 }
 pub(super) fn state(db: &Connection) -> Result<SignedRoster> {

@@ -111,12 +111,34 @@ pub struct Invitation {
     pub allow: bool,
     /// Remaining validity in seconds at creation.
     pub expires_in: u64,
+    /// Short-invitation identity used for explicit cancellation or replacement.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub invitation_id: Option<String>,
+    /// Relay host and port, without its private route.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub address: Option<String>,
+    /// Human-readable, single-use eight-character code.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub code: Option<String>,
 }
 
 /// Generate an invitation after publishing the manager's current signed roster.
 /// Requires the manager identity. `allow` grants mutual execution, file and screenshot
 /// access only to the device that consumes this invitation; defaults belong to the UI.
 pub async fn invite(allow: bool) -> Result<Invitation> {
+    invite_code(allow, None).await
+}
+/// Generate a short invitation in the running manager daemon, replacing one if requested.
+pub async fn invite_code(allow: bool, replace: Option<&str>) -> Result<Invitation> {
+    let id = Identity::load()?;
+    crate::ipc::invite(&id, allow, replace).await
+}
+/// Cancel an unused short invitation in the running manager daemon.
+pub async fn cancel_invitation(invitation: &str) -> Result<()> {
+    crate::ipc::cancel_invitation(&Identity::load()?, invitation).await
+}
+/// Generate a self-contained invitation with a strong bearer token for automation.
+pub async fn invite_link(allow: bool) -> Result<Invitation> {
     let mut id = Identity::load()?;
     net::renew_identity(&mut id).await?;
     Ok(serde_json::from_value(

@@ -1,6 +1,7 @@
 import { error, type Env } from "./relay";
 import { RELAY_OBJECT, route } from "./routes";
 import { negotiate, parseRange, PROTOCOL } from "./protocol";
+import { pairingLocator } from "./pairing";
 export { XrunRelay } from "./relay";
 export type { Env } from "./relay";
 
@@ -8,7 +9,8 @@ export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
     const parsed = route(url.pathname, env.RELAY_ROUTE);
-    if (request.method !== "GET" || url.search || !parsed)
+    const pairing = pairingLocator(url.pathname);
+    if (request.method !== "GET" || url.search || (!parsed && !pairing))
       return new Response("Not found", { status: 404 });
     const supported = {
       min: env.XRUN_PROTOCOL_MIN,
@@ -31,6 +33,12 @@ export default {
     }
     if (request.headers.get("Upgrade")?.toLowerCase() !== "websocket")
       return error("INVALID_REQUEST", "WebSocket required", 426);
+    if (pairing && selected < 4)
+      return error(
+        "VERSION_MISMATCH",
+        "Short pairing requires protocol 4",
+        409,
+      );
     const headers = new Headers(request.headers);
     headers.set("X-Xrun-Negotiated-Protocol", String(selected));
     headers.set(

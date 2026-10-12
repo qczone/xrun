@@ -21,6 +21,7 @@ import {
 } from "./limits";
 import { route, type AttachRoute } from "./routes";
 import { PROTOCOL } from "./protocol";
+import { Pairings, pairingLocator } from "./pairing";
 import { Traffic, trafficQuery } from "./traffic";
 import {
   base,
@@ -47,12 +48,14 @@ export function error(code: string, message: string, status = 400): Response {
 export class XrunRelay extends DurableObject<Env> {
   private traffic: Traffic;
   private admission: Admission;
+  private pairings: Pairings;
   private connections: Connections;
   private nextAlarm: number | null = null;
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
     this.admission = new Admission(ctx.storage);
+    this.pairings = new Pairings(ctx.storage);
     this.traffic = new Traffic(ctx.storage);
     this.connections = new Connections(ctx.getWebSockets());
     this.validateRestoredBindings();
@@ -64,6 +67,7 @@ export class XrunRelay extends DurableObject<Env> {
   /** The same restoration path is used after eviction and by workerd recovery tests. */
   protected restoreSockets(): void {
     this.admission = new Admission(this.ctx.storage);
+    this.pairings = new Pairings(this.ctx.storage);
     this.connections = new Connections(this.ctx.getWebSockets());
     this.validateRestoredBindings();
   }
@@ -93,7 +97,9 @@ export class XrunRelay extends DurableObject<Env> {
         peer.network === state.network &&
         peer.target === state.target &&
         peer.generation === state.generation &&
-        peer.sid === state.sid;
+        peer.sid === state.sid &&
+        peer.pairing === state.pairing &&
+        (!state.pairing || control.state.manager);
       if (!bound) this.close(socket, 1008, "Restored tunnel binding missing");
     }
   }
@@ -115,7 +121,13 @@ export class XrunRelay extends DurableObject<Env> {
       state.role === "control"
         ? this.connections.bound(state.device, state.generation)
         : [];
-    this.connections.save(ws, { ...base(state), role: "closed" });
+    this.connections.save(ws, {
+      id: state.id,
+      network: state.network,
+      ip: state.ip,
+      protocol: state.protocol,
+      role: "closed",
+    });
     try {
       ws.close(code, reason);
     } catch {
@@ -174,7 +186,21 @@ export class XrunRelay extends DurableObject<Env> {
     );
   }
   async fetch(request: Request): Promise<Response> {
-    const parsed = route(new URL(request.url).pathname, this.env.RELAY_ROUTE);
+    const pathname = new URL(request.url).pathname;
+    const locator = pairingLocator(pathname);
+    const pairing = locator ? this.pairings.find(locator) : undefined;
+    const owner = this.admission.owner();
+    if (locator && (!pairing || !owner))
+      return error("INVALID_CODE", "Access code unavailable or expired", 404);
+    const parsed =
+      pairing && owner
+        ? {
+            action: "connect" as const,
+            network: owner.network_id,
+            target: owner.manager_id,
+            path: `/networks/${owner.network_id}/connect/${owner.manager_id}`,
+          }
+        : route(pathname, this.env.RELAY_ROUTE);
     if (!parsed) return new Response("Not found", { status: 404 });
     const probe = parsed.network === "probe" && parsed.action === "status";
     try {
@@ -218,11 +244,18 @@ export class XrunRelay extends DurableObject<Env> {
       );
     if (parsed.action === "claim" && protocol < 3)
       return error("VERSION_MISMATCH", "Relay claims require protocol 3", 409);
+    if (pairing && protocol < 4)
+      return error(
+        "VERSION_MISMATCH",
+        "Short pairing requires protocol 4",
+        409,
+      );
     const connection = {
       id: crypto.randomUUID(),
       network: parsed.network,
       ip,
       protocol,
+      ...(pairing ? { pairing: pairing.invitation_id } : {}),
     };
     this.ctx.acceptWebSocket(server);
     if (pending) {
@@ -231,8 +264,9 @@ export class XrunRelay extends DurableObject<Env> {
         target: source.target,
         generation: source.generation,
         sid: source.sid,
+        ...(source.pairing ? { pairing: source.pairing } : {}),
       };
-      const deadline = Date.now() + IDLE;
+      const deadline = Date.now() + (source.pairing ? 20_000 : IDLE);
       this.connections.save(pending.socket, {
         ...source,
         role: "source",
@@ -260,6 +294,12 @@ export class XrunRelay extends DurableObject<Env> {
         nonce,
         deadline: Date.now() + AUTH_TIMEOUT_MS,
       });
+      if (pairing)
+        this.send(server, {
+          type: "pairing_info",
+          invitation_id: pairing.invitation_id,
+          locator,
+        });
       this.send(server, { type: "challenge", nonce });
       if (probe) {
         if (protocol >= 3)
@@ -299,6 +339,8 @@ export class XrunRelay extends DurableObject<Env> {
       throw new Error("Expected member proof");
     this.connections.save(ws, { ...state, role: "verifying" });
     const proof = await this.proof(value.proof, state);
+    if (state.pairing && proof)
+      throw new Error("Pairing requires anonymous PAKE enrollment");
     const current = this.connections.get(ws)?.state;
     const sameChallenge =
       current?.role === "verifying" &&
@@ -429,7 +471,16 @@ export class XrunRelay extends DurableObject<Env> {
       management,
       deadline: Date.now() + CONNECT_TIMEOUT_MS,
     });
-    this.send(target.socket, { type: "incoming", session_id: sid });
+    this.send(
+      target.socket,
+      state.pairing
+        ? {
+            type: "pairing_incoming",
+            session_id: sid,
+            invitation_id: state.pairing,
+          }
+        : { type: "incoming", session_id: sid },
+    );
   }
   private controlMessage(
     ws: WebSocket,
@@ -439,6 +490,59 @@ export class XrunRelay extends DurableObject<Env> {
     if (typeof message !== "string" || message.length > CONTROL_MESSAGE_BYTES)
       throw new Error("Invalid control message");
     const value: unknown = JSON.parse(message);
+    if (
+      object(value) &&
+      (value.type === "pairing_register" || value.type === "pairing_cancel")
+    ) {
+      if (!state.manager || state.protocol < 4)
+        throw new AdmissionError(
+          "NOT_MANAGER",
+          "Pairing requires the proven manager",
+        );
+      if (
+        typeof value.invitation_id !== "string" ||
+        !/^[a-f0-9]{32}$/.test(value.invitation_id)
+      )
+        throw new Error("Invalid invitation identity");
+      try {
+        if (value.type === "pairing_cancel")
+          this.pairings.cancel(value.invitation_id);
+        else {
+          if (
+            !object(value, [
+              "type",
+              "invitation_id",
+              "locator",
+              "expires_at",
+            ]) ||
+            typeof value.locator !== "string" ||
+            typeof value.expires_at !== "number"
+          )
+            throw new AdmissionError(
+              "INVALID_REQUEST",
+              "Invalid pairing metadata",
+            );
+          this.pairings.register(
+            value.invitation_id,
+            value.locator,
+            value.expires_at,
+          );
+        }
+        this.send(ws, {
+          type: "pairing_registered",
+          invitation_id: value.invitation_id,
+          error: null,
+        });
+      } catch (reason) {
+        if (!(reason instanceof AdmissionError)) throw reason;
+        this.send(ws, {
+          type: "pairing_registered",
+          invitation_id: value.invitation_id,
+          error: { type: "error", code: reason.code, message: reason.message },
+        });
+      }
+      return;
+    }
     if (
       !object(value) ||
       value.type !== "reject" ||
@@ -511,6 +615,14 @@ export class XrunRelay extends DurableObject<Env> {
         outstanding: peer.state.outstanding - value.bytes,
       });
     } else {
+      if (
+        state.pairing &&
+        (message.byteLength > 16 * 1024 ||
+          state.outstanding + message.byteLength > 64 * 1024)
+      ) {
+        this.reject(ws, "MESSAGE_TOO_LARGE", "Pairing tunnel exceeds budget");
+        return;
+      }
       if (state.role === "source" && state.cachedSince !== null)
         throw new Error(
           "Reactivate a cached session before sending ciphertext",
@@ -529,7 +641,10 @@ export class XrunRelay extends DurableObject<Env> {
     }
     // Budget changes must always survive eviction. Persist the exact idle expiry
     // in the same write, so wake-up cannot expire a recently active peer early.
-    this.connections.save(ws, { ...state, deadline: Date.now() + IDLE });
+    this.connections.save(ws, {
+      ...state,
+      deadline: state.pairing ? state.deadline : Date.now() + IDLE,
+    });
     peer.socket.send(message);
     if (typeof message !== "string") {
       const device =

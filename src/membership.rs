@@ -2,6 +2,7 @@
 pub(crate) const INVITATION_LIFETIME: std::time::Duration = std::time::Duration::from_secs(10 * 60);
 mod authority;
 mod cache;
+mod invitations;
 mod records;
 mod storage;
 

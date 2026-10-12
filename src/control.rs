@@ -5,7 +5,7 @@ use anyhow::{Result, bail};
 use serde::{Deserialize, Serialize};
 use std::{
     path::{Path, PathBuf},
-    sync::Mutex,
+    sync::{Arc, Mutex},
 };
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -17,6 +17,7 @@ pub struct State {
 type ReloadReply = tokio::sync::oneshot::Sender<Result<()>>;
 type ReloadRequests = tokio::sync::mpsc::Receiver<ReloadReply>;
 pub(crate) struct Control {
+    pub(crate) invitations: Arc<crate::pairing::Invitations>,
     dir: PathBuf,
     value: Mutex<State>,
     stop: tokio::sync::watch::Sender<bool>,
@@ -35,6 +36,7 @@ impl Control {
         )?;
         let (reload, reload_requests) = tokio::sync::mpsc::channel(16);
         Ok(Self {
+            invitations: Arc::new(crate::pairing::Invitations::new()),
             dir: dir.into(),
             value: Mutex::new(value),
             stop: tokio::sync::watch::channel(false).0,

@@ -239,7 +239,7 @@ export const en = {
     "Invitations register members without granting access by default. Existing access-for-all policies still apply.",
   "invite.allowAllHint":
     "Access for all members is enabled here. New members can access this device, except individually denied devices.",
-  "invite.generate": "Create invitation link",
+  "invite.generate": "Create access code",
   "invite.generating": "Creating…",
   "invite.connectFirst":
     "Start the background service and connect to the relay before creating an invitation.",
@@ -253,7 +253,7 @@ export const en = {
   "invite.copying": "Copying…",
   "invite.copyFailed": "Could not copy the link. Select and copy it manually.",
   "invite.copied": "Invitation link copied",
-  "invite.hide": "Hide link",
+  "invite.hide": "Hide invitation",
   "invite.options": "Invitation options",
   "invite.title": "Invite device",
   "invite.close": "Close invitation",
@@ -498,6 +498,19 @@ export const en = {
   "operation.remote_cancel": "Requesting cancellation…",
   "action.connectFailed":
     "Could not connect. Check the connection link and retry.",
+  "invite.regenerate": "Create another code",
+  "invite.copyCommand": "Copy command",
+  "invite.commandCopied": "Connection command copied",
+  "setup.useCode": "Access code",
+  "setup.relayAddress": "Relay address",
+  "setup.accessCode": "Access code",
+  "setup.codeHint":
+    "Enter the relay address and access code from the manager, or paste a short link.",
+  "setup.invalidCode": "Check the access code and try again.",
+  "setup.expiredCode": "This code has expired. Create another on the manager.",
+  "setup.lockedCode": "Verification attempts exhausted. Create another code.",
+  "setup.usedCode": "This code was used. Create another for this device.",
+  "setup.pairingBusy": "Another device is pairing. Try again shortly.",
   "setup.useLink": "Use a link",
   "setup.useCloudflare": "New network",
   "setup.link": "Connection link",

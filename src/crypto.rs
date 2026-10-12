@@ -243,7 +243,7 @@ pub fn certificate_expiring(pem: &str, days: i64) -> Result<bool> {
 // then performs ordinary chain, time and hostname verification before TLS succeeds.
 #[derive(Debug)]
 struct PinVerifier {
-    pin: String,
+    pin: Option<String>,
     ca: Arc<Mutex<Option<String>>>,
 }
 impl ServerCertVerifier for PinVerifier {
@@ -258,7 +258,11 @@ impl ServerCertVerifier for PinVerifier {
         let result = (|| -> Result<_> {
             let ca = chain.last().context("server omitted deployment CA")?;
             let ca_pem = pem(ca);
-            if ca_spki_pin(&ca_pem)? != self.pin {
+            if self
+                .pin
+                .as_ref()
+                .is_some_and(|pin| ca_spki_pin(&ca_pem).as_ref().ok() != Some(pin))
+            {
                 bail!("CA pin mismatch")
             }
             if expiry(&ca_pem)?.unix_timestamp() <= now.as_secs() as i64 {
@@ -322,9 +326,19 @@ pub async fn discover_ca(address: &str, pin: &str) -> Result<String> {
 pub(crate) fn pinned_client_config(
     pin: &str,
 ) -> (Arc<rustls::ClientConfig>, Arc<Mutex<Option<String>>>) {
+    discovery_config(Some(pin.to_string()))
+}
+// Only the bounded PAKE rendezvous uses discovered transport trust. Its result
+// is never accepted as network or relay authority; the manager provides pins.
+pub(crate) fn pairing_tls_config() -> Arc<rustls::ClientConfig> {
+    discovery_config(None).0
+}
+fn discovery_config(
+    pin: Option<String>,
+) -> (Arc<rustls::ClientConfig>, Arc<Mutex<Option<String>>>) {
     let ca = Arc::new(Mutex::new(None));
     let verifier = PinVerifier {
-        pin: pin.into(),
+        pin,
         ca: ca.clone(),
     };
     let config = rustls::ClientConfig::builder()
@@ -379,7 +393,7 @@ mod tests {
         let leaf = cert_der(&std::fs::read_to_string(temp.path().join("server.pem"))?)?;
         let root = cert_der(&keys.ca_pem)?;
         let verifier = PinVerifier {
-            pin: ca_spki_pin(&keys.ca_pem)?,
+            pin: Some(ca_spki_pin(&keys.ca_pem)?),
             ca: Arc::new(Mutex::new(None)),
         };
         assert!(

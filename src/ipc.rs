@@ -23,6 +23,8 @@ struct Endpoint {
     address: String,
     token: String,
     version: String,
+    #[serde(default)]
+    protocol: u32,
 }
 pub(crate) fn version_matches(dir: &Path) -> Result<Option<bool>> {
     let bytes = match std::fs::read(dir.join("daemon-ipc.json")) {
@@ -32,7 +34,9 @@ pub(crate) fn version_matches(dir: &Path) -> Result<Option<bool>> {
     };
     let endpoint: Endpoint =
         serde_json::from_slice(&bytes).context("read local daemon endpoint")?;
-    Ok(Some(endpoint.version == VERSION))
+    Ok(Some(
+        endpoint.version == VERSION && endpoint.protocol == PROTOCOL,
+    ))
 }
 #[derive(Serialize, Deserialize)]
 #[serde(tag = "local", rename_all = "snake_case", deny_unknown_fields)]
@@ -50,6 +54,19 @@ pub(crate) enum LocalRequest {
     ReloadAccess {
         token: String,
     },
+    Invite {
+        token: String,
+        version: String,
+        identity: String,
+        allow: bool,
+        replace: Option<String>,
+    },
+    CancelInvitation {
+        token: String,
+        version: String,
+        identity: String,
+        invitation_id: String,
+    },
     Release,
 }
 #[derive(Serialize, Deserialize)]
@@ -58,6 +75,10 @@ pub(crate) enum LocalResponse {
     Released,
     Stopped,
     AccessReloaded,
+    Invitation {
+        invitation: crate::client::Invitation,
+    },
+    InvitationCancelled,
 }
 
 pub(crate) fn identity_binding(id: &Identity) -> String {
@@ -84,7 +105,7 @@ pub(crate) async fn connect(id: &Identity, target: &str) -> Result<Option<Ws>> {
     };
     let endpoint: Endpoint =
         serde_json::from_slice(&bytes).context("read local daemon endpoint")?;
-    if endpoint.version != VERSION {
+    if endpoint.version != VERSION || endpoint.protocol != PROTOCOL {
         bail!(ErrorCode::VersionMismatch.error("restart the local daemon with this release"));
     }
     let io = match tokio::time::timeout(Duration::from_secs(2), open(&endpoint.address)).await {
@@ -167,6 +188,7 @@ impl Listener {
             address,
             token,
             version: VERSION.into(),
+            protocol: PROTOCOL,
         };
         let path = dir.join("daemon-ipc.json");
         config::atomic_private_write(&path, &serde_json::to_vec(&endpoint)?)?;
@@ -292,6 +314,63 @@ pub(crate) async fn stop(dir: &Path, generation: &str) -> Result<()> {
     .context(ErrorCode::DaemonStopTimeout.error("local daemon did not acknowledge shutdown"))?
 }
 
+pub(crate) async fn invite(
+    id: &Identity,
+    allow: bool,
+    replace: Option<&str>,
+) -> Result<crate::client::Invitation> {
+    match invitation_request(id, |token| LocalRequest::Invite {
+        token,
+        version: VERSION.into(),
+        identity: identity_binding(id),
+        allow,
+        replace: replace.map(str::to_string),
+    })
+    .await?
+    {
+        LocalResponse::Invitation { invitation } => Ok(invitation),
+        _ => bail!(ErrorCode::InvalidMessage.error("expected invitation response")),
+    }
+}
+pub(crate) async fn cancel_invitation(id: &Identity, invitation: &str) -> Result<()> {
+    match invitation_request(id, |token| LocalRequest::CancelInvitation {
+        token,
+        version: VERSION.into(),
+        identity: identity_binding(id),
+        invitation_id: invitation.into(),
+    })
+    .await?
+    {
+        LocalResponse::InvitationCancelled => Ok(()),
+        _ => bail!(ErrorCode::InvalidMessage.error("expected cancellation response")),
+    }
+}
+async fn invitation_request(
+    id: &Identity,
+    request: impl FnOnce(String) -> LocalRequest,
+) -> Result<LocalResponse> {
+    crate::network::manager(id)?;
+    tokio::time::timeout(Duration::from_secs(30), async {
+        let endpoint: Endpoint = serde_json::from_slice(
+            &std::fs::read(config::device_dir()?.join("daemon-ipc.json")).map_err(|_| {
+                ErrorCode::DeviceOffline
+                    .error("start the manager daemon before generating a short invitation")
+            })?,
+        )?;
+        if endpoint.version != VERSION || endpoint.protocol != PROTOCOL {
+            bail!(ErrorCode::VersionMismatch.error("restart the daemon with this release"));
+        }
+        let mut ws = framed(open(&endpoint.address).await?, Role::Client).await;
+        net::send(&mut ws, &request(endpoint.token)).await?;
+        let value: serde_json::Value = net::receive(&mut ws).await?;
+        if let Ok(Data::Error { code, message }) = serde_json::from_value(value.clone()) {
+            bail!(crate::error::CodedError::from_wire(code, message));
+        }
+        Ok(serde_json::from_value(value)?)
+    })
+    .await
+    .context(ErrorCode::ConnectTimeout.error("manager did not complete the invitation request"))?
+}
 pub(crate) async fn refresh_access(dir: &Path) -> Result<()> {
     tokio::time::timeout(CONNECT_TIMEOUT, async {
         let endpoint: Endpoint =

@@ -9,8 +9,9 @@ mod settings;
 mod status;
 
 pub use membership::{
-    ConnectionKind, Invitation, JoinInfo, Permission, Revocation, connect, connection_kind,
-    create_network, invite, join, pause_access, revoke, set_all_permissions, set_permission,
+    ConnectionKind, Invitation, JoinInfo, Permission, Revocation, cancel_invitation, connect,
+    connection_kind, create_network, invite, invite_code, invite_link, join, pause_access, revoke,
+    set_all_permissions, set_permission,
 };
 pub use settings::{
     ExecutionSettings, Settings, save_attachment_retention, save_settings, settings,
@@ -109,5 +110,19 @@ pub(crate) async fn join_identity(link: &str, name: Option<String>) -> Result<Id
     let name = name
         .or_else(|| Identity::load().ok().map(|id| id.name))
         .unwrap_or_else(user_name);
-    crate::network::join(link, name).await
+    if let Some(short) = crate::pairing::short_link(link) {
+        let (address, code) = short?;
+        crate::network::code::join(&address, &code, name).await
+    } else {
+        crate::network::join(link, name).await
+    }
+}
+/// Validate a host and an access code and form their short member invitation.
+pub fn code_link(address: &str, code: &str) -> Result<String> {
+    let address = crate::pairing::origin(address)?;
+    let code = crate::pairing::normalize(code)?;
+    Ok(format!(
+        "xrun://{}#{code}",
+        address.trim_start_matches("https://")
+    ))
 }

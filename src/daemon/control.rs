@@ -11,9 +11,11 @@ use super::session::data_session;
 
 pub(super) async fn control_reconnect(rt: Arc<Runtime>) -> Result<()> {
     let mut delay = 1u64;
+    let mut invitations = rt.control.invitations.receiver();
     loop {
         let started = tokio::time::Instant::now();
-        let result = control_once(rt.clone()).await;
+        let result = control_once(rt.clone(), &mut invitations).await;
+        rt.control.invitations.disconnected();
         rt.control.connected(false)?;
         if started.elapsed() > HEARTBEAT_TIMEOUT {
             delay = 1;
@@ -29,7 +31,10 @@ pub(super) async fn control_reconnect(rt: Arc<Runtime>) -> Result<()> {
         delay = (delay * 2).min(30);
     }
 }
-async fn control_once(rt: Arc<Runtime>) -> Result<()> {
+async fn control_once(
+    rt: Arc<Runtime>,
+    invitations: &mut tokio::sync::mpsc::Receiver<crate::pairing::Command>,
+) -> Result<()> {
     let mut current = Identity::load()?;
     if current.device_id != rt.id.device_id || current.network != rt.id.network {
         bail!(ErrorCode::IdentityChanged.error("restart daemon after replacing its identity"));
@@ -47,6 +52,20 @@ async fn control_once(rt: Arc<Runtime>) -> Result<()> {
     let RelayMessage::HelloAck { generation } = network::receive(&mut ws).await? else {
         bail!(ErrorCode::InvalidMessage.error("expected control acknowledgement"))
     };
+    let protocol = ws
+        .get_ref()
+        .relay
+        .as_ref()
+        .map(|relay| relay.protocol)
+        .unwrap_or(1);
+    rt.control
+        .invitations
+        .connected(&address, &current.device_id, protocol);
+    if protocol >= 4 {
+        for registration in rt.control.invitations.registrations(&address) {
+            net::send(&mut ws, &registration).await?;
+        }
+    }
     rt.control.connected(true)?;
     let mut ping = tokio::time::interval(HEARTBEAT_INTERVAL);
     let mut prune = tokio::time::interval(LOG_PRUNE_INTERVAL);
@@ -55,8 +74,12 @@ async fn control_once(rt: Arc<Runtime>) -> Result<()> {
     let mut last = tokio::time::Instant::now();
     loop {
         tokio::select! {
+            Some(command) = invitations.recv() => {
+                ProtocolRange::require(protocol, 4)?;
+                net::send(&mut ws, &command.message).await?;
+            },
             _ = changes.changed() => check_control_access(&rt, &address)?,
-            _ = ping.tick() => heartbeat(&mut ws, last).await?,
+            _ = ping.tick() => { rt.control.invitations.prune(); heartbeat(&mut ws, last).await?; },
             _ = prune.tick() => prune_logs(rt.clone()).await?,
             message = ws.next() => handle_control_message(&rt, &mut ws, message, &address, &generation, &mut last).await?,
         }
@@ -108,6 +131,49 @@ async fn handle_control_message(
         Message::Text(text) => {
             *last = tokio::time::Instant::now();
             match serde_json::from_str::<RelayMessage>(&text)? {
+                RelayMessage::PairingRegistered {
+                    invitation_id,
+                    error,
+                } => rt.control.invitations.acknowledge(&invitation_id, error),
+                RelayMessage::PairingIncoming {
+                    session_id,
+                    invitation_id,
+                } => {
+                    let runtime = rt.clone();
+                    let address = address.to_string();
+                    let generation = generation.to_string();
+                    let permit = rt.sessions.clone().try_acquire_owned();
+                    if let Ok(permit) = permit {
+                        tokio::spawn(async move {
+                            let _permit = permit;
+                            let result = crate::network::code::serve(
+                                &runtime.id,
+                                &runtime.control.invitations,
+                                &address,
+                                &generation,
+                                &session_id,
+                                &invitation_id,
+                            )
+                            .await;
+                            if let Err(error) = result {
+                                tracing::debug!(code=?crate::error::code(&error), "short pairing ended");
+                            }
+                        });
+                    } else {
+                        net::send(
+                            ws,
+                            &RelayMessage::Reject {
+                                session_id,
+                                error: Box::new(Data::error(
+                                    &ErrorCode::DeviceBusy
+                                        .error("pairing capacity reached")
+                                        .into(),
+                                )),
+                            },
+                        )
+                        .await?;
+                    }
+                }
                 RelayMessage::Incoming { session_id } => {
                     let admission = rt.authorization().and_then(|_| {
                         rt.sessions

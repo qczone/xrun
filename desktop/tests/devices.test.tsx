@@ -273,7 +273,7 @@ test("only managers generate invitations, default registration has no grant and 
     }),
   });
   await page("设备");
-  expect(screen.queryByRole("button", { name: "生成邀请链接" })).toBeNull();
+  expect(screen.queryByRole("button", { name: "生成接入码" })).toBeNull();
   status.network!.is_manager = true;
   await poll();
   fireEvent.click(screen.getByRole("button", { name: "邀请设备" }));
@@ -281,10 +281,11 @@ test("only managers generate invitations, default registration has no grant and 
     "允许新设备与本机互相访问",
   ) as HTMLInputElement;
   expect(option.checked).toBe(false);
-  fireEvent.click(screen.getByRole("button", { name: "生成邀请链接" }));
+  fireEvent.click(screen.getByRole("button", { name: "生成接入码" }));
   await screen.findByLabelText("生成的邀请链接");
   expect(calls.find((call) => call.command === "invite")?.args).toEqual({
     allow: false,
+    replace: null,
   });
   expect(calls.some((call) => call.command === "copy_invitation")).toBe(false);
   fireEvent.click(screen.getByRole("button", { name: "复制链接" }));
@@ -311,7 +312,7 @@ test("mutual invitation grants require confirmation and expired links are cleare
   await page("设备");
   fireEvent.click(screen.getByRole("button", { name: "邀请设备" }));
   fireEvent.click(screen.getByLabelText("允许新设备与本机互相访问"));
-  fireEvent.click(screen.getByRole("button", { name: "生成邀请链接" }));
+  fireEvent.click(screen.getByRole("button", { name: "生成接入码" }));
   await waitFor(() =>
     expect(
       (document.getElementById("confirm") as HTMLDialogElement)?.open,
@@ -321,7 +322,7 @@ test("mutual invitation grants require confirmation and expired links are cleare
     (document.getElementById("confirm") as HTMLDialogElement).close("cancel"),
   );
   expect(calls.some((call) => call.command === "invite")).toBe(false);
-  fireEvent.click(screen.getByRole("button", { name: "生成邀请链接" }));
+  fireEvent.click(screen.getByRole("button", { name: "生成接入码" }));
   await waitFor(() =>
     expect(
       (document.getElementById("confirm") as HTMLDialogElement)?.open,
@@ -330,10 +331,11 @@ test("mutual invitation grants require confirmation and expired links are cleare
   await act(async () =>
     (document.getElementById("confirm") as HTMLDialogElement).close("ok"),
   );
-  await screen.findByText("链接已过期，请重新生成。");
+  await screen.findByText("邀请码已过期，请重新生成。");
   expect(screen.queryByLabelText("生成的邀请链接")).toBeNull();
   expect(calls.find((call) => call.command === "invite")?.args).toEqual({
     allow: true,
+    replace: null,
   });
 });
 
@@ -347,7 +349,7 @@ test("an invitation completed after leaving its page cannot expose a secret", as
   await poll();
   await page("设备");
   fireEvent.click(screen.getByRole("button", { name: "邀请设备" }));
-  fireEvent.click(screen.getByRole("button", { name: "生成邀请链接" }));
+  fireEvent.click(screen.getByRole("button", { name: "生成接入码" }));
   await page("活动");
   await act(async () =>
     complete({ link: "xrun://late-secret", allow: false, expires_in: 600 }),
@@ -564,7 +566,7 @@ test("closing the invitation dialog discards a result that arrives later", async
   await poll();
   await page("设备");
   fireEvent.click(screen.getByRole("button", { name: "邀请设备" }));
-  fireEvent.click(await screen.findByRole("button", { name: "生成邀请链接" }));
+  fireEvent.click(await screen.findByRole("button", { name: "生成接入码" }));
   await screen.findByRole("button", { name: "正在生成…" });
   fireEvent.click(screen.getByRole("button", { name: "关闭邀请" }));
   await waitFor(() =>
@@ -580,7 +582,7 @@ test("closing the invitation dialog discards a result that arrives later", async
     }),
   );
   fireEvent.click(screen.getByRole("button", { name: "邀请设备" }));
-  await screen.findByRole("button", { name: "生成邀请链接" });
+  await screen.findByRole("button", { name: "生成接入码" });
   expect(screen.queryByLabelText("生成的邀请链接")).toBeNull();
   expect(document.body.textContent).not.toContain("closed-dialog-secret");
 });

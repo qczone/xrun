@@ -49,8 +49,16 @@ export function useOperationController(
       return await operation();
     } catch (e) {
       const detail = errorText(e);
+      const pairingTitles: Record<string, PlainMessageKey> = {
+        INVALID_CODE: "setup.invalidCode",
+        CODE_EXPIRED: "setup.expiredCode",
+        CODE_LOCKED: "setup.lockedCode",
+        CODE_IN_USE: "setup.usedCode",
+        PAIRING_BUSY: "setup.pairingBusy",
+      };
       const title =
-        context.name === "remote_submit" &&
+        pairingTitles[errorCode(e) || ""] ||
+        (context.name === "remote_submit" &&
         errorCode(e) === "SOURCE_NOT_ALLOWED"
           ? "remote.accessDenied"
           : (context.name === "create_network" ||
@@ -62,7 +70,7 @@ export function useOperationController(
                 context.name === "deploy_cloudflare"
                 ? "action.createdServiceFailed"
                 : "action.joinedServiceFailed"
-              : context.title;
+              : context.title);
       setError({ page: origin, title, detail });
     } finally {
       await refreshStatus();

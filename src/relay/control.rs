@@ -67,7 +67,7 @@ pub(super) async fn control_route(
         ws.max_message_size(MAX_MESSAGE)
             .max_frame_size(MAX_MESSAGE)
             .on_upgrade(move |mut ws| async move {
-                let result = control(&app, &network, &mut ws, &permit).await;
+                let result = control(&app, &network, &mut ws, &permit, selected).await;
                 finish(&mut ws, result).await;
             }),
         selected,
@@ -78,6 +78,7 @@ async fn control(
     network: &str,
     ws: &mut WebSocket,
     permit: &TransportPermit,
+    protocol: u32,
 ) -> Result<()> {
     // Only the holder of a device key can take over that device's routing slot.
     // Authorization still happens inside the end-to-end tunnel.
@@ -109,6 +110,7 @@ async fn control(
         if let Some(old) = connections.controls.insert(
             key.clone(),
             ControlConnection {
+                protocol,
                 generation: generation.clone(),
                 manager,
                 tx,
@@ -175,7 +177,11 @@ async fn control_message(
         Message::Pong(_) => *last = Instant::now(),
         Message::Text(text) => {
             *last = Instant::now();
-            let RelayMessage::Reject { session_id, error } = serde_json::from_str(&text)? else {
+            let message = serde_json::from_str::<RelayMessage>(&text)?;
+            if pairing::control(app, ws, network, device, generation, &message).await? {
+                return Ok(());
+            }
+            let RelayMessage::Reject { session_id, error } = message else {
                 bail!(ErrorCode::InvalidMessage.error("unexpected control message"));
             };
             let mut connections = app.connections.lock().await;

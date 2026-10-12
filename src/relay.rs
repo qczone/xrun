@@ -1,6 +1,7 @@
 //! Rust relay assembly, shared socket validation and private deployment state.
 mod admission;
 mod control;
+mod pairing;
 mod sessions;
 mod traffic;
 use crate::error::ErrorCode;
@@ -112,6 +113,7 @@ impl IntoResponse for Api {
 type ApiResult<T> = std::result::Result<T, Api>;
 
 struct ControlConnection {
+    protocol: u32,
     generation: String,
     manager: bool,
     tx: mpsc::Sender<RelayMessage>,
@@ -170,6 +172,7 @@ async fn member(
 struct Connections {
     controls: HashMap<(String, String), ControlConnection>,
     sessions: HashMap<String, Session>,
+    pairings: HashMap<String, pairing::Room>,
 }
 struct App {
     connections: Mutex<Connections>,
@@ -204,11 +207,14 @@ pub async fn run(config: ServerConfig) -> Result<()> {
             "/networks/{network}/attach/{target}/{generation}/{sid}",
             get(attach_route),
         )
-        .with_state(app);
+        .with_state(app.clone());
     server::serve_http(
         config.port,
         tokio_rustls::TlsAcceptor::from(keys.tls_config),
-        Router::new().nest(&format!("/{path}"), router),
+        Router::new()
+            .nest(&format!("/{path}"), router)
+            .route("/.well-known/xrun/pair/{locator}", get(pairing::route))
+            .with_state(app),
     )
     .await
 }

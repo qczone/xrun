@@ -106,7 +106,7 @@ async fn cli_registration_removal_and_interactive_purge_preserve_identity_until_
     ok(purge(&home, &bin, b"purge\n").await?);
     assert!(!home.join(".xrun").exists());
 
-    let invitation = ok(cli(&lab.source, &["invite"]).await);
+    let invitation = ok(cli(&lab.source, &["invite", "--link"]).await);
     ok(service_command(
         &home,
         &bin,

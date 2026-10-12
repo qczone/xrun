@@ -134,6 +134,13 @@ fn validate_pair(
     Ok(())
 }
 pub(crate) async fn join(link: &str, name: String) -> Result<Identity> {
+    join_with_key(link, name, None).await
+}
+pub(super) async fn join_with_key(
+    link: &str,
+    name: String,
+    supplied: Option<&str>,
+) -> Result<Identity> {
     let invite = parse_link(link)?;
     let dir = config::device_dir()?;
     let existing = if dir.join("identity.toml").exists() {
@@ -166,8 +173,17 @@ pub(crate) async fn join(link: &str, name: String) -> Result<Identity> {
         };
         p.key_pem
     } else {
-        crypto::new_device_request()?.0
+        match supplied {
+            Some(key) => key.to_string(),
+            None => crypto::new_device_request()?.0,
+        }
     };
+    if supplied.is_some_and(|supplied| supplied != key) {
+        bail!(
+            ErrorCode::IdentityMismatch
+                .error("pairing key differs from the saved pending identity")
+        );
+    }
     let mut error = None;
     for address in &net::ordered_addresses(&invite.addresses, &invite.root_pin) {
         let result = tokio::time::timeout(Duration::from_secs(30), async {

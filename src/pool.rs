@@ -202,6 +202,20 @@ pub(crate) async fn run(
         }
     }
 }
+fn local_manager(token: &str, expected: &str, version: &str, identity: &str) -> Result<Identity> {
+    if token != expected {
+        bail!(ErrorCode::Unauthenticated.error("invalid local endpoint token"));
+    }
+    if version != VERSION {
+        bail!(ErrorCode::VersionMismatch.error("restart the daemon with this release"));
+    }
+    let id = Identity::load()?;
+    if identity != ipc::identity_binding(&id) {
+        bail!(ErrorCode::IdentityChanged.error("local identity changed"));
+    }
+    network::manager(&id)?;
+    Ok(id)
+}
 async fn handle(
     local: &mut Ws,
     pool: Arc<Pool>,
@@ -211,6 +225,34 @@ async fn handle(
 ) -> Result<()> {
     let opening: LocalRequest =
         tokio::time::timeout(Duration::from_secs(5), net::receive(local)).await??;
+    if let LocalRequest::Invite {
+        token,
+        version,
+        identity,
+        allow,
+        replace,
+    } = &opening
+    {
+        let id = local_manager(token, expected_token, version, identity)?;
+        let invitation = control
+            .invitations
+            .create(&id, *allow, replace.as_deref())
+            .await?;
+        net::send(local, &LocalResponse::Invitation { invitation }).await?;
+        return Ok(());
+    }
+    if let LocalRequest::CancelInvitation {
+        token,
+        version,
+        identity,
+        invitation_id,
+    } = &opening
+    {
+        let id = local_manager(token, expected_token, version, identity)?;
+        control.invitations.cancel(&id, invitation_id).await?;
+        net::send(local, &LocalResponse::InvitationCancelled).await?;
+        return Ok(());
+    }
     if let LocalRequest::Stop { token, generation } = &opening {
         if token != expected_token {
             bail!(ErrorCode::Unauthenticated.error("invalid local endpoint token"));

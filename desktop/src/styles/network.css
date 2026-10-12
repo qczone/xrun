@@ -62,3 +62,14 @@
   font-size: 12px;
   margin: 0;
 }
+
+.access-code-input {
+  font-size: 1.35rem;
+  letter-spacing: 0.14em;
+  font-weight: 600;
+}
+
+.invitation-result input[type="text"] {
+  width: 100%;
+  margin: 6px 0 12px;
+}

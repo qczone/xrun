@@ -13,6 +13,7 @@ export interface ConnectionBase {
   network: string;
   ip: string;
   protocol: number;
+  pairing?: string;
 }
 export type ChallengeState = ConnectionBase &
   ChallengeRoute & {
@@ -71,7 +72,7 @@ export type Attachment =
   | TunnelState
   | ClosedState;
 
-const BASE_KEYS = ["id", "role", "network", "ip", "protocol"];
+const BASE_KEYS = ["id", "role", "network", "ip", "protocol", "pairing"];
 const BINDING_KEYS = ["target", "generation", "sid"];
 const TUNNEL_KEYS = [
   ...BASE_KEYS,
@@ -133,11 +134,24 @@ export function attachment(value: unknown): Attachment | undefined {
     protocol > PROTOCOL.max
   )
     return;
+  if (
+    value.pairing !== undefined &&
+    (protocol < 4 ||
+      typeof value.pairing !== "string" ||
+      !SESSION_TOKEN.test(value.pairing) ||
+      !["auth", "verifying", "pending", "source", "target"].includes(
+        String(value.role),
+      ))
+  )
+    return;
   const base: ConnectionBase = {
     id: value.id,
     network: value.network,
     ip: value.ip,
     protocol,
+    ...(value.pairing === undefined
+      ? {}
+      : { pairing: value.pairing as string }),
   };
   switch (value.role) {
     case "traffic":
@@ -303,6 +317,7 @@ export function base(state: ConnectionBase): ConnectionBase {
     network: state.network,
     ip: state.ip,
     protocol: state.protocol,
+    ...(state.pairing ? { pairing: state.pairing } : {}),
   };
 }
 export function tunnel(state: Attachment): state is TunnelState {

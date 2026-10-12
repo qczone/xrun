@@ -17,11 +17,21 @@ pub(super) async fn run(cli: LocalCli) -> Result<i32> {
     match cli.command {
         Local::Connect {
             link,
+            code,
             name,
             allow_manager,
             no_daemon,
         } => {
+            let link = match code {
+                Some(code) => crate::client::code_link(&link, &code)?,
+                None => link,
+            };
+            let joining =
+                crate::client::connection_kind(&link)? == crate::client::ConnectionKind::Join;
             let joined = crate::client::connect(&link, name, allow_manager).await?;
+            if joining && !allow_manager && !json {
+                consent_to_manager().await?;
+            }
             daemon::init()?;
             if !no_daemon {
                 service::install("daemon").await?;
@@ -62,8 +72,13 @@ pub(super) async fn run(cli: LocalCli) -> Result<i32> {
                 || println!("{} ({})", id.name, id.device_id),
             );
         }
-        Local::Invite { allow } => {
-            let value = serde_json::to_value(crate::client::invite(allow).await?)?;
+        Local::Invite { allow, link } => {
+            let invitation = if link {
+                crate::client::invite_link(allow).await?
+            } else {
+                crate::client::invite(allow).await?
+            };
+            let value = serde_json::to_value(&invitation)?;
             if value["allow"].as_bool() != Some(allow) {
                 bail!(
                     ErrorCode::VersionMismatch
@@ -71,7 +86,13 @@ pub(super) async fn run(cli: LocalCli) -> Result<i32> {
                 )
             }
             print(json, &value, || {
-                println!("{}", value["link"].as_str().unwrap_or_default())
+                if let (Some(address), Some(code)) = (&invitation.address, &invitation.code) {
+                    println!(
+                        "relay: {address}\naccess code: {code}\nxrun connect {address} {code}"
+                    );
+                } else {
+                    println!("{}", invitation.link);
+                }
             });
             invitation_notice(allow);
         }
@@ -325,6 +346,24 @@ async fn permission(args: PermissionArgs, allow: bool, json: bool) -> Result<()>
     });
     Ok(())
 }
+async fn consent_to_manager() -> Result<()> {
+    use std::io::{IsTerminal, Write};
+    if !std::io::stdin().is_terminal() || !std::io::stderr().is_terminal() {
+        return Ok(());
+    }
+    let id = config::Identity::load()?;
+    let roster = crate::network::current(&id)?;
+    let manager = &roster.roster.manager_id;
+    let name = &roster.member(manager)?.name;
+    eprint!("[xrun] allow {name} to access this device? [y/N] ");
+    std::io::stderr().flush()?;
+    let mut answer = String::new();
+    std::io::stdin().read_line(&mut answer)?;
+    if matches!(answer.trim().to_ascii_lowercase().as_str(), "y" | "yes") {
+        crate::client::set_permission(manager, true).await?;
+    }
+    Ok(())
+}
 async fn up(
     relay: &str,
     name: Option<String>,
@@ -337,7 +376,7 @@ async fn up(
     if !no_daemon {
         service::install("daemon").await?;
     }
-    let invitation = crate::client::invite(allow).await?;
+    let invitation = crate::client::invite_link(allow).await?;
     print(
         json,
         &serde_json::json!({"device_id":id.device_id,"network_id":id.network_id,"link":invitation.link,"addresses":id.relay_addresses,"allow":allow}),

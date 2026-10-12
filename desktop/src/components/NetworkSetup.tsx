@@ -50,14 +50,22 @@ export function NetworkSetup({
   action,
   onCreated,
 }: Props) {
-  const [method, setMethod] = useState<"link" | "cloudflare">("link");
+  const [method, setMethod] = useState<"code" | "link" | "cloudflare">("code");
   const [link, setLink] = useState("");
+  const [relayAddress, setRelayAddress] = useState("");
+  const [accessCode, setAccessCode] = useState("");
   const [name, setName] = useState("");
   const [allowManager, setAllowManager] = useState(true);
   const [retry, setRetry] = useState(false);
   const submitting = useRef(false);
-  const trimmedLink = link.trim();
-  const joining = trimmedLink.startsWith("xrun://");
+  const trimmedLink =
+    method === "code"
+      ? `xrun://${relayAddress
+          .trim()
+          .replace(/^https:\/\//, "")
+          .replace(/\/$/, "")}#${accessCode.trim()}`
+      : link.trim();
+  const joining = method === "code" || trimmedLink.startsWith("xrun://");
   const creating =
     trimmedLink.startsWith("xrun-relay://") ||
     trimmedLink.startsWith("https://");
@@ -79,6 +87,8 @@ export function NetworkSetup({
   useEffect(() => {
     if (joined && startFailed) {
       setLink("");
+      setRelayAddress("");
+      setAccessCode("");
       setRetry(false);
     }
   }, [joined, startFailed]);
@@ -90,7 +100,7 @@ export function NetworkSetup({
     <section className="network-setup">
       {!joined && (
         <div className="setup-tabs" aria-label={t("setup.connectionMethod")}>
-          {(["link", "cloudflare"] as const).map((value) => (
+          {(["code", "link", "cloudflare"] as const).map((value) => (
             <button
               key={value}
               aria-pressed={method === value}
@@ -102,7 +112,13 @@ export function NetworkSetup({
                 setRetry(false);
               }}
             >
-              {t(value === "link" ? "setup.useLink" : "setup.useCloudflare")}
+              {t(
+                value === "code"
+                  ? "setup.useCode"
+                  : value === "link"
+                    ? "setup.useLink"
+                    : "setup.useCloudflare",
+              )}
             </button>
           ))}
         </div>
@@ -119,7 +135,9 @@ export function NetworkSetup({
         />
       ) : (
         <>
-          <p className="setup-description">{t("setup.linkHint")}</p>
+          <p className="setup-description">
+            {t(method === "code" ? "setup.codeHint" : "setup.linkHint")}
+          </p>
           <form
             className="network-setup-form"
             id="connect-form"
@@ -138,6 +156,8 @@ export function NetworkSetup({
                 });
                 if (success) {
                   setLink("");
+                  setRelayAddress("");
+                  setAccessCode("");
                   setRetry(false);
                   if (creating) onCreated();
                 } else setRetry(true);
@@ -146,21 +166,73 @@ export function NetworkSetup({
               }
             }}
           >
-            <label htmlFor="setup-link">{t("setup.link")}</label>
-            <input
-              id="setup-link"
-              type="password"
-              placeholder="xrun://… / xrun-relay://… / https://…"
-              autoComplete="off"
-              spellCheck={false}
-              required
-              disabled={busy}
-              value={link}
-              onChange={(event) => {
-                setLink(event.target.value);
-                setRetry(false);
-              }}
-            />
+            {method === "code" ? (
+              <>
+                <label htmlFor="setup-address">{t("setup.relayAddress")}</label>
+                <input
+                  id="setup-address"
+                  type="text"
+                  placeholder="relay.example / 192.168.1.10:9528"
+                  required
+                  disabled={busy}
+                  autoComplete="off"
+                  spellCheck={false}
+                  value={relayAddress}
+                  onChange={(event) => {
+                    const value = event.target.value;
+                    const short = /^xrun:\/\/([^/]+?)\/?#([^#]+)$/.exec(
+                      value.trim(),
+                    );
+                    if (short) {
+                      setRelayAddress(short[1]);
+                      setAccessCode(short[2]);
+                    } else if (
+                      value.trim().startsWith("xrun://") ||
+                      value.trim().startsWith("xrun-relay://")
+                    ) {
+                      setMethod("link");
+                      setLink(value);
+                    } else setRelayAddress(value);
+                    setRetry(false);
+                  }}
+                />
+                <label htmlFor="setup-code">{t("setup.accessCode")}</label>
+                <input
+                  id="setup-code"
+                  className="access-code-input mono"
+                  type="text"
+                  placeholder="K7M4-P9Q2"
+                  required
+                  disabled={busy}
+                  autoComplete="off"
+                  spellCheck={false}
+                  maxLength={32}
+                  value={accessCode}
+                  onChange={(event) => {
+                    setAccessCode(event.target.value.toUpperCase());
+                    setRetry(false);
+                  }}
+                />
+              </>
+            ) : (
+              <>
+                <label htmlFor="setup-link">{t("setup.link")}</label>
+                <input
+                  id="setup-link"
+                  type="password"
+                  placeholder="xrun://… / xrun-relay://… / https://…"
+                  autoComplete="off"
+                  spellCheck={false}
+                  required
+                  disabled={busy}
+                  value={link}
+                  onChange={(event) => {
+                    setLink(event.target.value);
+                    setRetry(false);
+                  }}
+                />
+              </>
+            )}
             {(joining || creating) && (
               <p className="field-help" role="status">
                 {t(joining ? "setup.willJoin" : "setup.willCreate")}
