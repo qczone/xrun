@@ -16,7 +16,7 @@ pub(super) async fn control_reconnect(rt: Arc<Runtime>) -> Result<()> {
         let started = tokio::time::Instant::now();
         let result = control_once(rt.clone(), &mut invitations).await;
         rt.control.invitations.disconnected();
-        rt.control.connected(false)?;
+        record_connection(&rt.control, false);
         if started.elapsed() > HEARTBEAT_TIMEOUT {
             delay = 1;
         }
@@ -107,7 +107,7 @@ async fn control_once(
     for registration in rt.control.invitations.registrations(&address) {
         net::send(&mut ws, &registration).await?;
     }
-    rt.control.connected(true)?;
+    record_connection(&rt.control, true);
     publish_authority(&rt, &mut ws).await?;
     let mut ping = tokio::time::interval(HEARTBEAT_INTERVAL);
     let mut prune = tokio::time::interval(LOG_PRUNE_INTERVAL);
@@ -149,6 +149,13 @@ async fn control_once(
             _ = prune.tick() => prune_logs(rt.clone()).await?,
             message = ws.next() => handle_control_message(&rt, &mut ws, message, &address, &generation, &mut last).await?,
         }
+    }
+}
+fn record_connection(control: &crate::control::Control, connected: bool) {
+    if let Err(error) = control.connected(connected) {
+        // The runtime file is advisory. A failed status update must not stop
+        // accepted jobs or prevent control reconnection; generation stays fixed.
+        tracing::warn!(connected, error=%error, "unable to persist daemon connection state");
     }
 }
 async fn publish_authority(rt: &Runtime, ws: &mut net::Ws) -> Result<()> {

@@ -354,13 +354,41 @@ pub fn atomic_private_write(path: &Path, bytes: &[u8]) -> Result<()> {
         file.as_file()
             .set_permissions(std::fs::Permissions::from_mode(0o600))?;
     }
+    #[cfg(windows)]
+    private_acl(file.path(), false).context("restrict temporary private file")?;
     std::io::Write::write_all(&mut file, bytes)?;
     file.as_file().sync_all()?;
-    file.persist(path).map_err(|e| e.error)?;
+    // Close our write handle and secure the temporary file before publishing.
+    // No later ACL update should reopen a path that another writer can replace.
+    persist_private(file.into_temp_path(), path).context("publish private file")?;
     sync_parent(path)?;
-    #[cfg(windows)]
-    private_acl(path, false)?;
     Ok(())
+}
+
+#[cfg(not(windows))]
+fn persist_private(file: tempfile::TempPath, path: &Path) -> Result<()> {
+    file.persist(path).map_err(|error| error.error)?;
+    Ok(())
+}
+
+#[cfg(windows)]
+fn persist_private(mut file: tempfile::TempPath, path: &Path) -> Result<()> {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(1);
+    loop {
+        match file.persist(path) {
+            Ok(()) => return Ok(()),
+            Err(error)
+                if matches!(error.error.raw_os_error(), Some(5 | 32 | 33))
+                    && std::time::Instant::now() < deadline =>
+            {
+                // Readers and virus scanners can briefly deny rename/delete.
+                // Retry the same atomic replacement without touching old bytes.
+                file = error.path;
+                std::thread::sleep(std::time::Duration::from_millis(10));
+            }
+            Err(error) => return Err(error.error.into()),
+        }
+    }
 }
 
 pub(crate) fn restrict_dir(_path: &Path) -> Result<()> {
@@ -447,6 +475,53 @@ pub(crate) fn private_acl(path: &Path, directory: bool) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(windows)]
+    #[test]
+    fn private_write_waits_for_a_transient_windows_reader() -> Result<()> {
+        use std::os::windows::fs::OpenOptionsExt;
+        use windows_sys::Win32::Storage::FileSystem::FILE_SHARE_READ;
+        let dir = tempfile::tempdir()?;
+        let path = dir.path().join("state.json");
+        atomic_private_write(&path, b"old")?;
+        let reader = std::fs::OpenOptions::new()
+            .read(true)
+            .share_mode(FILE_SHARE_READ)
+            .open(&path)?;
+        let release = std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_millis(100));
+            drop(reader);
+        });
+        atomic_private_write(&path, b"new")?;
+        release.join().unwrap();
+        assert_eq!(std::fs::read(&path)?, b"new");
+        Ok(())
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn private_write_preserves_old_bytes_when_windows_sharing_remains_locked() -> Result<()> {
+        use std::os::windows::fs::OpenOptionsExt;
+        use windows_sys::Win32::Storage::FileSystem::FILE_SHARE_READ;
+        let dir = tempfile::tempdir()?;
+        let path = dir.path().join("state.json");
+        atomic_private_write(&path, b"old")?;
+        let _reader = std::fs::OpenOptions::new()
+            .read(true)
+            .share_mode(FILE_SHARE_READ)
+            .open(&path)?;
+        let error = atomic_private_write(&path, b"new").unwrap_err();
+        assert!(matches!(
+            error
+                .downcast_ref::<std::io::Error>()
+                .unwrap()
+                .raw_os_error(),
+            Some(5 | 32 | 33)
+        ));
+        assert_eq!(std::fs::read(&path)?, b"old");
+        assert_eq!(std::fs::read_dir(dir.path())?.count(), 1);
+        Ok(())
+    }
 
     #[test]
     fn permissions_are_explicit_and_pause_survives_reload() -> Result<()> {
