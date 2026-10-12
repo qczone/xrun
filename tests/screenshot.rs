@@ -20,7 +20,7 @@ async fn screenshot_download_checks_metadata_integrity_errors_and_local_destinat
             &format!("/networks/{network}/control"),
         )
         .await?;
-        let RelayMessage::HelloAck { generation } = net::receive(&mut control).await? else {
+        let RelayMessage::HelloAck { generation } = control_message(&mut control).await? else {
             bail!("control acknowledgement")
         };
         let mut png = Vec::new();
@@ -43,7 +43,7 @@ async fn screenshot_download_checks_metadata_integrity_errors_and_local_destinat
         ];
         let server = async {
             for case in cases.into_iter().chain(cfg!(unix).then_some("symlink")) {
-                let RelayMessage::Incoming { session_id } = net::receive(&mut control).await?
+                let RelayMessage::Incoming { session_id } = control_message(&mut control).await?
                 else {
                     bail!("incoming")
                 };
@@ -61,12 +61,15 @@ async fn screenshot_download_checks_metadata_integrity_errors_and_local_destinat
                     RelayMessage::Connected { .. }
                 ));
                 let (mut ws, cert) = secure::server(outer, &lab.target_identity).await?;
-                secure::exchange_server(&mut ws, &cache, network, &cert.context("certificate")?)
-                    .await?;
-                assert!(matches!(
-                    net::receive(&mut ws).await?,
-                    secure::Purpose::Execute
-                ));
+                let (_, _, _, purpose) = secure::exchange_server(
+                    &mut ws,
+                    &cache,
+                    network,
+                    &cert.context("certificate")?,
+                )
+                .await?;
+
+                assert!(matches!(purpose, secure::Purpose::Execute));
                 net::send(
                     &mut ws,
                     &Data::Ready {

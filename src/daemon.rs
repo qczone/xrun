@@ -276,8 +276,7 @@ impl Runtime {
         Ok(self.authorization()?.config.clone())
     }
     fn membership(&self, source: &str) -> Result<()> {
-        let access = self.authorization()?;
-        let roster = &access.roster;
+        let roster = self.members.load(&self.network_id)?;
         if roster.member(&self.id.device_id)?.revoked || roster.member(source)?.revoked {
             bail!(ErrorCode::DeviceRevoked.error("session member has been revoked"))
         }
@@ -285,16 +284,14 @@ impl Runtime {
     }
     fn allow(&self, source: &str) -> Result<()> {
         self.membership(source)?;
-        self.members.require_fresh(&self.network_id, now_ms())?;
+        let current = self.members.require_fresh(&self.network_id, now_ms())?;
         if crate::membership::backup::holds_authority(&config::device_dir()?)? {
             bail!(
                 ErrorCode::ManagerProtected
                     .error("retire the local authority before allowing remote operations")
             );
         }
-        self.authorization()?
-            .roster
-            .require_business_target(&self.id.device_id)?;
+        current.roster.require_business_target(&self.id.device_id)?;
         self.config()?.check_access(source)
     }
     fn check_session(&self, source: &str, generation: u64) -> Result<()> {

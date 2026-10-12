@@ -250,3 +250,30 @@ async fn changed_upload_is_rejected_without_overwriting_the_destination() -> Res
     assert_eq!(std::fs::read(target)?, b"keep-existing");
     Ok(())
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn unrelated_membership_updates_preserve_the_authenticated_pair_and_renew_its_freshness()
+-> Result<()> {
+    let lab = Lab::new().await?;
+    version(&lab.source).await;
+    let initial = manager_log(&lab.source)?
+        .matches("opened operation session")
+        .count();
+    let manager = xrun::testing::membership::Manager::open(&lab.source.join(".xrun/manager"))?;
+    let (_, csr) = xrun::testing::crypto::new_device_request()?;
+    manager.pair(&manager.invite(false)?, "unrelated-node", &csr)?;
+    // A status proof durably publishes the new signed list at the relay.
+    json(cli(&lab.source, &["status", "--json"]).await);
+    version(&lab.source).await;
+    let log = manager_log(&lab.source)?;
+    assert_eq!(
+        log.matches("opened operation session").count(),
+        initial,
+        "{log}"
+    );
+    assert!(log.contains("reusing operation session"));
+    let network = &lab.source_identity.network.as_ref().unwrap().network_id;
+    let target = xrun::testing::membership::RosterCache::open(&lab.target.join(".xrun/roster.db"))?;
+    assert!(target.load(network)?.member("unrelated-node").is_ok());
+    Ok(())
+}

@@ -20,13 +20,13 @@ async fn submission_rejection_and_uncertainty_keep_distinct_exit_codes() -> Resu
         let mut control = relay_socket(
             Some(&lab.target_identity), &roster, &format!("/networks/{network}/control"),
         ).await?;
-        let RelayMessage::HelloAck { generation } = net::receive(&mut control).await? else {
+        let RelayMessage::HelloAck { generation } = control_message(&mut control).await? else {
             bail!("control acknowledgement")
         };
         let peer = async {
             // The unknown reply must only trigger a query, never a second Exec.
             for step in ["rejected", "unknown", "recovery"] {
-                let RelayMessage::Incoming { session_id } = net::receive(&mut control).await? else {
+                let RelayMessage::Incoming { session_id } = control_message(&mut control).await? else {
                     bail!("incoming session")
                 };
                 let mut outer = net::websocket_at(
@@ -36,8 +36,9 @@ async fn submission_rejection_and_uncertainty_keep_distinct_exit_codes() -> Resu
                 ).await?;
                 assert!(matches!(net::receive(&mut outer).await?, RelayMessage::Connected { .. }));
                 let (mut ws, cert) = secure::server(outer, &lab.target_identity).await?;
-                secure::exchange_server(&mut ws, &cache, network, &cert.context("certificate")?).await?;
-                assert!(matches!(net::receive(&mut ws).await?, secure::Purpose::Execute));
+                let (_, _, _, purpose) = secure::exchange_server(&mut ws, &cache, network, &cert.context("certificate")?).await?;
+
+                assert!(matches!(purpose, secure::Purpose::Execute));
                 net::send(&mut ws, &Data::Ready {
                     version: VERSION.into(), protocol: xrun::protocol::ProtocolRange::CURRENT, selected_protocol: xrun::protocol::PROTOCOL, device_id: lab.target_identity.device_id.clone(),
                     db_id: "test-db".into(), default_cwd: lab.target.to_string_lossy().into(),
@@ -137,7 +138,7 @@ async fn foreground_uses_one_session_and_recovers_without_resubmitting() -> Resu
             &format!("/networks/{network}/control"),
         )
         .await?;
-        let RelayMessage::HelloAck { generation } = net::receive(&mut control).await? else {
+        let RelayMessage::HelloAck { generation } = control_message(&mut control).await? else {
             bail!("control acknowledgement")
         };
         let peer = async {
@@ -151,7 +152,8 @@ async fn foreground_uses_one_session_and_recovers_without_resubmitting() -> Resu
                     _ => &["exec"],
                 };
                 for step in steps {
-                    let RelayMessage::Incoming { session_id } = net::receive(&mut control).await?
+                    let RelayMessage::Incoming { session_id } =
+                        control_message(&mut control).await?
                     else {
                         bail!("incoming session")
                     };
@@ -169,17 +171,15 @@ async fn foreground_uses_one_session_and_recovers_without_resubmitting() -> Resu
                         RelayMessage::Connected { .. }
                     ));
                     let (mut ws, cert) = secure::server(outer, &lab.target_identity).await?;
-                    secure::exchange_server(
+                    let (_, _, _, purpose) = secure::exchange_server(
                         &mut ws,
                         &cache,
                         network,
                         &cert.context("certificate")?,
                     )
                     .await?;
-                    assert!(matches!(
-                        net::receive(&mut ws).await?,
-                        secure::Purpose::Execute
-                    ));
+
+                    assert!(matches!(purpose, secure::Purpose::Execute));
                     net::send(
                         &mut ws,
                         &Data::Ready {
@@ -365,11 +365,11 @@ async fn differing_release_and_optional_metadata_do_not_prevent_a_negotiated_ope
             &format!("/networks/{network}/control"),
         )
         .await?;
-        let RelayMessage::HelloAck { generation } = net::receive(&mut control).await? else {
+        let RelayMessage::HelloAck { generation } = control_message(&mut control).await? else {
             bail!("hello")
         };
         let peer = async {
-            let RelayMessage::Incoming { session_id } = net::receive(&mut control).await? else {
+            let RelayMessage::Incoming { session_id } = control_message(&mut control).await? else {
                 bail!("incoming")
             };
             let outer = net::websocket_at(
@@ -396,14 +396,11 @@ async fn differing_release_and_optional_metadata_do_not_prevent_a_negotiated_ope
                 exchange["protocol"],
                 serde_json::to_value(xrun::protocol::ProtocolRange::CURRENT)?
             );
-            assert!(matches!(
-                net::receive(&mut socket).await?,
-                secure::Purpose::Execute
-            ));
+            assert_eq!(exchange["purpose"]["purpose"], "execute");
             net::send(
                 &mut socket,
                 &serde_json::json!({
-                    "version":"future-release", "protocol":{"min":1,"max":2}, "roster":roster,
+                    "version":"future-release", "protocol":{"min":5,"max":5}, "digest":roster_digest(&roster)?, "roster":null, "lease":null,
                     "diagnostic":"safe optional metadata",
                 }),
             )
@@ -411,8 +408,8 @@ async fn differing_release_and_optional_metadata_do_not_prevent_a_negotiated_ope
             net::send(
                 &mut socket,
                 &serde_json::json!({
-                    "type":"ready", "version":"future-release", "protocol":{"min":1,"max":2},
-                    "selected_protocol":2, "device_id":lab.target_identity.device_id,
+                    "type":"ready", "version":"future-release", "protocol":{"min":5,"max":5},
+                    "selected_protocol":5, "device_id":lab.target_identity.device_id,
                     "db_id":"test-db", "default_cwd":lab.target.to_string_lossy(),
                     "diagnostic":"safe optional metadata",
                 }),
@@ -457,20 +454,20 @@ async fn pipelined_purpose_never_sends_execution_before_handshake_acceptance() -
         let network = &lab.target_identity.network.as_ref().unwrap().network_id;
         let roster = RosterCache::open(&lab.target.join(".xrun/roster.db"))?.load(network)?;
         let mut control = relay_socket(Some(&lab.target_identity), &roster, &format!("/networks/{network}/control")).await?;
-        let RelayMessage::HelloAck { generation } = net::receive(&mut control).await? else { bail!("control acknowledgement") };
+        let RelayMessage::HelloAck { generation } = control_message(&mut control).await? else { bail!("control acknowledgement") };
         let failures = ["protocol", "signature", "ready-protocol", "ready-identity", "denied", "revoked"];
         let peer = async {
             for failure in failures {
-                let RelayMessage::Incoming { session_id } = net::receive(&mut control).await? else { bail!("incoming session") };
+                let RelayMessage::Incoming { session_id } = control_message(&mut control).await? else { bail!("incoming session") };
                 let mut outer = net::websocket_at(&roster.roster.relay_addresses[0], &format!("/networks/{network}/attach/{}/{generation}/{session_id}", lab.target_identity.device_id), crypto::relay_tls_config(&roster.roster.relay_ca_pem)?).await?;
                 assert!(matches!(net::receive(&mut outer).await?, RelayMessage::Connected { .. }));
                 let (mut ws, cert) = secure::server(outer, &lab.target_identity).await?;
                 roster.peer(&cert.context("certificate")?, Some(&lab.source_identity.device_id))?;
                 let exchange: serde_json::Value = net::receive(&mut ws).await?;
                 assert_eq!(exchange["version"], VERSION);
-                // Receiving Purpose before sending our roster proves there is
-                // no extra round trip. It must be the only pipelined message.
-                assert!(matches!(net::receive(&mut ws).await?, secure::Purpose::Execute));
+                // Purpose is carried in the digest offer. No execution bytes
+                // are sent until the signed response and Ready are accepted.
+                assert_eq!(exchange["purpose"]["purpose"], "execute");
                 assert!(tokio::time::timeout(Duration::from_millis(50), net::receive::<Data>(&mut ws)).await.is_err());
                 let mut sent_roster = roster.clone();
                 if failure == "signature" { sent_roster.roster.version += 1; }
@@ -478,8 +475,10 @@ async fn pipelined_purpose_never_sends_execution_before_handshake_acceptance() -
                     sent_roster = Manager::open(&lab.source.join(".xrun/manager"))?.revoke("target1")?;
                 }
                 let future = xrun::protocol::PROTOCOL + 1;
-                net::send(&mut ws, &serde_json::json!({ "version": "future-release", "protocol": { "min": if failure == "protocol" { future } else { 1 }, "max": future }, "roster": sent_roster })).await?;
+                net::send(&mut ws, &serde_json::json!({ "version": "future-release", "protocol": { "min": if failure == "protocol" { future } else { PROTOCOL }, "max": future }, "digest": roster_digest(&sent_roster)?, "roster": sent_roster, "lease": null })).await?;
                 if failure.starts_with("ready-") || failure == "denied" {
+                    let full: xrun::testing::membership::SignedRoster = net::receive(&mut ws).await?;
+                    assert_eq!(exchange["digest"], roster_digest(&full)?);
                     // Even a valid roster does not permit sending Exec before Ready.
                     assert!(tokio::time::timeout(Duration::from_millis(50), net::receive::<Data>(&mut ws)).await.is_err());
                     let response = if failure == "denied" {
@@ -504,4 +503,11 @@ async fn pipelined_purpose_never_sends_execution_before_handshake_acceptance() -
         tokio::try_join!(peer, commands)?;
         Ok::<_, anyhow::Error>(())
     }).await?
+}
+
+fn roster_digest(roster: &xrun::testing::membership::SignedRoster) -> Result<serde_json::Value> {
+    Ok(
+        serde_json::json!({"authority_generation": roster.roster.authority_generation,
+        "version": roster.roster.version, "hash": roster.hash()?}),
+    )
 }

@@ -372,27 +372,88 @@ pub(crate) async fn server_with_flow(
     let ws = encrypted_websocket(tls, Role::Server, relay).await;
     Ok((ws, peer))
 }
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RosterDigest {
+    authority_generation: u64,
+    version: u64,
+    hash: String,
+}
+impl RosterDigest {
+    fn of(roster: &SignedRoster) -> Result<Self> {
+        Ok(Self {
+            authority_generation: roster.roster.authority_generation,
+            version: roster.roster.version,
+            hash: roster.hash()?,
+        })
+    }
+    fn matches(&self, roster: &SignedRoster) -> Result<bool> {
+        Ok(
+            self.authority_generation == roster.roster.authority_generation
+                && self.version == roster.roster.version
+                && self.hash == roster.hash()?,
+        )
+    }
+    fn require(&self, roster: &SignedRoster) -> Result<()> {
+        if !self.matches(roster)? {
+            bail!(ErrorCode::RosterConflict.error("roster differs from its advertised digest"));
+        }
+        Ok(())
+    }
+}
 #[derive(Serialize, Deserialize)]
-struct RosterExchange {
+struct RosterHello {
     version: String,
     protocol: ProtocolRange,
-    roster: SignedRoster,
+    digest: RosterDigest,
     lease: Option<crate::membership::SignedLease>,
+    purpose: Purpose,
 }
-async fn receive_roster(ws: &mut Ws) -> Result<RosterExchange> {
+#[derive(Serialize, Deserialize)]
+struct RosterReply {
+    version: String,
+    protocol: ProtocolRange,
+    digest: RosterDigest,
+    lease: Option<crate::membership::SignedLease>,
+    roster: Option<SignedRoster>,
+}
+async fn receive_exchange<T: serde::de::DeserializeOwned>(ws: &mut Ws) -> Result<T> {
     let value: serde_json::Value = net::receive(ws).await?;
     if let Ok(Data::Error { code, message }) = serde_json::from_value(value.clone()) {
-        bail!(crate::error::CodedError::from_wire(code, message))
+        bail!(crate::error::CodedError::from_wire(code, message));
     }
     Ok(serde_json::from_value(value)?)
 }
-fn observe(cache: &RosterCache, network: &str, next: &SignedRoster) -> Result<()> {
-    match cache.observe(network, next) {
-        Ok(()) => Ok(()),
-        // An authenticated peer may legitimately be behind. We keep our higher
-        // version and validate its identity against that version below.
+fn snapshot(
+    cache: &RosterCache,
+    network: &str,
+) -> Result<(SignedRoster, Option<crate::membership::SignedLease>)> {
+    if let Some(authority) = cache.authority(network)? {
+        Ok((authority.roster, Some(authority.lease)))
+    } else {
+        Ok((cache.load(network)?, None))
+    }
+}
+fn observe_exchange(
+    cache: &RosterCache,
+    network: &str,
+    roster: &SignedRoster,
+    lease: Option<crate::membership::SignedLease>,
+) -> Result<()> {
+    let result = if let Some(lease) = lease {
+        cache.observe_authority(
+            network,
+            &crate::membership::AuthorityState {
+                roster: roster.clone(),
+                lease,
+            },
+        )
+    } else {
+        cache.observe(network, roster)
+    };
+    match result {
         Err(error) if crate::error::is(&error, ErrorCode::RosterRollback) => Ok(()),
-        Err(error) => Err(error),
+        other => other,
     }
 }
 pub async fn exchange_client(
@@ -403,36 +464,36 @@ pub async fn exchange_client(
     target: &str,
     purpose: &Purpose,
 ) -> Result<SignedRoster> {
-    let roster = cache.load(network)?;
+    let (roster, lease) = snapshot(cache, network)?;
     net::send(
         ws,
-        &RosterExchange {
+        &RosterHello {
             version: VERSION.into(),
             protocol: ProtocolRange::CURRENT,
-            roster,
-            lease: cache.authority(network)?.map(|state| state.lease),
+            digest: RosterDigest::of(&roster)?,
+            lease,
+            purpose: purpose.clone(),
         },
     )
     .await?;
-    // Purpose carries no command or input. Pipeline it with our roster; the
-    // caller still waits for verified peer state and Ready before any request.
-    net::send(ws, purpose).await?;
-    let peer = receive_roster(ws).await?;
+    let peer: RosterReply = receive_exchange(ws).await?;
     ProtocolRange::CURRENT.negotiate(peer.protocol)?;
-    observe(cache, network, &peer.roster)?;
-    if let Some(lease) = peer.lease {
-        match cache.observe_authority(
-            network,
-            &crate::membership::AuthorityState {
-                roster: peer.roster.clone(),
-                lease,
-            },
-        ) {
-            Ok(()) => {}
-            Err(error) if crate::error::is(&error, ErrorCode::RosterRollback) => {}
-            Err(error) => return Err(error),
+    let peer_roster = match peer.roster {
+        Some(peer_roster) => {
+            peer.digest.require(&peer_roster)?;
+            observe_exchange(cache, network, &peer_roster, peer.lease)?;
+            // Send the frozen offer, not a newer cache state adopted from the reply.
+            // This prevents a hash/lease from being spliced onto another roster.
+            net::send(ws, &roster).await?;
+            peer_roster
         }
-    }
+        None => {
+            peer.digest.require(&roster)?;
+            observe_exchange(cache, network, &roster, peer.lease)?;
+            roster
+        }
+    };
+    peer_roster.verify(network)?;
     let current = cache.load(network)?;
     current.peer(cert, Some(target))?;
     Ok(current)
@@ -442,39 +503,37 @@ pub async fn exchange_server(
     cache: &RosterCache,
     network: &str,
     cert: &[u8],
-) -> Result<(SignedRoster, String, u32)> {
-    let peer = receive_roster(ws).await?;
+) -> Result<(SignedRoster, String, u32, Purpose)> {
+    let peer: RosterHello = receive_exchange(ws).await?;
     let selected = ProtocolRange::CURRENT.negotiate(peer.protocol)?;
-    observe(cache, network, &peer.roster)?;
-    if let Some(lease) = peer.lease {
-        match cache.observe_authority(
-            network,
-            &crate::membership::AuthorityState {
-                roster: peer.roster.clone(),
-                lease,
-            },
-        ) {
-            Ok(()) => {}
-            Err(error) if crate::error::is(&error, ErrorCode::RosterRollback) => {}
-            Err(error) => return Err(error),
-        }
-    }
-    let current = cache.load(network)?;
-    let source = current.peer(cert, None)?.device_id.clone();
+    let (current, lease) = snapshot(cache, network)?;
+    let mismatch = !peer.digest.matches(&current)?;
     net::send(
         ws,
-        &RosterExchange {
+        &RosterReply {
             version: VERSION.into(),
             protocol: ProtocolRange::CURRENT,
-            roster: current.clone(),
-            lease: cache.authority(network)?.map(|state| state.lease),
+            digest: RosterDigest::of(&current)?,
+            lease,
+            roster: mismatch.then(|| current.clone()),
         },
     )
     .await?;
-    Ok((current, source, selected))
+    let offered = if mismatch {
+        let full: SignedRoster = receive_exchange(ws).await?;
+        peer.digest.require(&full)?;
+        full
+    } else {
+        current
+    };
+    // A matching hash only selects the verified local cache. It grants no trust.
+    observe_exchange(cache, network, &offered, peer.lease)?;
+    let current = cache.load(network)?;
+    let source = current.peer(cert, None)?.device_id.clone();
+    Ok((current, source, selected, peer.purpose))
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "purpose", rename_all = "snake_case")]
 pub enum Purpose {
     Execute,
@@ -503,6 +562,66 @@ mod flow_tests {
             )
             .await,
         )
+    }
+
+    #[tokio::test]
+    async fn equal_verified_digests_exchange_no_member_list_and_conflicts_fail_closed() -> Result<()>
+    {
+        let dir = tempfile::tempdir()?;
+        let (manager, _, _, cert) = membership::Manager::create(
+            &dir.path().join("manager"),
+            "manager1",
+            vec!["https://relay.example.com".into()],
+            String::new(),
+        )?;
+        for index in 0..64 {
+            let (_, csr) = crypto::new_device_request()?;
+            manager.pair(&manager.invite(false)?, &format!("node-{index}"), &csr)?;
+        }
+        let authority = manager.authority_state(crate::membership::DEFAULT_LEASE_MS)?;
+        let network = &authority.roster.roster.network_id;
+        let cache = RosterCache::open(&dir.path().join("roster.db"))?;
+        cache.observe_authority(network, &authority)?;
+        assert!(serde_json::to_vec(&authority.roster)?.len() > 10_000);
+        let cert = crypto::cert_der(&cert)?;
+        for conflict in [false, true] {
+            let (mut client, mut server) = wire().await;
+            let target = authority.roster.roster.manager_id.clone();
+            let exchange = exchange_client(
+                &mut client,
+                &cache,
+                network,
+                &cert,
+                &target,
+                &Purpose::State,
+            );
+            let peer = async {
+                let value: serde_json::Value = net::receive(&mut server).await?;
+                assert!(value.get("roster").is_none());
+                assert!(serde_json::to_vec(&value)?.len() < 1400);
+                let mut digest = RosterDigest::of(&authority.roster)?;
+                if conflict {
+                    digest.hash = "0".repeat(64);
+                }
+                net::send(
+                    &mut server,
+                    &RosterReply {
+                        version: VERSION.into(),
+                        protocol: ProtocolRange::CURRENT,
+                        digest,
+                        lease: Some(authority.lease.clone()),
+                        roster: None,
+                    },
+                )
+                .await?;
+                Ok::<_, anyhow::Error>(())
+            };
+            let (result, sent) = tokio::join!(exchange, peer);
+            sent?;
+            assert_eq!(result.is_err(), conflict);
+            assert_eq!(cache.load(network)?.hash()?, authority.roster.hash()?);
+        }
+        Ok(())
     }
 
     #[tokio::test]

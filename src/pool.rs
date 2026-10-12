@@ -42,7 +42,11 @@ fn binding(id: &Identity) -> Result<String> {
         format!(
             "{}\0{}",
             ipc::identity_binding(id),
-            serde_json::to_string(&roster)?
+            serde_json::to_string(&(
+                roster.roster.authority_generation,
+                &roster.roster.relay_addresses,
+                &roster.roster.relay_ca_pem
+            ))?
         )
         .as_bytes(),
     ))
@@ -117,7 +121,19 @@ impl Pool {
                     },
                 )
                 .await?;
-                let value = net::receive::<Data>(&mut cached.ws).await?;
+                let mut value = net::receive::<Data>(&mut cached.ws).await?;
+                if let Data::Membership {
+                    roster: update,
+                    lease,
+                } = value
+                {
+                    let roster = update.unwrap_or(network::current(id)?);
+                    network::observe_authority(
+                        id,
+                        &crate::membership::AuthorityState { roster, lease },
+                    )?;
+                    value = net::receive::<Data>(&mut cached.ws).await?;
+                }
                 ready(&value, target)?;
                 Ok::<_, anyhow::Error>(value)
             })

@@ -342,11 +342,17 @@ pub enum Request {
 #[serde(tag = "type", rename_all = "snake_case")]
 /// Endpoint request/response messages; Complete bounds one cached-session operation.
 pub enum Data {
-    /// Checks a cached session before sending an operation. A roster change
-    /// requires a new authenticated exchange.
+    /// Checks current grants, membership freshness and storage before another operation.
     SessionProbe {
-        /// Accepted signed roster version.
+        /// Caller's verified version, used to select a full update only on mismatch.
         roster_version: u64,
+    },
+    /// Verified membership renewal on a cached pair, before its Ready response.
+    Membership {
+        /// Complete signed list only when the caller's version differs.
+        roster: Option<crate::membership::SignedRoster>,
+        /// Root-signed freshness bound to the current list's canonical hash.
+        lease: SignedLease,
     },
     /// All response frames for this request have been sent.
     Complete,

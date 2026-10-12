@@ -29,13 +29,11 @@ pub(super) async fn data_session(
     .await??;
     let result = if let Some(certificate) = certificate {
         async {
-            let (_, source, protocol) = tokio::time::timeout(
+            let (_, source, protocol, purpose) = tokio::time::timeout(
                 CONNECT_TIMEOUT,
                 secure::exchange_server(&mut ws, &rt.members, &rt.network_id, &certificate),
             )
             .await??;
-            let purpose: secure::Purpose =
-                tokio::time::timeout(CONNECT_TIMEOUT, net::receive(&mut ws)).await??;
             if matches!(purpose, secure::Purpose::State) {
                 let state = network::PeerState {
                     device: network::local_device(&id, rt.cwd()?.to_string_lossy().into())?,
@@ -53,7 +51,7 @@ pub(super) async fn data_session(
                 .min(crate::crypto::certificate_expiry(&id.cert_pem)?)
                 .min(crate::crypto::certificate_expiry(&id.ca_pem)?);
             let lease = AccessLease { source: &source, generation, identity: &id, expiry,
-                authority_generation: rt.authorization()?.roster.roster.authority_generation };
+                authority_generation: rt.members.load(&rt.network_id)?.roster.authority_generation };
             send_ready(&rt, &mut ws, protocol).await?;
             let mut stop = rt.stop.subscribe();
             loop {
@@ -66,9 +64,14 @@ pub(super) async fn data_session(
                 rt.check_session(&source, generation)?;
                 lease.check(&rt)?;
                 if let Data::SessionProbe { roster_version } = req {
-                    if rt.members.load(&rt.network_id)?.roster.version != roster_version {
-                        bail!(ErrorCode::MembershipChanged.error("renew the authenticated connection"));
-                    }
+                    // Current peer membership, authority generation, freshness
+                    // and grants were checked above. Other members changing
+                    // does not invalidate this already authenticated pair.
+                    let current = rt.members.require_fresh(&rt.network_id, now_ms())?;
+                    net::send(&mut ws, &Data::Membership {
+                        roster: (roster_version != current.roster.roster.version).then_some(current.roster),
+                        lease: current.lease,
+                    }).await?;
                     send_ready(&rt, &mut ws, protocol).await?;
                     continue;
                 }
@@ -135,7 +138,8 @@ struct AccessLease<'a> {
 impl AccessLease<'_> {
     fn check(&self, rt: &Runtime) -> Result<()> {
         rt.check_session(self.source, self.generation)?;
-        if rt.authorization()?.roster.roster.authority_generation != self.authority_generation {
+        if rt.members.load(&rt.network_id)?.roster.authority_generation != self.authority_generation
+        {
             bail!(
                 ErrorCode::MembershipChanged
                     .error("management generation changed; renew the connection")

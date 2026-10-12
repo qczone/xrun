@@ -361,7 +361,7 @@ async fn device_operations_connect_directly_while_info_still_queries_live_state(
                     RelayMessage::Connected { .. }
                 ));
                 let (mut ws, certificate) = secure::server(outer, &lab.target_identity).await?;
-                let (_, source, _) = secure::exchange_server(
+                let (_, source, _, purpose) = secure::exchange_server(
                     &mut ws,
                     &cache,
                     network,
@@ -369,7 +369,6 @@ async fn device_operations_connect_directly_while_info_still_queries_live_state(
                 )
                 .await?;
                 assert_eq!(source, lab.source_identity.device_id);
-                let purpose: secure::Purpose = net::receive(&mut ws).await?;
                 assert_eq!(
                     matches!(purpose, secure::Purpose::State),
                     state_query,
