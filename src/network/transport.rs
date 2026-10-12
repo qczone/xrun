@@ -266,7 +266,7 @@ pub(crate) async fn session_with_expiry(id: &Identity, target: &str) -> Result<(
     if roster.member(target)?.revoked {
         bail!(ErrorCode::DeviceRevoked.error("target has been revoked"))
     }
-    peer_session(id, target, &roster, secure::Purpose::Execute).await
+    Box::pin(peer_session(id, target, &roster, secure::Purpose::Execute)).await
 }
 
 pub(crate) async fn channel(id: &Identity, target: &str) -> Result<(Ws, String, i64)> {
@@ -291,7 +291,7 @@ pub(crate) async fn channel(id: &Identity, target: &str) -> Result<(Ws, String, 
             }
         }
     }
-    let result = peer_session(id, target, &roster, secure::Purpose::Channel).await?;
+    let result = Box::pin(peer_session(id, target, &roster, secure::Purpose::Channel)).await?;
     record_route(target, "relay")?;
     Ok(result)
 }

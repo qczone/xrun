@@ -82,7 +82,7 @@ pub(super) async fn run(cli: DeviceCli) -> Result<i32> {
     let target_name = target.name.clone();
     let target = &target.device_id;
     match cli.command {
-        Remote::Run(e) if e.interactive => execution::stream(&id, target, e).await,
+        Remote::Run(e) if e.interactive => Box::pin(execution::stream(&id, target, e)).await,
         Remote::Run(e) => {
             Box::pin(execution::run(
                 &id,
@@ -123,14 +123,31 @@ pub(super) async fn run(cli: DeviceCli) -> Result<i32> {
             });
             Ok(0)
         }
-        Remote::Forward { ports } => forward::run(id, target, ports, json).await,
+        Remote::Forward { ports } => Box::pin(forward::run(id, target, ports, json)).await,
         command @ (Remote::Jobs { .. }
         | Remote::Wait { .. }
         | Remote::Logs { .. }
-        | Remote::Kill { .. }) => jobs::run(&id, target, &target_name, command, json).await,
+        | Remote::Kill { .. }) => {
+            Box::pin(jobs::run(&id, target, &target_name, command, json)).await
+        }
         command @ (Remote::Push { .. }
         | Remote::Pull { .. }
         | Remote::Resume { .. }
-        | Remote::Screenshot { .. }) => files::run(&id, target, command, json).await,
+        | Remote::Screenshot { .. }) => Box::pin(files::run(&id, target, command, json)).await,
+    }
+}
+
+#[cfg(test)]
+mod stack_tests {
+    #[test]
+    fn remote_dispatch_keeps_command_futures_out_of_the_entry_frame() {
+        fn size<F>(_: impl FnOnce(super::DeviceCli) -> F) -> usize {
+            std::mem::size_of::<F>()
+        }
+        let bytes = size(super::run);
+        assert!(
+            bytes <= 16 * 1024,
+            "remote command dispatch future is {bytes} bytes"
+        );
     }
 }

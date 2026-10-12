@@ -285,12 +285,12 @@ pub(crate) async fn client_with_flow(
     target: &str,
     flow_control: bool,
 ) -> Result<(Ws, Vec<u8>)> {
-    let (tls, certificate) = connect_tls(
+    let (tls, certificate) = Box::pin(connect_tls(
         outer,
         crypto::client_tls_config(identity)?,
         target,
         flow_control,
-    )
+    ))
     .await?;
     let relay = tls.get_ref().0.relay.clone();
     Ok((

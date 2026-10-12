@@ -29,10 +29,10 @@ struct SubmissionBinding {
 }
 impl Session {
     pub(crate) async fn open(id: &Identity, target: &str) -> Result<Self> {
-        let mut session = if let Some(ws) = crate::ipc::connect(id, target).await? {
+        let mut session = if let Some(ws) = Box::pin(crate::ipc::connect(id, target)).await? {
             Self::ready(ws, target, true).await?
         } else {
-            let (ws, _) = crate::network::session(id, target).await?;
+            let (ws, _) = Box::pin(crate::network::session(id, target)).await?;
             Self::ready(ws, target, false).await?
         };
         session.binding = Some(SubmissionBinding {
