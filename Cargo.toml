@@ -30,6 +30,7 @@ hex = "0.4.3"
 hyper = { version = "1.12.0", features = ["server", "http1"] }
 hyper-util = { version = "0.1.21", features = ["tokio", "service"] }
 libc = "0.2.190"
+notify = "8.2.0"
 png = "0.18"
 rcgen = { version = "0.14.10", features = ["x509-parser"] }
 reqwest = { version = "0.13.5", default-features = false, features = ["json", "rustls"] }

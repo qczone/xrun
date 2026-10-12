@@ -6,13 +6,46 @@ use crate::{
     membership::SignedRoster,
 };
 use anyhow::{Result, bail};
+use notify::{EventKind, RecommendedWatcher, RecursiveMode, Watcher};
 use std::{
     path::{Path, PathBuf},
     sync::Arc,
     time::{Duration, SystemTime},
 };
 
-const ACCESS_SCAN_INTERVAL: Duration = Duration::from_millis(100);
+const ACCESS_SCAN_INTERVAL: Duration = Duration::from_secs(2);
+const CHANGE_DEBOUNCE: Duration = Duration::from_millis(60);
+
+fn watch_directory(
+    dir: &Path,
+    changes: tokio::sync::mpsc::Sender<()>,
+) -> notify::Result<RecommendedWatcher> {
+    let mut watcher = notify::recommended_watcher(move |event: notify::Result<notify::Event>| {
+        let relevant = match event {
+            Ok(event) => {
+                !matches!(event.kind, EventKind::Access(_))
+                    && event.paths.iter().any(|path| {
+                        path.file_name().is_some_and(|name| {
+                            ["daemon.toml", "identity.toml", "roster.db", "roster.db-wal"]
+                                .iter()
+                                .any(|candidate| name == *candidate)
+                        }) || matches!(event.kind, EventKind::Remove(_)) && path.is_dir()
+                    })
+            }
+            Err(error) => {
+                tracing::warn!(%error, "authorization watcher failed; polling remains enabled");
+                true
+            }
+        };
+        if relevant {
+            // One queued signal coalesces editor writes, WAL changes and renames.
+            let _ = changes.try_send(());
+        }
+    })?;
+    // Watch the directory, not the old inode replaced by atomic_private_write.
+    watcher.watch(dir, RecursiveMode::NonRecursive)?;
+    Ok(watcher)
+}
 
 #[derive(Clone)]
 pub(super) struct Authorization {
@@ -101,12 +134,28 @@ pub(super) async fn monitor(rt: Arc<Runtime>, dir: PathBuf) -> Result<()> {
     let mut interval = tokio::time::interval(ACCESS_SCAN_INTERVAL);
     let mut roster_changes = rt.members.subscribe();
     let mut reloads = rt.control.reload_requests();
+    let (notify, mut file_changes) = tokio::sync::mpsc::channel(1);
+    let _watcher = watch_directory(&dir, notify)
+        .map_err(|error| {
+            tracing::warn!(%error, "authorization watcher unavailable; polling remains enabled");
+            error
+        })
+        .ok();
+    let mut debounce = None;
     loop {
+        let deadline =
+            debounce.unwrap_or_else(|| tokio::time::Instant::now() + ACCESS_SCAN_INTERVAL);
         let reply = tokio::select! {
             _ = interval.tick() => None,
             _ = roster_changes.changed() => None,
             reply = reloads.recv() => reply,
+            Some(()) = file_changes.recv() => {
+                debounce.get_or_insert_with(|| tokio::time::Instant::now() + CHANGE_DEBOUNCE);
+                continue;
+            },
+            _ = tokio::time::sleep_until(deadline), if debounce.is_some() => None,
         };
+        debounce = None;
         let result = refresh(rt.clone(), dir.clone(), reply.is_some()).await;
         if let Some(reply) = reply {
             let _ = reply.send(result);
@@ -147,6 +196,23 @@ impl Runtime {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn parent_watcher_observes_atomic_replacements_without_watching_old_inodes() -> Result<()>
+    {
+        let dir = tempfile::tempdir()?;
+        let path = dir.path().join("daemon.toml");
+        crate::config::atomic_private_write(&path, b"first")?;
+        let (sender, mut changes) = tokio::sync::mpsc::channel(1);
+        let _watcher = watch_directory(dir.path(), sender)?;
+        for bytes in [b"other", b"third"] {
+            crate::config::atomic_private_write(&path, bytes)?;
+            tokio::time::timeout(Duration::from_secs(4), changes.recv())
+                .await?
+                .ok_or_else(|| anyhow::anyhow!("watcher closed"))?;
+        }
+        Ok(())
+    }
 
     #[test]
     fn fingerprint_detects_replacement_with_equal_length_and_timestamps() -> Result<()> {
