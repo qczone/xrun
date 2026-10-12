@@ -139,8 +139,10 @@ async fn control_once(
             },
             _ = changes.changed() => {
                 check_control_access(&rt, &address)?;
-                publish_authority(&rt, &mut ws).await?;
-                leases.reset_after(Duration::from_secs(u64::from(rt.config()?.membership_lease_minutes) * 20));
+                if let Ok(config) = rt.config() {
+                    publish_authority(&rt, &mut ws).await?;
+                    leases.reset_after(Duration::from_secs(u64::from(config.membership_lease_minutes) * 20));
+                }
             },
             _ = leases.tick() => publish_authority(&rt, &mut ws).await?,
             _ = ping.tick() => { rt.control.invitations.prune(); heartbeat(&mut ws, last).await?; },
@@ -150,10 +152,13 @@ async fn control_once(
     }
 }
 async fn publish_authority(rt: &Runtime, ws: &mut net::Ws) -> Result<()> {
-    let id = Identity::load()?;
-    if network::current(&id)?.roster.manager_id == id.device_id {
-        let state = network::manager(&id)?
-            .authority_state(i64::from(rt.config()?.membership_lease_minutes) * 60_000)?;
+    let Ok(access) = rt.authorization() else {
+        return Ok(());
+    };
+    let id = &access.identity;
+    if network::current(id)?.roster.manager_id == id.device_id {
+        let state = network::manager(id)?
+            .authority_state(i64::from(access.config.membership_lease_minutes) * 60_000)?;
         rt.members.observe_authority(&rt.network_id, &state)?;
         net::send(ws, &RelayMessage::Authority { state }).await?;
     }

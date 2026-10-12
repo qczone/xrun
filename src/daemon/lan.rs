@@ -19,7 +19,23 @@ pub(super) async fn run(rt: Arc<Runtime>) -> Result<()> {
     let mut tasks = tokio::task::JoinSet::new();
     let mut interfaces = tokio::time::interval(std::time::Duration::from_secs(5));
     loop {
-        let config = rt.config()?;
+        let config = match rt.config() {
+            Ok(config) => config,
+            Err(error) => {
+                // Invalid access snapshots deny remote operations, but the local
+                // reload/stop IPC must stay alive so a corrected file can recover.
+                tracing::debug!(%error, "direct listener disabled until authorization recovers");
+                listener = None;
+                selected = None;
+                lan::advertise(None);
+                tasks.abort_all();
+                tokio::select! {
+                    result = changes.changed() => { if result.is_err() { break; } },
+                    _ = stop.changed() => break,
+                }
+                continue;
+            }
+        };
         let interface = if config.remote_access_paused {
             None
         } else {
