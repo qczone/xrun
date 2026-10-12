@@ -1,4 +1,5 @@
 mod connection;
+mod logs;
 use crate::error::ErrorCode;
 use crate::{
     config::{Identity, atomic_private_write, device_dir},
@@ -9,6 +10,7 @@ use anyhow::{Context, Result, bail};
 pub use connection::SocketIo;
 pub(crate) use connection::{CacheControl, CacheRequest, RelayContext, cache_state};
 use futures_util::{SinkExt, StreamExt};
+pub use logs::send_logs;
 use serde::{Serialize, de::DeserializeOwned};
 use sha2::{Digest, Sha256};
 use std::sync::Arc;
@@ -167,7 +169,16 @@ pub async fn receive<T: DeserializeOwned>(ws: &mut Ws) -> Result<T> {
             .await
             .context(ErrorCode::ConnectionClosed.error("peer closed connection"))??
         {
-            Message::Text(s) => return Ok(serde_json::from_str(&s)?),
+            Message::Text(s) => {
+                if logs::update(ws.get_mut(), &s)? {
+                    continue;
+                }
+                return Ok(serde_json::from_str(&s)?);
+            }
+            Message::Binary(bytes) => {
+                let value = logs::receive(ws.get_mut(), &bytes)?;
+                return Ok(serde_json::from_value(serde_json::to_value(value)?)?);
+            }
             Message::Ping(bytes) => ws.send(Message::Pong(bytes)).await?,
             Message::Pong(_) => {}
             Message::Close(_) => bail!(ErrorCode::ConnectionClosed.error("peer closed connection")),

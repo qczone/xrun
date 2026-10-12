@@ -19,6 +19,7 @@ pub(super) async fn serve(
     ws: &mut Ws,
     request: Request,
 ) -> Result<()> {
+    ws.get_mut().logs.reset_sender();
     match request {
         Request::Exec {
             execution,
@@ -154,6 +155,10 @@ async fn follow(
         } else {
             vec![]
         };
+        // A writer may append between the job snapshot and the row query.
+        // Publish only sequences covered by this snapshot; the next iteration
+        // observes the later state without pairing output with stale metadata.
+        events.retain(|event| event.seq <= job.last_log_seq);
         if let Some(last) = snapshot {
             events.retain(|e| e.seq <= last);
         }
@@ -198,35 +203,5 @@ async fn follow(
 }
 
 async fn send_logs(ws: &mut Ws, events: Vec<LogEvent>, job: &Job) -> Result<()> {
-    let overhead = serde_json::to_vec(&Data::Logs {
-        events: vec![],
-        job: job.clone(),
-    })?
-    .len();
-    let mut bytes = overhead;
-    let mut batch = vec![];
-    for event in events {
-        let size = serde_json::to_vec(&event)?.len() + 1;
-        if !batch.is_empty() && (bytes + size > MAX_MESSAGE || batch.len() == 16) {
-            net::send(
-                ws,
-                &Data::Logs {
-                    events: std::mem::take(&mut batch),
-                    job: job.clone(),
-                },
-            )
-            .await?;
-            bytes = overhead;
-        }
-        bytes += size;
-        batch.push(event);
-    }
-    net::send(
-        ws,
-        &Data::Logs {
-            events: batch,
-            job: job.clone(),
-        },
-    )
-    .await
+    net::send_logs(ws, events, job).await
 }

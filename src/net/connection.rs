@@ -15,14 +15,23 @@ use tokio::{
 pub struct SocketIo {
     inner: Io,
     pub(crate) relay: Option<RelayContext>,
+    pub(crate) logs: super::logs::LogState,
 }
 impl SocketIo {
     /// Wrap a local or encrypted stream without assuming a relay protocol.
     pub fn new(inner: Io) -> Self {
-        Self { inner, relay: None }
+        Self {
+            inner,
+            relay: None,
+            logs: Default::default(),
+        }
     }
     pub(crate) fn with_relay(inner: Io, relay: Option<RelayContext>) -> Self {
-        Self { inner, relay }
+        Self {
+            inner,
+            relay,
+            logs: Default::default(),
+        }
     }
 }
 impl AsyncRead for SocketIo {

@@ -385,6 +385,20 @@ pub enum Data {
         /// Task snapshot associated with the response.
         job: Job,
     },
+    /// Initial log-subscription snapshot, consumed by the transport adapter.
+    LogSnapshot {
+        /// Immutable intent and initial mutable state.
+        job: Job,
+    },
+    /// Changed mutable fields only; immutable intent cannot be replaced.
+    LogUpdate {
+        /// Job this update belongs to.
+        job_id: String,
+        /// Target database generation.
+        db_id: String,
+        /// Only changed mutable fields, including explicit null values.
+        fields: std::collections::BTreeMap<String, serde_json::Value>,
+    },
     /// Admission result for a connection-bound operation, before any payload.
     Accepted {
         /// Original or freshly accepted job.
@@ -400,7 +414,7 @@ pub enum Data {
         /// Continue the requested page here when its byte budget was reached.
         next_offset: Option<usize>,
     },
-    /// Read sequenced output, optionally following updates.
+    /// Local decoded output view; sent as binary batches rather than JSON.
     Logs {
         /// Sequenced output events, possibly followed by a newer task snapshot.
         events: Vec<LogEvent>,

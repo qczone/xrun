@@ -244,16 +244,14 @@ async fn foreground_uses_one_session_and_recovers_without_resubmitting() -> Resu
                     let mut value = accepted.clone().unwrap();
                     if after == 0 {
                         value.last_log_seq = 1;
-                        net::send(
+                        net::send_logs(
                             &mut ws,
-                            &Data::Logs {
-                                events: vec![LogEvent {
-                                    seq: 1,
-                                    stream: "stdout".into(),
-                                    data_base64: "YmVmb3JlCg==".into(),
-                                }],
-                                job: value.clone(),
-                            },
+                            vec![LogEvent {
+                                seq: 1,
+                                stream: "stdout".into(),
+                                data_base64: "YmVmb3JlCg==".into(),
+                            }],
+                            &value.clone(),
                         )
                         .await?;
                     }
@@ -267,16 +265,14 @@ async fn foreground_uses_one_session_and_recovers_without_resubmitting() -> Resu
                         exit_code: Some(7),
                         ..Default::default()
                     }));
-                    net::send(
+                    net::send_logs(
                         &mut ws,
-                        &Data::Logs {
-                            events: vec![LogEvent {
-                                seq: 2,
-                                stream: "stderr".into(),
-                                data_base64: "YWZ0ZXIK".into(),
-                            }],
-                            job: value,
-                        },
+                        vec![LogEvent {
+                            seq: 2,
+                            stream: "stderr".into(),
+                            data_base64: "YWZ0ZXIK".into(),
+                        }],
+                        &value,
                     )
                     .await?;
                     net::send(&mut ws, &Data::End).await?;
