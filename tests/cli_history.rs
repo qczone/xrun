@@ -210,14 +210,20 @@ async fn status_text_distinguishes_unjoined_paused_revoked_and_unavailable_devic
     let status = ok(cli(&lab.source, &["status"]).await);
     assert!(status.contains("local: source1") && status.contains("daemon: running"));
     assert!(status.contains("relay-connected"));
-    ok(cli(&lab.source, &["allow-from", "--all"]).await);
-    ok(cli(&lab.source, &["daemon", "pause"]).await);
-    let status = ok(cli(&lab.source, &["status"]).await);
+    let denied = cli(&lab.source, &["allow-from", "--all", "--json"]).await;
+    assert!(!denied.status.success());
+    assert_eq!(
+        serde_json::from_slice::<serde_json::Value>(&denied.stderr)?["code"],
+        "MANAGER_PROTECTED"
+    );
+    ok(cli(&lab.target, &["allow-from", "--all"]).await);
+    ok(cli(&lab.target, &["daemon", "pause"]).await);
+    let status = ok(cli(&lab.target, &["status"]).await);
     assert!(
         status.contains("remote access: paused")
             && status.contains("all current and future members")
     );
-    ok(cli(&lab.source, &["daemon", "resume"]).await);
+    ok(cli(&lab.target, &["daemon", "resume"]).await);
     stop_daemon(&lab.target, &mut lab.daemon).await?;
     let status = ok(cli(&lab.source, &["status"]).await);
     assert!(
