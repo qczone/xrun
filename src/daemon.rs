@@ -348,8 +348,7 @@ pub async fn run() -> Result<()> {
     let dir = config::device_dir()?;
     let control = Arc::new(crate::control::Control::new(&dir)?);
     let local_listener = crate::ipc::Listener::bind(&dir)?;
-    let local = crate::pool::run(local_listener, control.clone());
-    tokio::pin!(local);
+    let mut local = Box::pin(crate::pool::run(local_listener, control.clone()));
     let mut id = Identity::load()?;
     if crate::membership::backup::installation_retired(&dir, &id, &network::current(&id)?)? {
         tracing::warn!(
@@ -365,7 +364,11 @@ pub async fn run() -> Result<()> {
             Ok(())
         })?;
     }
-    tokio::select! { result=&mut local=>{return result}, _=net::renew_identity(&mut id)=>{}, result=control.shutdown()=>{result?;return Ok(())} }
+    tokio::select! {
+        result=&mut local=>{return result},
+        _=Box::pin(net::renew_identity(&mut id))=>{},
+        result=control.shutdown()=>{result?;return Ok(())}
+    }
     if !dir.join("daemon.initialized").exists() {
         bail!(ErrorCode::DaemonNotInitialized.error("run daemon install"))
     }
@@ -441,20 +444,18 @@ pub async fn run() -> Result<()> {
         fatal: Mutex::new(None),
         stop,
     });
-    let connector = control_reconnect(rt.clone());
-    tokio::pin!(connector);
-    let sync = membership_sync();
-    tokio::pin!(sync);
+    let mut connector = Box::pin(control_reconnect(rt.clone()));
+    let mut sync = Box::pin(membership_sync());
     let mut stop = rt.stop.subscribe();
-    let access_monitor = access::monitor(rt.clone(), dir);
-    tokio::pin!(access_monitor);
+    let mut access_monitor = Box::pin(access::monitor(rt.clone(), dir));
+    let mut direct = Box::pin(lan::run(rt.clone()));
     let outcome = tokio::select! {
         result=&mut local=>result,
         result=&mut connector=>result,
         result=&mut sync=>result,
         result=&mut access_monitor=>result,
         _=shutdown_signal()=>Ok(()),
-        result=lan::run(rt.clone())=>result,
+        result=&mut direct=>result,
         result=control.shutdown()=>result,
         _=stop.changed()=>Err(rt.storage_failure()),
     };
@@ -508,4 +509,17 @@ async fn finish_tasks(rt: Arc<Runtime>) -> Result<()> {
         bail!(ErrorCode::StorageError.error("accepted tasks have no persisted final result"));
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod stack_tests {
+    #[test]
+    fn daemon_entry_future_fits_the_small_stack_budget() {
+        let future = super::run();
+        assert!(
+            std::mem::size_of_val(&future) <= 16 * 1024,
+            "daemon dispatch embeds oversized background futures: {} bytes",
+            std::mem::size_of_val(&future)
+        );
+    }
 }
