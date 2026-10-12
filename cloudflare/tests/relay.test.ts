@@ -1,12 +1,21 @@
 import { PROTOCOL, PROTOCOL_HEADER } from "../src/protocol";
 import { Socket } from "./socket";
-import { afterAll, beforeAll, expect, test } from "bun:test";
+import {
+  afterAll,
+  afterEach,
+  beforeAll,
+  beforeEach,
+  expect,
+  test,
+} from "bun:test";
 import { Miniflare, convertV4MiniflareOptions } from "miniflare";
 import { randomRoute } from "../src/auth";
-import { fixture, VERSION } from "./fixtures";
+import { fixture as makeFixture, VERSION } from "./fixtures";
+import { RELAY_OBJECT } from "../src/routes";
 const secret = randomRoute();
 let runtime: Miniflare;
 let origin: string;
+let bundleSource: string;
 let gate: ReturnType<typeof Bun.serve>;
 const heldProofs: ((response: Response) => void)[] = [];
 beforeAll(async () => {
@@ -30,10 +39,13 @@ beforeAll(async () => {
   });
   if (!bundle.success)
     throw new AggregateError(bundle.logs, "Could not build relay test fixture");
+  bundleSource = await bundle.outputs[0].text();
+});
+beforeEach(async () => {
   runtime = new Miniflare(
     convertV4MiniflareOptions({
       modules: true,
-      script: await bundle.outputs[0].text(),
+      script: bundleSource,
       compatibilityDate: "2026-10-03",
       durableObjects: { NETWORKS: { className: "TestRelay", useSQLite: true } },
       bindings: {
@@ -46,9 +58,11 @@ beforeAll(async () => {
   );
   origin = (await runtime.ready).origin;
 });
-afterAll(async () => {
+afterEach(async () => {
   for (const resolve of heldProofs.splice(0)) resolve(new Response("released"));
   await runtime?.dispose();
+});
+afterAll(() => {
   gate?.stop(true);
 });
 async function open(path: string): Promise<Socket> {
@@ -79,9 +93,9 @@ async function authenticated(
   return socket;
 }
 
-async function inspect(network: string, path: string, body: object = {}) {
+async function inspect(_network: string, path: string, body: object = {}) {
   const namespace = await runtime.getDurableObjectNamespace("NETWORKS");
-  const object = namespace.get(namespace.idFromName(network));
+  const object = namespace.get(namespace.idFromName(RELAY_OBJECT));
   return (
     await object.fetch(`https://test/test/${path}`, {
       method: "POST",
@@ -90,10 +104,146 @@ async function inspect(network: string, path: string, body: object = {}) {
   ).json();
 }
 
-async function pair() {
-  const network = await fixture();
+async function fixture() {
+  const network = await makeFixture();
+  const manager = await network.member();
+  const path = `/networks/${network.network}/claim`;
+  const socket = await authenticated(path, (nonce) =>
+    manager.proof(path, nonce, true),
+  );
+  expect(await socket.json()).toEqual({
+    type: "relay_info",
+    owner: { network_id: network.network, manager_id: manager.device },
+  });
+  socket.close();
+  return { ...network, manager };
+}
+
+async function relayInfo() {
+  const socket = await open("/networks/probe/status");
+  expect((await socket.json()).type).toBe("challenge");
+  const info = await socket.json();
+  socket.close();
+  return info;
+}
+
+test("probing, anonymous clients and invalid manager proofs cannot claim an unused relay", async () => {
+  const f = await makeFixture();
+  const member = await f.member();
+  const path = `/networks/${f.network}/claim`;
+  expect(await relayInfo()).toEqual({ type: "relay_info", owner: null });
+  const controlPath = `/networks/${f.network}/control`;
+  const ordinary = await authenticated(controlPath, (nonce) =>
+    member.proof(controlPath, nonce),
+  );
+  expect((await ordinary.json()).code).toBe("RELAY_UNCLAIMED");
+  ordinary.close();
+  for (const [proof, code] of [
+    [async () => null, "NOT_MANAGER"],
+    [(nonce: string) => member.proof(path, nonce), "NOT_MANAGER"],
+    [async () => member.proof(path, "replayed", true), "UNAUTHENTICATED"],
+  ] as const) {
+    const socket = await authenticated(path, proof);
+    expect((await socket.json()).code).toBe(code);
+    socket.close();
+    expect((await relayInfo()).owner).toBeNull();
+  }
+});
+
+test("concurrent valid claims choose one persistent manager and reject every foreign network route", async () => {
+  const networks = await Promise.all([makeFixture(), makeFixture()]);
+  const managers = await Promise.all(networks.map((f) => f.member()));
+  const paths = networks.map((f) => `/networks/${f.network}/claim`);
+  // Open both challenges before either claim is submitted.
+  const sockets = await Promise.all(paths.map(open));
+  const challenges = await Promise.all(sockets.map((socket) => socket.json()));
+  const proofs = await Promise.all(
+    managers.map((member, index) =>
+      member.proof(paths[index], challenges[index].nonce, true),
+    ),
+  );
+  sockets.forEach((socket, index) =>
+    socket.send({ type: "authenticate", proof: proofs[index] }),
+  );
+  const replies = await Promise.all(sockets.map((socket) => socket.json()));
+  const winner = replies.findIndex((reply) => reply.type === "relay_info");
+  expect(winner).not.toBe(-1);
+  expect(replies[1 - winner].code).toBe("RELAY_CLAIMED");
+  const owner = {
+    network_id: networks[winner].network,
+    manager_id: managers[winner].device,
+  };
+  expect(replies[winner].owner).toEqual(owner);
+  expect((await relayInfo()).owner).toEqual(owner);
+  await inspect(owner.network_id, "restore");
+  expect((await relayInfo()).owner).toEqual(owner);
+  const retry = await authenticated(paths[winner], (nonce) =>
+    managers[winner].proof(paths[winner], nonce, true),
+  );
+  expect((await retry.json()).owner).toEqual(owner);
+  retry.close();
+
+  const foreign = networks[1 - winner].network;
+  const device = managers[1 - winner].device;
+  for (const action of [
+    "claim",
+    "status",
+    "traffic",
+    "control",
+    `connect/${device}`,
+    `attach/${device}/${"a".repeat(32)}/${"b".repeat(32)}`,
+  ])
+    await expect(open(`/networks/${foreign}/${action}`)).rejects.toThrow(
+      "RELAY_CLAIMED",
+    );
+  const member = await networks[winner].member();
+  const claimedPath = paths[winner];
+  const takeover = await authenticated(claimedPath, (nonce) =>
+    member.proof(claimedPath, nonce, true),
+  );
+  expect((await takeover.json()).code).toBe("RELAY_CLAIMED");
+  const controlPath = `/networks/${owner.network_id}/control`;
+  const invalidManager = await authenticated(controlPath, (nonce) =>
+    member.proof(controlPath, nonce, true),
+  );
+  expect((await invalidManager.json()).code).toBe("NOT_MANAGER");
+  const ordinary = await authenticated(controlPath, (nonce) =>
+    member.proof(controlPath, nonce),
+  );
+  expect((await ordinary.json()).type).toBe("hello_ack");
+  for (const socket of [...sockets, takeover, invalidManager, ordinary])
+    socket.close();
+});
+
+test("an existing manager can claim on reconnect while ordinary members cannot", async () => {
+  const f = await makeFixture();
+  const member = await f.member();
+  const manager = await f.member();
+  const path = `/networks/${f.network}/control`;
+  const ordinary = await authenticated(path, (nonce) =>
+    member.proof(path, nonce),
+  );
+  expect((await ordinary.json()).code).toBe("RELAY_UNCLAIMED");
+  expect((await relayInfo()).owner).toBeNull();
+  const control = await authenticated(path, (nonce) =>
+    manager.proof(path, nonce, true),
+  );
+  expect((await control.json()).type).toBe("hello_ack");
+  expect((await relayInfo()).owner).toEqual({
+    network_id: f.network,
+    manager_id: manager.device,
+  });
+  const admitted = await authenticated(path, (nonce) =>
+    member.proof(path, nonce),
+  );
+  expect((await admitted.json()).type).toBe("hello_ack");
+  for (const socket of [ordinary, control, admitted]) socket.close();
+});
+
+async function pair(existing?: Awaited<ReturnType<typeof fixture>>) {
+  const network = existing ?? (await fixture());
   const target = await network.member(),
-    source = await network.member();
+    source = network.manager;
   const path = `/networks/${network.network}/control`;
   const control = await authenticated(path, (nonce) =>
     target.proof(path, nonce),
@@ -286,7 +436,7 @@ test("restoration preserves ciphertext credit and one-time attach, and frame pro
 
 test("source fairness survives restoration and the manager retains the final network slot", async () => {
   const f = await fixture();
-  const manager = await f.member();
+  const manager = f.manager;
   const first = await f.member();
   const neighbor = await f.member();
   const controlPath = `/networks/${f.network}/control`;
@@ -342,12 +492,13 @@ test("source fairness survives restoration and the manager retains the final net
 });
 
 test("invalid restored role fields fail closed and simultaneous peer expiry clears the shared alarm", async () => {
-  const { network, control, sender, receiver, sid } = await pair();
+  const f = await fixture();
+  const { network, control, sender, receiver, sid } = await pair(f);
   await inspect(network, "restore", { sid, role: "source" });
   await expect(sender.next()).rejects.toThrow("closed");
   await expect(receiver.next()).rejects.toThrow("closed");
   control.close();
-  const fresh = await pair();
+  const fresh = await pair(f);
   await alarm(fresh.network, { sid: fresh.sid });
   const notices = await Promise.allSettled([
     fresh.sender.json(),
@@ -504,7 +655,7 @@ test("secret route, protocol and proof protect existing device routes", async ()
 
 test("anonymous pairing is manager-only, limited, and cleaned on control disconnect", async () => {
   const f = await fixture(),
-    manager = await f.member();
+    manager = f.manager;
   const path = `/networks/${f.network}/control`;
   const control = await authenticated(path, (nonce) =>
     manager.proof(path, nonce, true),
@@ -527,9 +678,9 @@ test("anonymous pairing is manager-only, limited, and cleaned on control disconn
 });
 
 test("unacknowledged ciphertext is bounded and forged credit closes both peers", async () => {
+  const f = await fixture();
   for (const forged of [false, true]) {
-    const f = await fixture(),
-      target = await f.member(),
+    const target = await f.member(),
       source = await f.member();
     const path = `/networks/${f.network}/control`;
     const control = await authenticated(path, (nonce) =>
@@ -623,11 +774,11 @@ test("pending and active sessions share the network buffer budget and release th
 });
 
 async function alarm(
-  network: string,
+  _network: string,
   expire: { role?: string; sid?: string } = {},
 ) {
   const namespace = await runtime.getDurableObjectNamespace("NETWORKS");
-  const object = namespace.get(namespace.idFromName(network));
+  const object = namespace.get(namespace.idFromName(RELAY_OBJECT));
   const previous = (await (
     await object.fetch("https://test/test/alarm", {
       method: "POST",
@@ -682,7 +833,7 @@ test("authentication deadlines close idle clients, recover admission slots and p
 
 test("pending callback deadlines invalidate attach URLs and release session capacity", async () => {
   const f = await fixture(),
-    manager = await f.member();
+    manager = f.manager;
   const path = `/networks/${f.network}/control`;
   const control = await authenticated(path, (nonce) =>
     manager.proof(path, nonce, true),

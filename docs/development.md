@@ -12,6 +12,20 @@ cargo build --locked --release
 
 将 `target/release/xrun`（Windows 为 `xrun.exe`）放到固定目录并加入 PATH，再安装服务。CLI、daemon 和 Linux Rust 中转使用同一个二进制；Cloudflare 中转单独部署。网络组件按支持的协议范围协商，本机 CLI / App helper 与 daemon 要求发布版本一致。发布要求见 [design.md 的版本说明](design.md#63-版本和限制)。
 
+需要包含 Cloudflare 原生部署能力时，先生成 Worker，再构建 CLI；以下工具仅为项目开发与打包需要，最终用户无需安装：
+
+```bash
+bun install --cwd cloudflare --frozen-lockfile
+bun run --cwd cloudflare package
+XRUN_CLOUDFLARE_BUNDLE_DIR="$PWD/cloudflare/.wrangler/package" cargo build --locked --release
+```
+
+Package 工作流在六个平台产物中嵌入此 Worker，并通过安装后的 helper / CLI 运行 `relay deploy --provider cloudflare --dry-run --json` 校验版本、摘要和内置 OAuth 配置。检查时移除运行时 Client ID 环境变量，确保用户安装后无需额外配置。公共 Client ID 来自 [cloudflare/oauth.json](../cloudflare/oauth.json)，本地构建与 Package 共用此文件；不依赖 GitHub 仓库变量。
+
+浏览器授权使用 **xrun 自己的公开 OAuth 客户端**。注册参数在 [cloudflare/oauth-client.json](../cloudflare/oauth-client.json)：Authorization Code、PKCE S256、刷新令牌、token endpoint auth method `none`，回调固定为 `http://127.0.0.1:8976/oauth/callback`。仅申请 `account-settings.read`、`workers-scripts.write`、`workers-routes.write`，授权时额外请求 `offline_access` 以便刷新登录。公开客户端需要填写 xrun 名称、Logo、`https://xrun.sh` 客户端地址，并完成该域名的所有权验证。公共 Client ID 保存在 `cloudflare/oauth.json`，构建时校验格式并编入程序。该 ID 不是秘密，不使用 Wrangler 的 Client ID，不向客户端分发 client secret。[Cloudflare 官方 OAuth 配置](https://developers.cloudflare.com/fundamentals/oauth/create-an-oauth-client/)。
+
+本地构建默认读取同一份公共 Client ID；运行时可设置 `XRUN_CLOUDFLARE_OAUTH_CLIENT_ID` 进行联调，也可用自己的 `CLOUDFLARE_API_TOKEN` 和 `CLOUDFLARE_ACCOUNT_ID` 进行原生部署。Fork 应注册自己的 OAuth 客户端并修改 `cloudflare/oauth.json`。面向用户发布前应实测浏览器授权及真实账号部署。
+
 GitHub Actions 的 [Package](../.github/workflows/package.yml) 工作流可手动构建 Linux、macOS、Windows 的 x86_64 与 arm64，共六组产物。Linux 提供只含 `xrun` 的 CLI 压缩包，macOS 提供 App ZIP，Windows 提供当前用户 NSIS 安装 EXE；桌面包自带终端 CLI，不再单独分发 Mac／Windows CLI 包。macOS App 的签名、公证需要配置工作流列出的凭据。每组产物还包含版本和 SHA-256 清单，以及对应的自动安装脚本。Package 只构建和检查产物；发布由独立的 [Release](../.github/workflows/release.yml) 工作流手动触发。
 
 Linux 与 Windows 的两种架构分别使用对应的原生 runner；macOS 两组均使用 ARM runner，Intel 版交叉编译并通过 Rosetta 执行 smoke 和安装检查，不代表 Intel 实机验收。构建缓存和产物按目标架构分开。
@@ -89,7 +103,7 @@ cargo test --locked
 xvfb-run -a -s '-screen 0 1024x768x24' cargo test --locked --test screenshot -- --ignored
 ```
 
-[Test Linux](../.github/workflows/test-linux.yml) 和 [Test Windows](../.github/workflows/test-windows.yml) 在 x86_64 与 arm64 runner 上分别原生运行核心测试；[Test macOS](../.github/workflows/test-macos.yml) 在 ARM runner 上原生运行。核心测试覆盖配对、授权、执行、任务、文件传输、流式执行、端口转发、会话缓存和故障恢复。测试直接调用 Rust 中转库，`xrun relay` 部署命令仍仅支持 Linux。Linux 工作流另运行 Xvfb 截图测试和 Cloudflare workerd 测试；macOS、Windows 还检查桌面端、安装包内的 helper 和自动安装脚本，覆盖中文及空格路径、重复安装、损坏产物、版本不符，以及 macOS 回滚和 Windows 静默升级／卸载失败。macOS x86_64 的产物检查在 Package 工作流中通过 Rosetta 执行。每次提交是否通过，以对应的 Actions 结果为准。
+[Test Linux](../.github/workflows/test-linux.yml) 和 [Test Windows](../.github/workflows/test-windows.yml) 在 x86_64 与 arm64 runner 上分别原生运行核心测试；[Test macOS](../.github/workflows/test-macos.yml) 在 ARM runner 上原生运行。核心测试覆盖配对、授权、执行、任务、文件传输、流式执行、端口转发、会话缓存和故障恢复。测试直接调用 Rust 中转库；Linux systemd 中转安装仅支持 Linux，Cloudflare 原生部署入口支持三种系统。Linux 工作流另运行 Xvfb 截图测试和 Cloudflare workerd 测试；macOS、Windows 还检查桌面端、安装包内的 helper 和自动安装脚本，覆盖中文及空格路径、重复安装、损坏产物、版本不符，以及 macOS 回滚和 Windows 静默升级／卸载失败。macOS x86_64 的产物检查在 Package 工作流中通过 Rosetta 执行。每次提交是否通过，以对应的 Actions 结果为准。
 
 Cloudflare 中转的本地检查无需云端凭证：
 

@@ -8,11 +8,33 @@ pub(super) async fn status_route(
     ws: WebSocketUpgrade,
 ) -> ApiResult<Response> {
     let selected = protocol(&headers)?;
+    if network != "probe" {
+        app.admission.check(&network, false)?;
+    }
     Ok(negotiated(
         ws.max_message_size(MAX_MESSAGE)
             .max_frame_size(MAX_MESSAGE)
             .on_upgrade(move |mut ws| async move {
                 let result = async {
+                    if network == "probe" {
+                        send(
+                            &mut ws,
+                            &RelayMessage::Challenge {
+                                nonce: crypto::random_token(),
+                            },
+                        )
+                        .await?;
+                        if selected >= 3 {
+                            send(
+                                &mut ws,
+                                &RelayMessage::RelayInfo {
+                                    owner: app.admission.owner(),
+                                },
+                            )
+                            .await?;
+                        }
+                        return Ok(());
+                    }
                     let path = format!("/networks/{network}/status");
                     member(&mut ws, &network, &path, &permit).await?;
                     let devices = app
@@ -40,6 +62,7 @@ pub(super) async fn control_route(
     ws: WebSocketUpgrade,
 ) -> ApiResult<Response> {
     let selected = protocol(&headers)?;
+    app.admission.check(&network, true)?;
     Ok(negotiated(
         ws.max_message_size(MAX_MESSAGE)
             .max_frame_size(MAX_MESSAGE)
@@ -60,6 +83,12 @@ async fn control(
     // Authorization still happens inside the end-to-end tunnel.
     let path = format!("/networks/{network}/control");
     let (id, manager) = member(ws, network, &path, permit).await?;
+    // An existing manager can establish the same binding when upgrading a relay.
+    if app.admission.owner().is_none() && manager {
+        app.admission.claim(network, &id, manager)?;
+    }
+    app.admission.check(network, false)?;
+    let manager = app.admission.manager(&id, manager)?;
     let key = (network.to_owned(), id.clone());
     let generation = uuid::Uuid::new_v4().simple().to_string();
     let (tx, mut rx) = mpsc::channel(16);

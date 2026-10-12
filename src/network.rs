@@ -30,6 +30,15 @@ use crate::{
 use anyhow::{Context, Result, bail};
 use serde::de::DeserializeOwned;
 
+pub(crate) fn validate_connection_link(link: &str) -> Result<()> {
+    if link.starts_with("xrun://") {
+        links::parse_link(link)?;
+    } else {
+        links::endpoint(link)?;
+    }
+    Ok(())
+}
+
 pub(crate) fn authority(id: &Identity) -> Result<&NetworkIdentity> {
     let network = id.network.as_ref().context(
         ErrorCode::MigrationRequired

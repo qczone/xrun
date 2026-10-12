@@ -2,9 +2,11 @@
 
 pub(crate) mod app;
 mod commands;
+mod connection;
 mod error;
 mod language;
 mod platform;
+mod remote;
 mod tray;
 
 fn main() {

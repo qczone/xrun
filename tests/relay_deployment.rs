@@ -104,13 +104,23 @@ async fn deployment_validates_before_writing_and_preserves_manual_addresses_and_
 {
     let d = Deployment::new()?;
     for (args, code) in [
-        (vec!["relay", "install", "--port", "0"], "INVALID_PORT"),
         (
-            vec!["relay", "install", "--addr", "host:0"],
+            vec!["relay", "deploy", "--provider", "local", "--port", "0"],
+            "INVALID_PORT",
+        ),
+        (
+            vec!["relay", "deploy", "--provider", "local", "--addr", "host:0"],
             "INVALID_ADDRESS",
         ),
         (
-            vec!["relay", "install", "--addr", "[::1]:1234"],
+            vec![
+                "relay",
+                "deploy",
+                "--provider",
+                "local",
+                "--addr",
+                "[::1]:1234",
+            ],
             "INVALID_ADDRESS",
         ),
     ] {
@@ -125,7 +135,9 @@ async fn deployment_validates_before_writing_and_preserves_manual_addresses_and_
     let first = json(
         d.cli(&[
             "relay",
-            "install",
+            "deploy",
+            "--provider",
+            "local",
             "--port",
             &first_port,
             "--addr",
@@ -142,13 +154,23 @@ async fn deployment_validates_before_writing_and_preserves_manual_addresses_and_
     let key = std::fs::read(cfg.data_dir.join("ca.key"))?;
     assert!(!d.calls()?.contains("\trestart\t"));
     assert_eq!(
-        json(d.cli(&["relay", "invite", "--json"]).await?)["link"],
+        json(
+            d.cli(&["relay", "link", "--provider", "local", "--json"])
+                .await?
+        )["link"],
         first["link"]
     );
     assert_eq!(
         json(
-            d.cli(&["relay", "install", "--no-detect", "--json"])
-                .await?
+            d.cli(&[
+                "relay",
+                "deploy",
+                "--provider",
+                "local",
+                "--no-detect",
+                "--json"
+            ])
+            .await?
         )["link"],
         first["link"]
     );
@@ -158,7 +180,12 @@ async fn deployment_validates_before_writing_and_preserves_manual_addresses_and_
         "unchanged deployment restarted the service"
     );
 
-    let mut relay = logged(d.home.path(), &["relay", "run"], "deployed-relay")?.spawn()?;
+    let mut relay = logged(
+        d.home.path(),
+        &["relay", "run", "--provider", "local"],
+        "deployed-relay",
+    )?
+    .spawn()?;
     assert_eq!(
         ready(d.home.path(), &mut relay).await?.addresses,
         cfg.addresses
@@ -168,7 +195,15 @@ async fn deployment_validates_before_writing_and_preserves_manual_addresses_and_
     let next_addr = format!("127.0.0.1:{next_port}");
     let changed = json(
         d.cli(&[
-            "relay", "install", "--port", &next_port, "--addr", &next_addr, "--json",
+            "relay",
+            "deploy",
+            "--provider",
+            "local",
+            "--port",
+            &next_port,
+            "--addr",
+            &next_addr,
+            "--json",
         ])
         .await?,
     );
@@ -187,9 +222,9 @@ async fn deployment_validates_before_writing_and_preserves_manual_addresses_and_
         [next_addr]
     );
     stop(&mut relay).await?;
-    ok(d.cli(&["relay", "uninstall"]).await?);
+    ok(d.cli(&["relay", "remove", "--provider", "local"]).await?);
     let calls = d.calls()?;
-    ok(d.cli(&["relay", "uninstall"]).await?);
+    ok(d.cli(&["relay", "remove", "--provider", "local"]).await?);
     assert_eq!(d.calls()?, calls);
     assert!(
         !d.home
@@ -207,7 +242,16 @@ async fn automatic_addresses_refresh_on_run_and_failed_install_can_be_retried() 
     let port = port()?.to_string();
     std::fs::write(d.home.path().join("fail-service"), b"")?;
     let failed = d
-        .cli(&["relay", "install", "--port", &port, "--no-detect", "--json"])
+        .cli(&[
+            "relay",
+            "deploy",
+            "--provider",
+            "local",
+            "--port",
+            &port,
+            "--no-detect",
+            "--json",
+        ])
         .await?;
     assert_eq!(failed.status.code(), Some(125));
     assert!(String::from_utf8_lossy(&failed.stderr).contains("SERVICE_FAILED"));
@@ -216,12 +260,17 @@ async fn automatic_addresses_refresh_on_run_and_failed_install_can_be_retried() 
     assert!(!cfg.addresses.is_empty());
     let ca = std::fs::read(cfg.data_dir.join("ca.pem"))?;
     std::fs::remove_file(d.home.path().join("fail-service"))?;
-    let out = ok(d.cli(&["relay", "install"]).await?);
+    let out = ok(d.cli(&["relay", "deploy", "--provider", "local"]).await?);
     assert!(out.contains("xrun up --relay 'xrun-relay://"));
     assert_eq!(std::fs::read(cfg.data_dir.join("ca.pem"))?, ca);
     cfg.addresses = vec!["stale.invalid:1".into()];
     config::write(&d.home.path().join(".xrun/config.toml"), &cfg)?;
-    let mut relay = logged(d.home.path(), &["relay", "run"], "auto-relay")?.spawn()?;
+    let mut relay = logged(
+        d.home.path(),
+        &["relay", "run", "--provider", "local"],
+        "auto-relay",
+    )?
+    .spawn()?;
     let updated = ready(d.home.path(), &mut relay).await?;
     assert!(!updated.manual && updated.no_detect);
     assert_ne!(updated.addresses, cfg.addresses);

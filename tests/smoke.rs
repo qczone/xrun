@@ -13,6 +13,68 @@ async fn packaged_binary_contains_the_offline_manual_and_remote_help() {
     );
     let help = ok(cli(home.path(), &["help", "push"]).await);
     assert!(help.contains("<LOCAL> <REMOTE>") && help.contains("--expect"));
+    let help = ok(cli(home.path(), &["relay", "deploy", "--help"]).await);
+    assert!(
+        help.contains("--provider")
+            && help.contains("--name")
+            && help.contains("--account")
+            && help.contains("--dry-run")
+            && help.contains("--addr")
+    );
+    if std::env::var_os("XRUN_CLOUDFLARE_BUNDLE_DIR").is_some() {
+        let result = json(
+            command(
+                home.path(),
+                &[
+                    "relay",
+                    "deploy",
+                    "--provider",
+                    "cloudflare",
+                    "--dry-run",
+                    "--json",
+                ],
+            )
+            .env_remove("XRUN_CLOUDFLARE_OAUTH_CLIENT_ID")
+            .output()
+            .await
+            .unwrap(),
+        );
+        assert_eq!(result["version"], VERSION);
+        assert_eq!(result["bundled"], true);
+        assert_eq!(result["sha256"].as_str().unwrap().len(), 64);
+        assert_eq!(result["oauth_configured"], true);
+    }
+}
+
+#[tokio::test]
+async fn relay_providers_and_specific_options_are_checked_before_any_side_effects() {
+    let home = tempfile::tempdir().unwrap();
+    let output = cli(home.path(), &["relay", "deploy"]).await;
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("--provider"));
+    for args in [
+        vec![
+            "relay",
+            "deploy",
+            "--provider",
+            "cloudflare",
+            "--port",
+            "9528",
+        ],
+        vec!["relay", "deploy", "--provider", "local", "--name", "worker"],
+        vec!["relay", "remove", "--provider", "cloudflare"],
+        vec!["relay", "remove", "--provider", "local", "--purge"],
+        vec!["relay", "login", "--provider", "local"],
+        vec!["relay", "run", "--provider", "cloudflare"],
+    ] {
+        let output = cli(home.path(), &args).await;
+        assert!(!output.status.success(), "{args:?}");
+        assert!(
+            String::from_utf8_lossy(&output.stderr).contains("INVALID_REQUEST"),
+            "{args:?}"
+        );
+    }
+    assert!(!home.path().join(".xrun").exists());
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]

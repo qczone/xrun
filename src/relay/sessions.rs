@@ -79,6 +79,7 @@ pub(super) async fn source_route(
     ws: WebSocketUpgrade,
 ) -> ApiResult<Response> {
     let selected = protocol(&headers)?;
+    app.admission.check(&network, false)?;
     Ok(negotiated(
         ws.max_message_size(MAX_MESSAGE)
             .max_frame_size(MAX_MESSAGE)
@@ -171,6 +172,7 @@ pub(super) async fn attach_route(
     ws: WebSocketUpgrade,
 ) -> ApiResult<Response> {
     let selected = protocol(&headers)?;
+    app.admission.check(&network, false)?;
     Ok(negotiated(
         ws.max_message_size(MAX_MESSAGE)
             .max_frame_size(MAX_MESSAGE)
@@ -421,7 +423,9 @@ mod tests {
         let (source, mut from_source) = mpsc::unbounded_channel();
         let (target, mut from_target) = mpsc::unbounded_channel();
         let idle = tokio::spawn(async move {
+            let dir = tempfile::tempdir().unwrap();
             let app = App {
+                admission: admission::Admission::open(dir.path()).unwrap(),
                 connections: Mutex::new(Connections::default()),
                 traffic: Arc::new(traffic::Traffic::memory()),
             };

@@ -246,6 +246,7 @@ pub(super) async fn traffic_route(
     ws: WebSocketUpgrade,
 ) -> ApiResult<Response> {
     let selected = protocol(&headers)?;
+    app.admission.check(&network, false)?;
     Ok(negotiated(
         ws.max_message_size(MAX_MESSAGE)
             .max_frame_size(MAX_MESSAGE)
@@ -253,6 +254,7 @@ pub(super) async fn traffic_route(
                 let result = async {
                     let path = format!("/networks/{network}/traffic");
                     let (device, manager) = member(&mut ws, &network, &path, &permit).await?;
+                    let manager = app.admission.manager(&device, manager)?;
                     send(&mut ws, &RelayMessage::TrafficReady).await?;
                     let RelayMessage::TrafficQuery { query } =
                         tokio::time::timeout(AUTH_TIMEOUT, receive(&mut ws)).await??

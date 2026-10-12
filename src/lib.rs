@@ -4,6 +4,7 @@ mod attachments;
 mod cli;
 pub mod client;
 mod clock;
+mod cloudflare;
 mod config;
 mod control;
 mod crypto;

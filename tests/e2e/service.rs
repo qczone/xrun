@@ -17,7 +17,8 @@ pub(crate) async fn foreground_shutdown() -> Result<()> {
     std::fs::create_dir_all(home.join(".xrun"))?;
     xrun::testing::config::write(&home.join(".xrun/config.toml"), &cfg)?;
     let link = xrun::testing::relay::deployment_link(&cfg)?;
-    let mut child = common::logged(home, &["relay", "run"], "relay")?.spawn()?;
+    let mut child =
+        common::logged(home, &["relay", "run", "--provider", "local"], "relay")?.spawn()?;
     tokio::time::timeout(Duration::from_secs(5), async {
         while tokio::net::TcpStream::connect(("127.0.0.1", port))
             .await

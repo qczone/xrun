@@ -1,4 +1,5 @@
 import { DurableObject } from "cloudflare:workers";
+import { Admission, AdmissionError } from "./admission";
 import { object, randomRoute, verifyProof } from "./auth";
 import { Connections, type Connection } from "./connections";
 import {
@@ -45,11 +46,13 @@ export function error(code: string, message: string, status = 400): Response {
 /** Live routing bindings and ciphertext windows survive with hibernating sockets. */
 export class XrunRelay extends DurableObject<Env> {
   private traffic: Traffic;
+  private admission: Admission;
   private connections: Connections;
   private nextAlarm: number | null = null;
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
+    this.admission = new Admission(ctx.storage);
     this.traffic = new Traffic(ctx.storage);
     this.connections = new Connections(ctx.getWebSockets());
     this.validateRestoredBindings();
@@ -60,11 +63,20 @@ export class XrunRelay extends DurableObject<Env> {
   }
   /** The same restoration path is used after eviction and by workerd recovery tests. */
   protected restoreSockets(): void {
+    this.admission = new Admission(this.ctx.storage);
     this.connections = new Connections(this.ctx.getWebSockets());
     this.validateRestoredBindings();
   }
   private validateRestoredBindings(): void {
     for (const { socket, state } of [...this.connections.all()]) {
+      if (
+        state.role !== "auth" &&
+        state.role !== "verifying" &&
+        this.admission.owner()?.network_id !== state.network
+      ) {
+        this.close(socket, 1008, "Restored network is not admitted");
+        continue;
+      }
       if (!session(state)) continue;
       const control = this.connections.control(state.target);
       if (!control || control.state.generation !== state.generation) {
@@ -164,6 +176,18 @@ export class XrunRelay extends DurableObject<Env> {
   async fetch(request: Request): Promise<Response> {
     const parsed = route(new URL(request.url).pathname, this.env.RELAY_ROUTE);
     if (!parsed) return new Response("Not found", { status: 404 });
+    const probe = parsed.network === "probe" && parsed.action === "status";
+    try {
+      if (!probe)
+        this.admission.check(
+          parsed.network,
+          parsed.action === "claim" || parsed.action === "control",
+        );
+    } catch (reason) {
+      if (reason instanceof AdmissionError)
+        return error(reason.code, reason.message, 403);
+      throw reason;
+    }
     if (this.connections.size >= CONNECTION_LIMIT)
       return error("CONNECTION_LIMIT", "Too many connections", 429);
     const ip = request.headers.get("X-Xrun-Peer") || "unknown";
@@ -192,6 +216,8 @@ export class XrunRelay extends DurableObject<Env> {
         "Missing negotiated relay protocol",
         409,
       );
+    if (parsed.action === "claim" && protocol < 3)
+      return error("VERSION_MISMATCH", "Relay claims require protocol 3", 409);
     const connection = {
       id: crypto.randomUUID(),
       network: parsed.network,
@@ -235,6 +261,14 @@ export class XrunRelay extends DurableObject<Env> {
         deadline: Date.now() + AUTH_TIMEOUT_MS,
       });
       this.send(server, { type: "challenge", nonce });
+      if (probe) {
+        if (protocol >= 3)
+          this.send(server, {
+            type: "relay_info",
+            owner: this.admission.owner(),
+          });
+        this.close(server);
+      }
     }
     await this.schedule();
     return new Response(null, {
@@ -273,6 +307,24 @@ export class XrunRelay extends DurableObject<Env> {
     if (ws.readyState !== WebSocket.OPEN || !sameChallenge) return;
     if (expired(current, Date.now()))
       throw new Error("Authentication timed out");
+    if (state.action === "claim") {
+      if (!proof)
+        throw new AdmissionError("NOT_MANAGER", "Manager proof required");
+      const owner = this.admission.claim(
+        state.network,
+        proof.device,
+        proof.manager,
+      );
+      this.send(ws, { type: "relay_info", owner });
+      this.close(ws);
+      return;
+    }
+    // A claim may have completed while this proof was being verified.
+    if (state.action === "control" && proof?.manager && !this.admission.owner())
+      this.admission.claim(state.network, proof.device, true);
+    this.admission.check(state.network, false);
+    if (proof)
+      proof.manager = this.admission.manager(proof.device, proof.manager);
     if (state.action === "status") {
       if (!proof) throw new Error("Member proof required");
       this.send(ws, { type: "status", devices: this.connections.devices() });
@@ -541,8 +593,13 @@ export class XrunRelay extends DurableObject<Env> {
       } else {
         throw new Error("Unexpected relay message");
       }
-    } catch {
+    } catch (reason) {
       if (!this.connections.get(ws)) return;
+      if (reason instanceof AdmissionError) {
+        this.reject(ws, reason.code, reason.message);
+        await this.schedule();
+        return;
+      }
       const authenticating =
         state.role === "auth" || state.role === "verifying";
       this.reject(

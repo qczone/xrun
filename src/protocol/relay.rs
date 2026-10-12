@@ -8,6 +8,34 @@ use crate::{
 };
 use anyhow::{Result, bail};
 use serde::{Deserialize, Serialize};
+
+/// Persistent relay ownership, established only by a proven network manager.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct RelayOwner {
+    /// The one network admitted by this deployment.
+    pub network_id: String,
+    /// The device that claimed the deployment using its network root key.
+    pub manager_id: String,
+}
+impl RelayOwner {
+    pub(crate) fn validate(&self) -> Result<()> {
+        let network = self.network_id.strip_prefix("net_").unwrap_or_default();
+        let manager = self.manager_id.strip_prefix("dev_").unwrap_or_default();
+        if network.len() != 52
+            || !network
+                .bytes()
+                .all(|b| b.is_ascii_lowercase() || matches!(b, b'2'..=b'7'))
+            || manager.len() != 32
+            || !manager
+                .bytes()
+                .all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
+        {
+            bail!(ErrorCode::InvalidRelay.error("invalid persisted relay owner"));
+        }
+        Ok(())
+    }
+}
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 /// Member certificate and challenge signatures binding one relay connection.
@@ -109,6 +137,11 @@ pub enum RelayMessage {
     Authenticate {
         /// Member challenge proof; None only for anonymous manager pairing.
         proof: Option<Proof>,
+    },
+    /// Protocol 3: ownership snapshot after a probe or successful manager claim.
+    RelayInfo {
+        /// None until the first authenticated manager successfully claims the relay.
+        owner: Option<RelayOwner>,
     },
     /// Control generation accepted by the relay.
     HelloAck {

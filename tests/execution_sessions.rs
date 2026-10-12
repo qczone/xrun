@@ -477,7 +477,8 @@ async fn pipelined_purpose_never_sends_execution_before_handshake_acceptance() -
                 if failure == "revoked" {
                     sent_roster = Manager::open(&lab.source.join(".xrun/manager"))?.revoke("target1")?;
                 }
-                net::send(&mut ws, &serde_json::json!({ "version": "future-release", "protocol": { "min": if failure == "protocol" { 3 } else { 1 }, "max": 3 }, "roster": sent_roster })).await?;
+                let future = xrun::protocol::PROTOCOL + 1;
+                net::send(&mut ws, &serde_json::json!({ "version": "future-release", "protocol": { "min": if failure == "protocol" { future } else { 1 }, "max": future }, "roster": sent_roster })).await?;
                 if failure.starts_with("ready-") || failure == "denied" {
                     // Even a valid roster does not permit sending Exec before Ready.
                     assert!(tokio::time::timeout(Duration::from_millis(50), net::receive::<Data>(&mut ws)).await.is_err());

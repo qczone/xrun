@@ -128,55 +128,84 @@ try {
   await copyFile(tests, testSnapshot);
   await chmod(binarySnapshot, 0o700);
   await chmod(testSnapshot, 0o700);
-  runtime = new Miniflare(
-    convertV4MiniflareOptions({
-      host: "127.0.0.1",
-      port: 0,
-      https: true,
-      httpsKey: pemKey,
-      httpsCert: `${server.toString("pem")}\n${ca.toString("pem")}`,
-      modules: true,
-      script: await Bun.file(
-        resolve(import.meta.dir, "../.wrangler/build/index.js"),
-      ).text(),
-      compatibilityDate: "2026-10-03",
-      durableObjects: { NETWORKS: { className: "XrunRelay", useSQLite: true } },
-      bindings: {
-        RELAY_ROUTE: route,
-        XRUN_PROTOCOL_MIN: PROTOCOL.min,
-        XRUN_PROTOCOL_MAX: PROTOCOL.max,
-      },
-    }),
-  );
-  const address = await runtime.ready;
-  const pin = base32(
-    new Uint8Array(await ca.publicKey.getThumbprint("SHA-256")),
-  );
-  const linkFile = join(directory, "relay-link");
-  // Exercise normal production pin, chain, validity and hostname verification.
-  await writeFile(linkFile, `xrun-relay://${address.host}/${pin}#${route}\n`, {
-    mode: 0o600,
+  const listing = Bun.spawn([testSnapshot, "--ignored", "--list"], {
+    stdout: "pipe",
+    stderr: "inherit",
   });
-  child = Bun.spawn(
-    [testSnapshot, "--ignored", "--nocapture", "--test-threads=1"],
-    {
-      cwd: repository,
-      env: {
-        ...process.env,
-        XRUN_TEST_CF_LINK_FILE: linkFile,
-        XRUN_TEST_BINARY: binarySnapshot,
-        XRUN_TEST_LOG_DIR:
-          process.env.XRUN_TEST_LOG_DIR ||
-          resolve(import.meta.dir, "../../target/test-logs"),
+  const names = (await new Response(listing.stdout).text())
+    .split("\n")
+    .filter((line) => line.endsWith(": test"))
+    .map((line) => line.slice(0, -6));
+  if ((await listing.exited) !== 0 || names.length === 0)
+    throw new Error("Rust did not list interoperability tests");
+  const script = await Bun.file(
+    resolve(import.meta.dir, "../.wrangler/build/index.js"),
+  ).text();
+  // Every isolated test creates its own network, so it needs a fresh deployment.
+  for (const name of names) {
+    runtime = new Miniflare(
+      convertV4MiniflareOptions({
+        host: "127.0.0.1",
+        port: 0,
+        https: true,
+        httpsKey: pemKey,
+        httpsCert: `${server.toString("pem")}\n${ca.toString("pem")}`,
+        modules: true,
+        script,
+        compatibilityDate: "2026-10-03",
+        durableObjects: {
+          NETWORKS: { className: "XrunRelay", useSQLite: true },
+        },
+        bindings: {
+          RELAY_ROUTE: route,
+          XRUN_PROTOCOL_MIN: PROTOCOL.min,
+          XRUN_PROTOCOL_MAX: PROTOCOL.max,
+        },
+      }),
+    );
+    const address = await runtime.ready;
+    const pin = base32(
+      new Uint8Array(await ca.publicKey.getThumbprint("SHA-256")),
+    );
+    const linkFile = join(directory, "relay-link");
+    // Exercise normal production pin, chain, validity and hostname verification.
+    await writeFile(
+      linkFile,
+      `xrun-relay://${address.host}/${pin}#${route}\n`,
+      {
+        mode: 0o600,
       },
-      stdin: "ignore",
-      stdout: "inherit",
-      stderr: "inherit",
-    },
-  );
-  const code = await child.exited;
-  if (code !== 0)
-    throw new Error(`Rust/workerd interoperability tests failed (${code})`);
+    );
+    child = Bun.spawn(
+      [
+        testSnapshot,
+        name,
+        "--exact",
+        "--ignored",
+        "--nocapture",
+        "--test-threads=1",
+      ],
+      {
+        cwd: repository,
+        env: {
+          ...process.env,
+          XRUN_TEST_CF_LINK_FILE: linkFile,
+          XRUN_TEST_BINARY: binarySnapshot,
+          XRUN_TEST_LOG_DIR:
+            process.env.XRUN_TEST_LOG_DIR ||
+            resolve(import.meta.dir, "../../target/test-logs"),
+        },
+        stdin: "ignore",
+        stdout: "inherit",
+        stderr: "inherit",
+      },
+    );
+    const code = await child.exited;
+    if (code !== 0)
+      throw new Error(`Rust/workerd interoperability tests failed (${code})`);
+    await runtime.dispose();
+    runtime = undefined;
+  }
 } finally {
   process.off("SIGINT", stop);
   process.off("SIGTERM", stop);

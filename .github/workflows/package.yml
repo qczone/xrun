@@ -14,6 +14,7 @@ jobs:
     env:
       RUST_BACKTRACE: '1'
       XRUN_TEST_LOG_DIR: ${{ github.workspace }}/target/test-logs
+      XRUN_CLOUDFLARE_BUNDLE_DIR: ${{ github.workspace }}/cloudflare/.wrangler/package
     strategy:
       fail-fast: false
       matrix:
@@ -55,6 +56,17 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version-file: cloudflare/package.json
+      - name: Build the Cloudflare relay embedded in every CLI and App helper
+        working-directory: cloudflare
+        env:
+          WRANGLER_SEND_METRICS: 'false'
+        run: |
+          bun install --frozen-lockfile
+          bun run check
+          bun run package
       - uses: ilammy/msvc-dev-cmd@0b201ec74fa43914dc39ae48a89fd1d8cb592756 # v1.13.0
         if: runner.os == 'Windows'
         with:

@@ -13,7 +13,7 @@ use std::time::Duration;
 
 use super::links::{discover_relay_ca, endpoint, relay_pin};
 use super::peers::{online_ids, states_for};
-use super::transport::receive;
+use super::transport::{authenticate, receive};
 use super::{archive_legacy, cache, manager, observe};
 
 pub(crate) async fn create(relay_link: &str, name: Option<String>) -> Result<Identity> {
@@ -33,7 +33,13 @@ pub(crate) async fn create(relay_link: &str, name: Option<String>) -> Result<Ide
             if !matches!(receive(&mut ws).await?, RelayMessage::Challenge { .. }) {
                 bail!(ErrorCode::InvalidMessage.error("expected a relay challenge"))
             }
-            Ok::<_, anyhow::Error>(ca)
+            let RelayMessage::RelayInfo { owner } = receive(&mut ws).await? else {
+                bail!(ErrorCode::InvalidRelayMessage.error("relay did not report its ownership"));
+            };
+            if let Some(owner) = &owner {
+                owner.validate()?;
+            }
+            Ok::<_, anyhow::Error>((ca, owner))
         })
         .await
         {
@@ -41,6 +47,7 @@ pub(crate) async fn create(relay_link: &str, name: Option<String>) -> Result<Ide
                 root = Some(ca);
                 break;
             }
+            Ok(Err(e)) if net::explicit(&e) => return Err(e),
             Ok(Err(e)) => error = Some(e),
             Err(_) => {
                 error = Some(anyhow::anyhow!(
@@ -49,7 +56,7 @@ pub(crate) async fn create(relay_link: &str, name: Option<String>) -> Result<Ide
             }
         }
     }
-    let relay_ca = root.ok_or_else(|| {
+    let (relay_ca, owner) = root.ok_or_else(|| {
         error.unwrap_or_else(|| {
             anyhow::anyhow!(ErrorCode::ConnectFailed.error("relay is unavailable"))
         })
@@ -61,12 +68,27 @@ pub(crate) async fn create(relay_link: &str, name: Option<String>) -> Result<Ide
     } else {
         None
     };
+    let manager_dir = dir.join("manager");
+    if let Some(owner) = &owner {
+        let matches = existing.as_ref().is_some_and(|id| {
+            id.network
+                .as_ref()
+                .is_some_and(|network| network.network_id == owner.network_id)
+        });
+        if !matches && !manager_dir.join("manager.db").exists() {
+            bail!(ErrorCode::RelayClaimed.error(
+                "relay already belongs to a network; ask its manager for a join invitation",
+            ));
+        }
+    }
     if let Some(old) = existing.as_ref().filter(|i| i.network.is_some()) {
         if name.as_ref().is_some_and(|name| name != &old.name) {
             bail!(ErrorCode::InvalidRequest.error("device names are immutable within a network"))
         }
         let manager = manager(old)?;
         let before = manager.roster()?;
+        // Bind the new relay before changing the signed roster or local identity.
+        claim(old, &manager, &endpoint.addresses, &relay_ca).await?;
         let next = if before.roster.relay_addresses == endpoint.addresses
             && relay_pin(&before.roster.relay_ca_pem)? == endpoint.pin
         {
@@ -90,7 +112,6 @@ pub(crate) async fn create(relay_link: &str, name: Option<String>) -> Result<Ide
     let name = name
         .or_else(|| existing.as_ref().map(|i| i.name.clone()))
         .unwrap_or_else(crate::client::user_name);
-    let manager_dir = dir.join("manager");
     let (manager, member, key_pem, cert_pem) = if manager_dir.join("manager.db").exists() {
         let manager = Manager::open(&manager_dir)?;
         let roster = manager.roster()?;
@@ -125,13 +146,9 @@ pub(crate) async fn create(relay_link: &str, name: Option<String>) -> Result<Ide
         }
         (manager, member, key, cert)
     } else {
-        Manager::create(&manager_dir, &name, endpoint.addresses, relay_ca)?
+        Manager::create(&manager_dir, &name, endpoint.addresses, relay_ca.clone())?
     };
     let roster = manager.roster()?;
-    if existing.is_some() {
-        archive_legacy(&dir)?;
-    }
-    cache()?.observe(&roster.roster.network_id, &roster)?;
     let id = Identity {
         device_id: member.device_id,
         name: member.name,
@@ -148,10 +165,63 @@ pub(crate) async fn create(relay_link: &str, name: Option<String>) -> Result<Ide
             manager_id: roster.roster.manager_id.clone(),
         }),
     };
+    claim(&id, &manager, &id.addresses, &relay_ca).await?;
+    if existing.is_some() {
+        archive_legacy(&dir)?;
+    }
+    cache()?.observe(&roster.roster.network_id, &roster)?;
     id.save()?;
     for file in ["device.key.pending", "device.pem.pending"] {
         std::fs::remove_file(manager_dir.join(file))?;
     }
     config::sync_parent(&manager_dir.join("manager.db"))?;
     Ok(id)
+}
+
+async fn claim(
+    id: &Identity,
+    manager: &Manager,
+    addresses: &[String],
+    relay_ca: &str,
+) -> Result<()> {
+    let roster = manager.roster()?;
+    let expected = RelayOwner {
+        network_id: roster.roster.network_id.clone(),
+        manager_id: roster.roster.manager_id.clone(),
+    };
+    let path = format!("/networks/{}/claim", expected.network_id);
+    let mut error = None;
+    for address in addresses {
+        let result = tokio::time::timeout(CONNECT_TIMEOUT, async {
+            let mut ws =
+                net::websocket_at(address, &path, crypto::relay_tls_config(relay_ca)?).await?;
+            authenticate(
+                &mut ws,
+                Some(id),
+                &expected.network_id,
+                &path,
+                Some(manager),
+            )
+            .await?;
+            match receive(&mut ws).await? {
+                RelayMessage::RelayInfo { owner: Some(owner) } if owner == expected => Ok(()),
+                _ => {
+                    bail!(ErrorCode::IdentityMismatch.error("relay confirmed a different manager"))
+                }
+            }
+        })
+        .await;
+        match result {
+            Ok(Ok(())) => return Ok(()),
+            Ok(Err(e)) if net::explicit(&e) => return Err(e),
+            Ok(Err(e)) => error = Some(e),
+            Err(_) => {
+                error = Some(anyhow::anyhow!(
+                    ErrorCode::ConnectTimeout.error("relay claim timed out")
+                ))
+            }
+        }
+    }
+    Err(error
+        .unwrap_or_else(|| anyhow::anyhow!(ErrorCode::ConnectFailed.error("no configured relay"))))
 }

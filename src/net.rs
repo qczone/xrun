@@ -110,6 +110,9 @@ pub async fn websocket_at(address: &str, path: &str, tls: Arc<rustls::ClientConf
                 .and_then(|value| value.parse::<u32>().ok())
                 .context(ErrorCode::VersionMismatch.error("relay omitted selected protocol"))?;
             ProtocolRange::require(selected, 1)?;
+            if path == "/networks/probe/status" || path.ends_with("/claim") {
+                ProtocolRange::require(selected, 3)?;
+            }
             ws.get_mut().relay = Some(RelayContext {
                 protocol: selected,
                 cache: None,

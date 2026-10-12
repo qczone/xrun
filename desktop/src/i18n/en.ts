@@ -140,6 +140,8 @@ export const en = {
     "Could not join. Check the invitation link and your connection.",
   "action.createFailed":
     "Could not create the network. Check the relay deployment link and retry.",
+  "action.relayClaimed":
+    "This relay already belongs to a network. Ask its manager for a join invitation.",
   "action.autostartFailed": "Could not save login settings. Please retry.",
   "action.permissionFailed": "Could not update access. Please retry.",
   "action.allPermissionsFailed":
@@ -489,4 +491,90 @@ export const en = {
   "traffic.todayNetwork": "Network traffic today",
   "traffic.todayDevice": "Device traffic today",
   "traffic.details": "Details",
+  "operation.connect": "Connecting to network…",
+  "operation.cloudflare_accounts": "Loading Cloudflare accounts…",
+  "operation.deploy_cloudflare": "Creating network…",
+  "operation.remote_submit": "Submitting command…",
+  "operation.remote_cancel": "Requesting cancellation…",
+  "action.connectFailed":
+    "Could not connect. Check the connection link and retry.",
+  "setup.useLink": "Use a link",
+  "setup.useCloudflare": "New network",
+  "setup.link": "Connection link",
+  "setup.linkHint":
+    "Paste an invitation or relay deployment link to join or create a network.",
+  "setup.willJoin": "Join an existing network",
+  "setup.willCreate": "Create a network with this device as its manager",
+  "setup.allowManager": "Allow the manager to access this device",
+  "setup.managerAccessHint":
+    "The manager can run commands, transfer files and capture this device. Other members need separate grants.",
+  "setup.registrationHint":
+    "Join without allowing the manager to access this device. You can grant access later in Devices.",
+  "setup.connect": "Connect",
+  "setup.retryConnect": "Retry connection",
+  "cloudflare.description":
+    "Authorize Cloudflare in your browser to deploy a relay and create a network.",
+  "cloudflare.advanced": "Relay options",
+  "cloudflare.workerName": "Relay name",
+  "cloudflare.account": "Cloudflare account",
+  "cloudflare.chooseAccount": "Choose an account",
+  "cloudflare.accounts": "Loading accounts…",
+  "cloudflare.authorization": "Complete authorization in your browser.",
+  "cloudflare.deploying": "Deploying relay…",
+  "cloudflare.connecting": "Creating network and starting service…",
+  "cloudflare.openBrowser": "Open authorization page",
+  "cloudflare.cancel": "Cancel authorization",
+  "cloudflare.managerHint":
+    "This device becomes the manager and starts its background service.",
+  "cloudflare.create": "Authorize and create",
+  "cloudflare.working": "Working…",
+  "cloudflare.createFailed":
+    "Could not create the network. Check the details and retry.",
+  "cloudflare.deployedHint":
+    "Relay deployed. Retry to continue creating the network.",
+  "cloudflare.copyLink": "Copy deployment link",
+  "cloudflare.copyNamed": "Copy deployment link for {name}",
+  "cloudflare.copyFailed": "Could not copy the deployment link. Retry.",
+  "cloudflare.copied": "Deployment link copied",
+  "cloudflare.savedRelays": "Relays deployed from this device",
+  "cloudflare.listFailed": "Could not read saved relay deployments.",
+  "cloudflare.authorizationFailed":
+    "Could not complete the authorization action.",
+  "remote.open": "Run command",
+  "remote.title": "Run a command on {name}",
+  "remote.close": "Close remote command",
+  "remote.direction":
+    "This device → remote device. The remote device must allow your access.",
+  "remote.script": "Command",
+  "remote.options": "Execution options",
+  "remote.shell": "Interpreter",
+  "remote.cwd": "Remote working directory",
+  "remote.defaultCwd": "Use remote default directory",
+  "remote.timeout": "Timeout (seconds)",
+  "remote.run": "Run",
+  "remote.submitting": "Submitting…",
+  "remote.submitFailed":
+    "Command not confirmed. Check the details and query the result.",
+  "remote.recent": "Recent submissions",
+  "remote.new": "New command",
+  "remote.unconfirmed": "Unconfirmed",
+  "remote.readFailed": "Could not read the task result. Retry the query.",
+  "remote.query": "Query result",
+  "remote.output": "Command output",
+  "remote.exitCode": "Exit code {code}",
+  "remote.truncated": "Showing recent output only.",
+  "remote.incomplete": "Output incomplete: {reason}",
+  "remote.cancel": "Cancel task",
+  "remote.cancelTitle": "Cancel the remote task?",
+  "remote.cancelHint":
+    "Ask the device to stop this task. Cancellation requires its acknowledgement.",
+  "remote.cancelFailed": "Cancellation not confirmed. Query the task status.",
+  "remote.recoverHint":
+    "The command may have executed. Query its result first; querying never runs it again.",
+  "remote.backgroundHint":
+    "Accepted tasks continue after closing this window. Use recent submissions to recover results.",
+  "cloudflare.reauthorize": "Authorize again",
+  "remote.accessDenied":
+    "Access denied. Allow this device on the remote device first.",
+  "remote.notAccepted": "Not accepted",
 } as const;

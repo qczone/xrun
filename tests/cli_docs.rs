@@ -50,8 +50,8 @@ async fn offline_help_routes_local_remote_and_device_queries_without_creating_st
         execution.contains("Absolute remote working directory") && execution.contains("Exit 75")
     );
     assert_eq!(
-        ok(cli(home.path(), &["help", "relay", "install"]).await),
-        ok(cli(home.path(), &["relay", "install", "--help"]).await)
+        ok(cli(home.path(), &["help", "relay", "deploy"]).await),
+        ok(cli(home.path(), &["relay", "deploy", "--help"]).await)
     );
     // Windows adds .exe to argv[0]; help must keep the documented command name.
     let executables = tempfile::tempdir().unwrap();
@@ -64,8 +64,8 @@ async fn offline_help_routes_local_remote_and_device_queries_without_creating_st
             ok(cli(home.path(), &["help", "push"]).await),
         ),
         (
-            vec!["relay", "install", "--help"],
-            ok(cli(home.path(), &["help", "relay", "install"]).await),
+            vec!["relay", "deploy", "--help"],
+            ok(cli(home.path(), &["help", "relay", "deploy"]).await),
         ),
     ] {
         let mut command = tokio::process::Command::new(&renamed);

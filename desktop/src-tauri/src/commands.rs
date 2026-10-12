@@ -414,7 +414,19 @@ pub(super) fn register<R: tauri::Runtime>(builder: tauri::Builder<R>) -> tauri::
             hide_icon,
             settings,
             save_settings,
-            choose_directory
+            choose_directory,
+            super::connection::connection_defaults,
+            super::connection::connect,
+            super::connection::cloudflare_accounts,
+            super::connection::cancel_cloudflare_authorization,
+            super::connection::open_cloudflare_authorization,
+            super::connection::deploy_cloudflare,
+            super::connection::cloudflare_relays,
+            super::remote::remote_submit,
+            super::remote::remote_recent,
+            super::remote::remote_query,
+            super::remote::remote_output,
+            super::remote::remote_cancel
         ])
 }
 
@@ -615,7 +627,7 @@ pub(crate) mod tests {
         (app, window)
     }
 
-    fn invoke(
+    pub(crate) fn invoke(
         window: &tauri::WebviewWindow<MockRuntime>,
         command: &str,
         body: Value,
@@ -838,6 +850,12 @@ pub(crate) mod tests {
         Ok(relay)
     }
 
+    fn claim_seeded_relay(cfg: &ServerConfig, id: &Identity) -> Result<()> {
+        let link = xrun::testing::relay::deployment_link(cfg)?;
+        tauri::async_runtime::block_on(xrun::client::create_network(&link, Some(id.name.clone())))?;
+        Ok(())
+    }
+
     fn retry_existing_daemon(window: &tauri::WebviewWindow<MockRuntime>) -> Result<()> {
         let identity = std::fs::read(config::device_dir()?.join("identity.toml"))?;
         let source = config::home_dir()?.join("helper.rs");
@@ -884,8 +902,8 @@ pub(crate) mod tests {
                 let (app, window) = build_app();
                 let error = invoke(
                     &window,
-                    "create_network",
-                    json!({"link":"invalid","name":"local1"}),
+                    "connect",
+                    json!({"link":"invalid","name":"local1","allowManager":false}),
                 )
                 .unwrap_err();
                 assert!(!(error["code"] == "SERVICE_START_FAILED"));
@@ -893,8 +911,8 @@ pub(crate) mod tests {
                 let link = xrun::testing::relay::deployment_link(&cfg)?;
                 let error = invoke(
                     &window,
-                    "create_network",
-                    json!({"link":format!("  {link}  "),"name":" local1 "}),
+                    "connect",
+                    json!({"link":format!("  {link}  "),"name":" local1 ","allowManager":false}),
                 )
                 .unwrap_err();
                 assert!(
@@ -924,6 +942,7 @@ pub(crate) mod tests {
         let cfg: ServerConfig =
             config::read(Path::new(&std::env::var("XRUN_NATIVE_MANAGER_CONFIG")?))?;
         let id = seed(&cfg)?;
+        claim_seeded_relay(&cfg, &id)?;
         tauri::async_runtime::block_on(async {
             let invitation = xrun::testing::network::invite(&id, false).await?;
             config::atomic_private_write(
@@ -978,8 +997,8 @@ pub(crate) mod tests {
                 let (_app, window) = build_app();
                 let error = invoke(
                     &window,
-                    "join",
-                    json!({"link":invitation["link"],"name":"member1"}),
+                    "connect",
+                    json!({"link":invitation["link"],"name":"member1","allowManager":true}),
                 )
                 .unwrap_err();
                 assert!(
@@ -991,7 +1010,12 @@ pub(crate) mod tests {
                 );
                 let id = Identity::load()?;
                 assert_eq!(id.name, "member1");
-                assert_ne!(id.device_id, id.network.unwrap().manager_id);
+                let manager_id = &id.network.as_ref().unwrap().manager_id;
+                assert_ne!(id.device_id, *manager_id);
+                assert_eq!(
+                    DaemonConfig::load()?.allow_from.as_slice(),
+                    std::slice::from_ref(manager_id)
+                );
                 assert!(!config::device_dir()?.join("pending.toml").exists());
                 // The invitation is single-use; retrying service startup requires no link.
                 retry_existing_daemon(&window)?;
@@ -1238,6 +1262,7 @@ pub(crate) mod tests {
                 let cfg = relay_config(&root)?;
                 let id = seed(&cfg)?;
                 let _relay = start_relay(&cfg)?;
+                claim_seeded_relay(&cfg, &id)?;
                 let (_app, window) = build_app();
                 let manager = xrun::testing::network::manager(&id)?;
                 let mut members = vec![];

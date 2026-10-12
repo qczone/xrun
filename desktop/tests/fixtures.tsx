@@ -129,6 +129,11 @@ export async function fixture(
           : value;
       }
       switch (command) {
+        case "connection_defaults":
+          return "mac1";
+        case "cloudflare_relays":
+        case "remote_recent":
+          return [];
         case "window_visible":
           return true;
         case "desktop_navigation":
@@ -176,6 +181,17 @@ export async function fixture(
           return null;
         case "join":
           status.local.joined = true;
+          return null;
+        case "connect":
+          status.local.joined = true;
+          status.network = {
+            network_id: "connected-network",
+            manager_id: "manager",
+            manager_name: "manager1",
+            is_manager: !(args.link as string).startsWith("xrun://"),
+            relay_addresses: ["https://relay.example/private"],
+          };
+          if (args.allowManager) status.allow_from = ["manager"];
           return null;
         case "permission":
           status.allow_from = args.allow ? [args.device as string] : [];

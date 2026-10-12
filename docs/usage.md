@@ -22,7 +22,7 @@
 
 ## 安装
 
-CLI 和 daemon 是同一个 Rust 二进制，运行已构建程序不需要 Rust、Node.js 或 Bun。桌面 App 管理网络、授权与服务，远程执行和文件传输使用 CLI。当前版本为 `0.1.0-rc.5`；本机 CLI 与 daemon 要求发布版本一致，设备与中转按协议范围协商互通。
+CLI 和 daemon 是同一个 Rust 二进制，运行已构建程序不需要 Rust、Node.js 或 Bun。桌面 App 管理网络、授权与服务，也可直接执行远程命令；文件传输使用 CLI。当前版本为 `0.1.0-rc.5`；本机 CLI 与 daemon 要求发布版本一致，设备与中转按协议范围协商互通。
 
 | 平台 | 安装方式 |
 | --- | --- |
@@ -72,50 +72,57 @@ macOS 更新前需关闭已安装的 App，脚本会正常停止旧 daemon，再
 
 ## 开始使用
 
-先准备所有设备可访问的中转，见 `xrun doc relay`。示例中 mac1 是管理设备，linux1 是加入的被控设备。部署中转本身不创建管理设备身份。
+先准备所有设备可访问的中转，见 `xrun doc relay`。中转部署在哪台服务器，不决定管理设备是谁。
 
-在 Mac 创建网络：
+例如在服务器部署 Linux 中转，或在本机授权 Cloudflare 部署中转，二选一：
 
 ```bash
-xrun up --relay '<完整中转地址或 xrun-relay:// 部署链接>' --name mac1
+xrun relay deploy --provider local --addr <服务器IP>:9528
+xrun relay deploy --provider cloudflare --name xrun-relay
 ```
 
-Mac 成为管理设备，准备身份与任务库、安装并启动 daemon，输出 `xrun://` 成员邀请。已有网络在管理设备运行 `xrun invite` 生成新邀请。
-
-在 Linux 加入并允许 Mac 访问：
+在你指定的管理设备 Mac 上使用部署输出的完整链接：
 
 ```bash
-xrun join '<完整的 xrun:// 成员邀请>' --name linux1
-xrun allow-from mac1
+xrun connect '<完整中转部署链接>' --name mac-pro
+xrun invite
+```
+
+`connect` 根据链接自动识别创建或加入。部署链接用于创建网络；本机成为管理设备，准备任务库并启动后台服务。中转验证签名后持久绑定该网络，一个中转只服务一个网络。其他设备必须使用管理设备发出的邀请；不能拿同一个部署链接另建网络。普通部署服务器只负责转发。
+
+在 Linux 或 Windows 上，各用一份新邀请加入，并明确允许管理设备访问本机：
+
+```bash
+xrun connect '<Linux的邀请>' --name linux1 --allow-manager
+xrun connect '<Windows的邀请>' --name win1 --allow-manager
+```
+
+每份邀请 10 分钟内单次使用，加入时管理设备后台服务必须在线。`--allow-manager` 只允许已验证的管理设备访问这台设备，不给管理设备增加反向访问授权，也不授权其他成员。省略这个选项时，`connect` 仅注册并明确拒绝管理设备访问本机，之后可以用 `allow-from` 改变授权。
+
+回到管理设备验证：
+
+```bash
 xrun status
-```
-
-邀请 10 分钟内单次使用，加入时管理设备 daemon 必须在线。普通邀请只注册成员；`allow-from` 在被控的 Linux 执行。
-
-回到 Mac 验证：
-
-```bash
-xrun linux1 info
 xrun linux1 -- uname -s
+xrun win1 -- cmd /c ver
 ```
 
-预期输出 Linux。`SOURCE_NOT_ALLOWED` 表示应在 Linux 允许 mac1。需要反向控制 Mac 时，在 Mac 执行 `xrun allow-from linux1`。
-
-已有成员日常执行不要求管理设备在线，需要中转、两端在线且证书有效。没有可用 systemd 用户服务的 Linux 容器，用 `--no-daemon`，随后在单独终端或环境进程管理器下运行 daemon：
+没有可用 systemd 用户服务的 Linux 容器，用 `--no-daemon`，随后交给环境进程管理器或在单独终端运行 daemon：
 
 ```bash
-xrun join '<完整成员邀请>' --name linux1 --no-daemon
-xrun allow-from mac1
+xrun connect '<完整成员邀请>' --name linux1 --allow-manager --no-daemon
 xrun daemon
 ```
 
-最后一条保持前台运行。`up --no-daemon` 同样只准备身份和数据库；管理设备必须之后运行 daemon 才能接收加入。
+管理设备也可使用 `connect --no-daemon`，但之后必须运行 daemon 才能接受新设备加入。已有成员日常执行不要求管理设备在线，只需要中转、两端在线且证书和授权有效。
+
+显式命令 `up --relay`、`join` 仍可使用：`up` 创建网络并立即生成邀请，`join` 仅接受成员邀请。`join --allow-manager` 可在加入时添加单向授权。
 
 ## 访问权限
 
 管理设备签发成员身份，被控设备决定访问授权，中转接通连接并转发密文。成员身份不自动授予执行、文件、截图、任务查询或转发权限。
 
-`xrun-relay://` 部署链接或 Cloudflare HTTPS 地址用于 `up --relay`，可重复使用；`xrun://` 成员邀请用于 `join`，10 分钟内单次使用。完整链接应通过可信渠道传递。
+`connect` 自动识别链接：`xrun-relay://` 部署链接或 Cloudflare HTTPS 地址用于创建网络，`xrun://` 成员邀请用于加入。部署链接可用于同一管理设备重试；成员邀请 10 分钟内单次使用。完整链接应通过可信渠道传递。
 
 在被控设备执行，例如 Linux 允许或拒绝 Mac：
 
@@ -261,11 +268,15 @@ xrun linux1 forward 0:3000 --json
 
 在「设置 → 启动与显示 → 语言」中选择「跟随系统」「中文」或「English」，切换后立即生效并保存，托盘菜单同步切换。默认跟随系统首选界面语言：中文使用中文，其余语言或读取失败时使用英文。跟随系统时，修改系统语言后重新启动 App 生效。
 
-macOS 13 及以上解压 App ZIP 后打开 `xrun.app`，长期使用建议先放到“应用程序”目录；Windows 运行安装 EXE，安装到当前用户的目录。两者自带 CLI。打开 App 后可以用中转地址创建网络，或粘贴成员邀请加入网络，也可以查看连接状态、控制后台服务，以及允许其他设备访问本机。已有 CLI 身份和配置会直接复用。
+macOS 13 及以上解压 App ZIP 后打开 `xrun.app`，长期使用建议先放到“应用程序”目录；Windows 运行安装 EXE，安装到当前用户的目录。两者自带 CLI。打开 App 后，在“设备 → 使用链接”粘贴部署链接或成员邀请，自动识别创建或加入；本机名称默认填入系统主机名，可修改。加入时可勾选“允许管理设备访问本机”，不勾选则明确拒绝管理设备访问，即使邀请附带互相访问授权也不会覆盖这个选择。完成后自动启动服务。已有 CLI 身份和配置会直接复用。
+
+在“设备 → 新建网络”点击“授权并创建”，App 在浏览器发起 Cloudflare 授权，随后部署包内 Worker、创建网络并启动服务；不需要源码或编译环境。有多个 Cloudflare 账户时先在界面选择账户，中转名称位于“中转选项”。等待授权时可重新打开浏览器或取消授权；账户不符或登录被撤销时，可点击“重新授权”重新选择 Cloudflare 登录。部署完成后若创建网络失败，重试会使用已部署的中转继续创建；若身份已保存但服务启动失败，只需点击启动服务，不会重新消费邀请。已完成的本机部署记录在“设置 → 网络与服务”展示，并可复制完整部署链接。
 
 App 分为设备、活动、设置三个页面。顶部固定显示本机名称、后台服务、中转连接和远程访问状态，可启动服务或暂停、恢复访问；更多菜单可停止服务或打开网络设置。设备页按列表管理其他设备对本机的访问，支持在线筛选和搜索，管理设备可生成邀请。今日流量显示为一行摘要，点击“详情”查看周期、趋势和设备统计。
 
-设备名称下显示系统、架构和短 ID。设备、网络 ID 隐去类型前缀并缩短显示，点击复制图标可复制完整 ID；设备搜索支持名称、系统和 ID。更多菜单可查看版本与最近观察时间。系统信息从已验证的设备连接获取，离线后保留最后一次结果；从未读取过信息的离线设备显示“信息待同步”。
+设备名称下显示系统、架构和短 ID。设备、网络 ID 隐去类型前缀并缩短显示，点击复制图标可复制完整 ID；设备搜索支持名称、系统和 ID。更多菜单可查看版本与最近观察时间，并可在在线且未撤销的设备上选择“执行命令”。系统信息从已验证的设备连接获取，离线后保留最后一次结果；从未读取过信息的离线设备显示“信息待同步”。
+
+远程命令窗口支持脚本、解释器、工作目录与超时，展示 stdout/stderr、任务状态和退出码，也可取消任务。任务提交前保存请求编号；返回不确定时可查询结果，不会自动重跑。关闭窗口后已受理任务继续执行，重新打开可从“最近提交”恢复过去 24 小时内最近 20 条命令；这些记录复用 CLI 的提交库，目标结果仍保存在目标设备。“允许访问本机”控制其他设备访问本机，执行远程命令还需要对方允许本机访问。
 
 “活动”将其他设备在本机执行的命令、流式命令、文件传输、截图和端口转发按受理时间倒序排列，按日期分组，可以按进行中或失败筛选、搜索本页内容。每条操作都是 Job，从受理开始可见；命令详情显示工作目录、耗时、退出结果和 stdout/stderr，其他操作显示对应结果和附件。文件与截图附件保留独立副本，支持预览、查看大图和另存为，期限默认 30 天，可在设置修改。
 
@@ -283,25 +294,30 @@ macOS App 通过 SMAppService 注册包内 LaunchAgent，系统登录项会关�
 
 ## 中转部署
 
-中转可以部署到 Cloudflare，或自建 Linux 主机。Cloudflare 需要本机已登录 Wrangler：
+中转统一使用 `xrun relay deploy --provider <cloudflare|local>` 部署，`link` 查看地址，`remove` 移除部署。`--provider` 必填；命令和 JSON 输出都明确区分后端，部署与地址查询统一返回 `link` 字段。Cloudflare 的 `--name`、`--account`、`--no-browser`、`--dry-run` 与本地的 `--port`、`--addr`、`--no-detect` 不能混用。
+
+部署 Cloudflare 中转，在 macOS、Windows 或 Linux 运行：
 
 ```bash
-bun install --cwd cloudflare --frozen-lockfile
-bun run --cwd cloudflare deploy --name xrun-relay
+xrun relay deploy --provider cloudflare --name xrun-relay
 ```
 
-命令输出完整 HTTPS 地址；重复部署同名 Worker 复用随机路由。保留 `cloudflare/.deploy/` 中的私有部署状态，勿提交到 Git。把完整地址粘贴到 App，或创建网络：
+命令自动打开浏览器，请在 Cloudflare 登录并授权 xrun；多账号时在终端选择账号，也可通过 `--account <账号 ID>` 指定。CLI 直接上传包内预编译的 Worker 和 Durable Object，用户无需源码、Bun、Node.js、Wrangler 或编译环境。账号尚无 workers.dev 子域名时自动创建一个。
+
+成功后输出完整 HTTPS 地址。同名重复部署保留随机路由与 DO 数据，不覆盖其他应用的同名 Worker。部署记录和登录凭据保存在 `~/.xrun/cloudflare/`，应保留该目录。把完整地址粘贴到 App，或创建网络：
 
 ```bash
 xrun up --relay 'https://<Worker 域名>/<随机路由>' --name mac1
 ```
 
-Cloudflare 使用公共 HTTPS 证书，设备间仍使用独立的网络根证书和双向 TLS。中转不保存成员名单、任务、日志或文件，只保留在线连接和临时转发状态。单文件大小不设固定上限；每方向 4 MiB 的传输窗口限制尚未确认的密文，每个网络最多同时保留 8 个中转会话。部署、检查和删除说明见 [cloudflare/README.md](../cloudflare/README.md)。
+可单独执行 `xrun relay login --provider cloudflare` 授权，`xrun relay logout --provider cloudflare` 撤销并移除本地登录凭据，保留已部署中转。`xrun relay deploy --provider cloudflare --dry-run --json` 仅检查包内 Worker，不登录或修改 Cloudflare。无浏览器自动打开能力时使用 `--no-browser`，手动打开命令输出的授权地址；浏览器须能访问本机 127.0.0.1:8976 的回调。自动化环境可以通过 `CLOUDFLARE_API_TOKEN` 和 `CLOUDFLARE_ACCOUNT_ID` 指定账号，令牌不会写入部署记录。
+
+Cloudflare 使用公共 HTTPS 证书，设备间仍使用独立的网络根证书和双向 TLS。中转不保存成员名单、任务、日志或文件，持久化流量汇总。单文件大小不设固定上限；每方向 4 MiB 的传输窗口限制尚未确认的密文，每个网络最多同时保留 8 个中转会话。开发者源码部署与检查说明见 [cloudflare/README.md](../cloudflare/README.md)。
 
 如果使用自建 Linux 中转，在 Linux 主机上执行：
 
 ```bash
-xrun relay install --addr 192.168.1.10:9528
+xrun relay deploy --provider local --addr 192.168.1.10:9528
 ```
 
 替换为其他设备可访问的 IPv4 地址或有 A 记录的域名，并放行 TCP 9528。省略 `--addr` 时自动探测地址；手动地址持久保留。此命令安装 systemd 用户服务并启用 linger，负责开机启动和异常重启中转。中转只接通连接、转发设备间的 TLS 密文，网络管理密钥不保存在中转。
@@ -309,20 +325,23 @@ xrun relay install --addr 192.168.1.10:9528
 部署链接包含中转指纹和固定随机路由，可以重复使用，重启后保留。在中转主机可查看链接、前台运行已配置中转或移除服务：
 
 ```bash
-xrun relay invite
-xrun relay run
-xrun relay uninstall
+xrun relay link --provider local
+xrun relay run --provider local
+xrun relay remove --provider local
 ```
 
-复制完整部署链接到管理设备运行 `up --relay` 创建网络。部署链接与 `join` 使用的成员邀请不同。无 systemd 的环境不能直接使用 `relay install` 完成服务安装，应使用有 systemd 的主机或 Cloudflare。
+复制完整部署链接到管理设备运行 `up --relay` 创建网络。部署链接与 `join` 使用的成员邀请不同。无 systemd 的环境不能直接使用 `relay deploy --provider local` 完成服务安装，应使用有 systemd 的主机或 Cloudflare。
 
-Cloudflare 多账号时设置 `CLOUDFLARE_ACCOUNT_ID`。删除自己部署且本地有记录的中转：
+Cloudflare 中转的地址查询不联网；按本机保存的部署名称查看或删除：
 
 ```bash
-bun run --cwd cloudflare remove --name xrun-relay
+xrun relay link --provider cloudflare --name xrun-relay
+xrun relay remove --provider cloudflare --name xrun-relay --purge
 ```
 
-删除后再次部署换一个名称。部署脚本需要源码和 Bun，日常 CLI 不需要 Bun。
+Cloudflare 删除会永久移除 Worker、DO 命名空间和流量统计，需要显式 `--purge`，且只接受本机有部署记录、远端归属标记匹配的实例。失败后可重复运行同一删除命令；删除开始后再次部署请换一个名称。本地 `remove --provider local` 卸载 systemd 服务并保留本地配置和统计。`logout --provider cloudflare` 仅撤销 xrun 的登录，保留已部署的中转。
+
+`login` / `logout` 只支持 `--provider cloudflare`，前台 `run` 只支持 `--provider local`。使用开发者脚本部署的实例，其删除命令仍见 Cloudflare 子项目文档。
 
 ## 配置与服务
 
@@ -415,6 +434,8 @@ xrun win1 jobs --request-id '<request_id>'
 | 诊断 | 检查与处理 |
 | --- | --- |
 | SOURCE_NOT_ALLOWED | 在被控设备 allow-from 来源 |
+| RELAY_CLAIMED | 中转已绑定网络，请向该网络的管理设备获取成员邀请后 join |
+| RELAY_UNCLAIMED | 在选定的管理设备上用 up --relay 创建网络，或启动已有管理设备的服务完成认领 |
 | ACCESS_PAUSED | 在被控设备 daemon resume |
 | DEVICE_OFFLINE / 连接失败 | 检查目标 daemon、中转和网络，不排队执行 |
 | VERSION_MISMATCH | 检查网络组件是否支持共同协议；本机 CLI/App helper 与 daemon 需使用同一发布版本并重启服务 |

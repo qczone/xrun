@@ -1,4 +1,5 @@
 //! Rust relay assembly, shared socket validation and private deployment state.
+mod admission;
 mod control;
 mod sessions;
 mod traffic;
@@ -81,7 +82,11 @@ mod protocol_tests {
         headers.insert("x-xrun-version", "future-release".parse().unwrap());
         headers.insert("x-xrun-protocol", "1-2".parse().unwrap());
         assert_eq!(protocol(&headers).unwrap(), 2);
-        headers.insert("x-xrun-protocol", "3-3".parse().unwrap());
+        let future = PROTOCOL + 1;
+        headers.insert(
+            "x-xrun-protocol",
+            format!("{future}-{future}").parse().unwrap(),
+        );
         assert!(crate::error::is(
             &protocol(&headers).unwrap_err(),
             ErrorCode::VersionMismatch
@@ -169,6 +174,7 @@ struct Connections {
 struct App {
     connections: Mutex<Connections>,
     traffic: Arc<traffic::Traffic>,
+    admission: admission::Admission,
 }
 
 async fn finish(ws: &mut WebSocket, result: Result<()>) {
@@ -182,12 +188,14 @@ pub async fn run(config: ServerConfig) -> Result<()> {
     let keys = crypto::load_or_create_server(&config)?;
     let path = route(&config)?;
     let app = Arc::new(App {
+        admission: admission::Admission::open(&config.data_dir)?,
         connections: Mutex::new(Connections::default()),
         traffic: Arc::new(traffic::Traffic::open(
             &config.data_dir.join("traffic.sqlite"),
         )),
     });
     let router = Router::new()
+        .route("/networks/{network}/claim", get(admission::claim_route))
         .route("/networks/{network}/status", get(status_route))
         .route("/networks/{network}/traffic", get(traffic::traffic_route))
         .route("/networks/{network}/control", get(control_route))

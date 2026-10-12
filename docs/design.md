@@ -182,7 +182,7 @@ App 的本机状态栏和网络设置从已验证的本地成员清单读取管�
 
 ### 3.1 中转运行条件
 
-Rust 中转部署命令只支持 Linux。使用 systemd 用户服务并启用 linger，用户退出后继续运行并在开机后启动；没有 systemd 时，先准备持久配置，再用 `xrun relay run` 前台运行，由使用方管理进程。
+Rust 中转部署命令只支持 Linux。使用 systemd 用户服务并启用 linger，用户退出后继续运行并在开机后启动；没有 systemd 时，先准备持久配置，再用 `xrun relay run --provider local` 前台运行，由使用方管理进程。
 
 默认监听 TCP 9528，绑定 `0.0.0.0`。中转传输连接仅支持 IPv4；指定域名需有 A 记录。IPv6-only 网络不支持；业务转发在目标回环上可另行尝试 `::1`。使用方放行入站端口，xrun 不自动修改防火墙或云安全组。
 
@@ -191,7 +191,7 @@ Rust 中转部署命令只支持 Linux。使用 systemd 用户服务并启用 li
 ### 3.2 安装中转
 
 ```bash
-xrun relay install --addr 192.168.1.10:9528
+xrun relay deploy --provider local --addr 192.168.1.10:9528
 ```
 
 命令生成或复用中转传输 CA、服务端密钥和固定随机路由，保存监听配置，安装 systemd 用户服务，输出可重复使用的部署链接。中转不创建客户端或管理身份。
@@ -202,11 +202,11 @@ xrun relay install --addr 192.168.1.10:9528
 | `--addr <主机>:<端口>` | 可重复或用逗号分隔；替换发布地址并持久设为手动模式；不代替 `--port` |
 | `--no-detect` | 自动模式下禁用公网 IP 查询，只使用网卡地址；设置持久化 |
 
-例如使用 8080：`xrun relay install --port 8080 --addr 203.0.113.10:8080`。发布地址可以使用映射后的端口，实际监听端口必须分别设置。
+例如使用 8080：`xrun relay deploy --provider local --port 8080 --addr 203.0.113.10:8080`。发布地址可以使用映射后的端口，实际监听端口必须分别设置。
 
 未指定地址时，自动收集非回环、非链路本地的 IPv4 网卡地址，并默认向公共服务查询出口 IP，整个查询最多 2 秒，失败跳过。没有可用地址时要求显式 `--addr`。不识别 Docker/VPN 网卡，也不预先判断候选地址可达性。
 
-`config.toml` 保存 `manual`、发布地址、端口和 `no_detect`。手动模式在重启和省略地址的重复安装时保留，只有显式 `relay install --addr ...` 才替换；自动模式启动时重新探测。出口 IP 不保证外部可达，推荐固定域名或 IP。
+`config.toml` 保存 `manual`、发布地址、端口和 `no_detect`。手动模式在重启和省略地址的重复安装时保留，只有显式 `relay deploy --provider local --addr ...` 才替换；自动模式启动时重新探测。出口 IP 不保证外部可达，推荐固定域名或 IP。
 
 中转传输 CA 约 20 年有效，服务端证书最长 10 年，启动时重新签发，包含回环和发布地址 SAN。发布地址变化不改变中转 CA；网络使用的地址仍需管理设备签名发布，自动探测不会自动修改各网络的清单。
 
@@ -214,9 +214,15 @@ xrun relay install --addr 192.168.1.10:9528
 
 #### Cloudflare 部署
 
-正式代码位于 `cloudflare/`。使用 `bun install --cwd cloudflare --frozen-lockfile` 安装依赖，`bun run --cwd cloudflare deploy --name xrun-relay` 部署。脚本从 Cargo.toml 读取完整版本，部署 Worker 和 SQLite-backed DO 类 `XrunRelay`，将随机路由写入 Worker secret，输出完整 HTTPS 地址。同名重复部署保留路由；`.deploy/<名称>.json` 以 0600 保存部署状态，目录为 0700，不纳入 Git。删除命令只接受有本地部署记录的名称，先 migration 删除 DO 类与命名空间，再删除 Worker。
+正式代码位于 `cloudflare/`。Package 在构建 Rust 前生成 Worker 模块与版本、协议范围、SHA-256 清单，构建脚本校验后嵌入各平台 CLI 和 App helper。用户执行 `xrun relay deploy --provider cloudflare --name xrun-relay`，无需下载源码或安装任何编译工具；`--dry-run` 只校验内置产物。
 
-每个网络对应一个 DO。没有成员、配额、任务或文件数据表；在线控制连接、会话代次、接入 ID 和未确认密文字节数随 WebSocket attachment 保存，休眠后重建连接关系。alarm 仅清理认证超时、待接入和闲置传输；没有持续运行的 JS 心跳，原生 ping/pong 由 CF 运行时处理。
+CLI 使用 xrun 自己注册的 Cloudflare 公共 OAuth 客户端，以 Authorization Code + PKCE S256 授权；回调只监听 127.0.0.1:8976，校验独立随机 state，超时或取消后关闭监听。发布方通过 `CLOUDFLARE_OAUTH_CLIENT_ID` 仓库变量提供公共 Client ID，OAuth client secret 不进入二进制。访问令牌和可选刷新令牌以 0600 文件保存在私有 `~/.xrun/cloudflare/` 目录；过期后刷新，失效授权重新登录。用户也可通过环境变量提供 API token，CLI 不持久化该令牌。
+
+上传通过 Cloudflare 官方 Workers API 完成，包内 Worker、SQLite-backed DO 类 `XrunRelay`、协议范围和随机路由 secret 一起上传。首次部署应用 v1 迁移，更新不重建 DO；没有 workers.dev 子域名的账号自动注册。写入前保存私有部署记录，远端使用随机所有权标记识别本机部署；重试保留原路由，已有其他应用的同名 Worker 拒绝覆盖。登录退出只撤销凭据，保留中转和 DO 数据。
+
+开发者仍可用 `bun run --cwd cloudflare deploy --name xrun-relay` 从源码部署。该入口的私有状态在 `cloudflare/.deploy/`，与原生 CLI 部署记录分开；删除脚本只接受这个入口保存的本地部署记录。
+
+每个部署只有一个固定名称的 DO，只服务首次认领的网络；入口不会按未经授权的网络 ID 分配 DO。SQLite 的 `relay_owner` 表只存一条网络 ID 与管理设备 ID 的绑定，没有成员、配额、任务或文件数据表。在线控制连接、会话代次、接入 ID 和未确认密文字节数随 WebSocket attachment 保存，休眠后重建连接关系。alarm 仅清理认证超时、待接入和闲置传输；没有持续运行的 JS 心跳，原生 ping/pong 由 CF 运行时处理。
 
 流量计数按网络与设备聚合到 DO SQLite 的每日汇总，与 WebSocket 附件分开持久保存；关闭连接或休眠恢复不清零。只计有效密文二进制帧，认证、ACK、缓存声明和心跳不计入；统计存储故障不阻断转发。查询范围、完整性和字段见 [流量统计](traffic.md)。
 
@@ -233,11 +239,11 @@ xrun up --relay 'xrun-relay://192.168.1.10:9528/<中转指纹>#<随机路由>' -
 ```
 
 1. 验证中转 TLS：Rust 中转固定传输 CA 指纹，公共 HTTPS 中转使用 WebPKI；创建本机网络根密钥、管理设备身份和版本 1 的成员清单。
-2. 将管理状态、身份和已验证清单持久保存，不向中转登记网络或发布成员信息。
+2. 通过协议 3 的 `/networks/<网络ID>/claim` 提交设备证书、设备私钥签名与网络根密钥签名。中转原子地持久绑定首次成功认领的网络 ID 和管理设备 ID，确认后才发布本机身份与已验证清单；不发布成员名单。探测和匿名连接不占用绑定，保存失败不开放接入。
 3. 初始化本机任务数据库，默认安装 daemon；`--no-daemon` 只准备身份与数据库。
 4. CLI 生成下一台设备的成员邀请并打印 `join` 命令；App 创建后在设备页单独生成邀请。
 
-部署链接格式为 `xrun-relay://<地址列表>/<中转CA公钥指纹>#<随机路由>`。路由为 128 位随机数，base32 编码 26 字符，部署和重启时复用，客户端将它转为 HTTPS 地址的一段路径。`xrun relay invite` 显示同一部署链接，不新增邀请记录。完整地址必须保密；成员邀请里也含有该路由，过期后路由仍然有效。知道路由只能向管理设备发起配对，占用设备路由、查询在线设备和接通其他设备都需要成员凭证。中转不登记网络，不签发成员，也不按成员判断执行权限。
+部署链接格式为 `xrun-relay://<地址列表>/<中转CA公钥指纹>#<随机路由>`。路由为 128 位随机数，base32 编码 26 字符，部署和重启时复用，客户端将它转为 HTTPS 地址的一段路径。`xrun relay link --provider local` 显示同一部署链接，不新增邀请记录。首次认领前完整地址必须保密，只有成功提交管理身份签名的客户端才能成为管理设备，部署中转本身不生成这个身份。绑定后其他网络返回 `RELAY_CLAIMED`，必须向原管理设备获取成员邀请。邀请里的路由在邀请过期后仍有效，但不能另建网络；占用设备路由、查询在线设备和接通其他设备都需要已绑定网络的成员凭证。中转只保存归属，不签发成员，也不决定设备执行权限。
 
 成员邀请格式为：
 
@@ -260,7 +266,7 @@ xrun://<含随机路由的地址列表>/<网络ID>/<管理设备ID>/<网络根�
 | 目标 daemon 离线 | 返回 `DEVICE_OFFLINE`，不排队；已知撤销目标返回 `DEVICE_REVOKED` |
 | 管理设备本机签名撤销但端点同步失败 | 本地结果保留，报告同步错误和未送达成员，可以重试同步 |
 
-首次创建可重试，保留已有根密钥与身份；不隐式生成新网络。已有管理设备用新部署链接重复 `up --relay ...` 时，可以签名更新中转地址/CA，无需向新中转登记，并通过旧中转上的加密端点连接尽力同步地址变更；需 daemon 已停止，名称不可改变。普通成员不能以 `up` 接管管理身份。
+首次创建可重试，保留已有根密钥与身份；不隐式生成新网络。已有管理设备用新部署链接重复 `up --relay ...` 时，先签名认领尚未绑定的新中转，再签名更新中转地址/CA，并通过旧中转上的加密端点连接尽力同步地址变更。新中转已被其他网络认领时拒绝迁移，保留原身份和原地址；需 daemon 已停止，名称不可改变。已有管理设备的控制连接也可认领尚未绑定的中转；只有原绑定的管理设备 ID 可使用管理签名。普通成员不能以 `up` 接管管理身份，重启与更新不会清除中转归属。
 
 一个网络同时使用一个中转，可以有多个可达地址。收到已验证更新的成员使用新中转；未收到的成员可通过同一网络的新邀请重新 `join` 更新配置。旧中转可能扣住通知，当前创建命令不提供完整迁移送达报告，不能宣称所有成员已经自动切换。
 
@@ -273,6 +279,7 @@ xrun://<含随机路由的地址列表>/<网络ID>/<管理设备ID>/<网络根�
 | `~/.xrun/config.toml` | 监听端口、发布地址、探测模式与中转数据目录 |
 | `~/.xrun/server/` 密钥文件 | 中转传输 CA、服务端证书和私钥；没有网络管理根私钥 |
 | `~/.xrun/server/route` | 固定随机路由；部署链接与客户端地址使用同一值 |
+| `~/.xrun/server/owner.json` | 首次成功认领的网络 ID 与管理设备 ID；原子写入，重启保留，内容无效时拒绝启动 |
 | `~/.xrun/server/traffic.sqlite` | 各网络／设备的 UTC 每日密文收发汇总与统计完整性；独立于端点 Job 库 |
 | 进程内存 | 已验证的控制连接（含管理设备标记）与会话配对；断开后清理，重启后不恢复 |
 | 服务日志或前台 stderr | 连接与转发诊断，非业务原文 |
@@ -334,8 +341,12 @@ xrun <设备> start [执行选项] -- <程序> [程序参数…]
 
 | 命令 | 用途 |
 | --- | --- |
-| `xrun relay install [--port N] [--addr 主机:端口] [--no-detect]` | 在 Linux 安装中转服务，输出网络部署链接 |
-| `xrun relay run`、`xrun relay invite`、`xrun relay uninstall` | 前台运行中转、生成部署链接、移除中转服务 |
+| `xrun relay deploy --provider cloudflare [--name 名称] [--account 账号]` | 浏览器授权后上传内置 Worker，输出部署链接 |
+| `xrun relay deploy --provider local [--port N] [--addr 主机:端口] [--no-detect]` | 在 Linux 安装中转服务，输出网络部署链接 |
+| `xrun relay link --provider <cloudflare\|local> [--name 名称]` | 查看部署链接，Cloudflare 从私有部署记录读取 |
+| `xrun relay remove --provider <cloudflare\|local> [--name 名称] [--purge]` | 本地卸载服务并保留数据；Cloudflare 必须显式 `--purge`，永久删除 Worker 和 DO 数据 |
+| `xrun relay login --provider cloudflare`、`xrun relay logout --provider cloudflare` | 授权、撤销 Cloudflare 登录，保留已部署中转 |
+| `xrun relay run --provider local` | 前台运行本地 Linux 中转 |
 | `xrun up --relay <部署链接> [--name 名称] [--allow] [--no-daemon]` | 在本机创建网络并成为管理设备；CLI 生成成员邀请，默认只注册 |
 | `xrun join <成员邀请> [--name 名称] [--no-daemon]` | 加入网络，或恢复同一身份的地址与证书 |
 | `xrun invite [--allow]` | 管理设备生成成员邀请 |
@@ -827,7 +838,7 @@ Rust 内部用 `error::ErrorCode` 和 `CodedError` 标识错误，协议边界�
 
 发布版本、协议版本和签名格式分别维护。发布版本用于 `xrun --version`、设备信息和诊断。本机 IPC 仍要求 CLI、App helper 与本机 daemon 的发布版本一致，替换程序后需要重启 daemon。
 
-网络协议从整数 1 开始。当前组件交换支持范围 `{"min":1,"max":2}`，选择共同的最高版本；无交集、范围非法或 Ready 的选择不一致，返回 `VERSION_MISMATCH`，不发送业务操作、不消费配对 Token。外层 WSS 请求头 `X-Xrun-Protocol` 使用 `min-max`，升级响应返回选中的整数，保存在该连接的传输上下文中，并带入端到端隧道；外层选择与端到端协商分别维护。`X-Xrun-Version` 仅供诊断。Cloudflare 部署写入 `XRUN_PROTOCOL_MIN` / `XRUN_PROTOCOL_MAX`，与代码实现的范围一致。端到端清单交换、配对请求与响应、Ready 也携带范围；Ready 与配对响应包含 `selected_protocol`。
+网络协议从整数 1 开始。当前组件交换支持范围 `{"min":1,"max":3}`，选择共同的最高版本；无交集、范围非法或 Ready 的选择不一致，返回 `VERSION_MISMATCH`，不发送业务操作、不消费配对 Token。外层 WSS 请求头 `X-Xrun-Protocol` 使用 `min-max`，升级响应返回选中的整数，保存在该连接的传输上下文中，并带入端到端隧道；外层选择与端到端协商分别维护。`X-Xrun-Version` 仅供诊断。Cloudflare 部署写入 `XRUN_PROTOCOL_MIN` / `XRUN_PROTOCOL_MAX`，与代码实现的范围一致。端到端清单交换、配对请求与响应、Ready 也携带范围；Ready 与配对响应包含 `selected_protocol`。
 
 协议 2 在外层隧道增加 `{"type":"cache_state","idle":true|false}`，只允许已认证来源发送，中转原样确认，不转发给目标。来源消费 `Complete` 且本机 CLI 归还后才声明空闲；复用先声明活跃并等待确认，再发端到端探测，最后发送业务。空闲来源禁止发送密文；满额时中转可关闭最早声明空闲的配对连接。静默中的长任务不因此变成空闲。CF 将协商版本与空闲时间写入 WebSocket 附件，休眠恢复后仍按相同规则判断；协议 1 不发送此消息，不启用新版缓存。
 
@@ -868,6 +879,10 @@ Rust 内部用 `error::ErrorCode` 和 `CodedError` 标识错误，协议边界�
 Rust workspace 的核心 package 提供 CLI、daemon 和 Rust 中转；桌面 package 位于 `desktop/src-tauri`。按现有职责划分：membership 管理签名清单与权威状态，network 处理创建/加入和端点同步，relay 接通外层连接，secure 建立端到端 TLS，ipc/session/pool 处理本机通信、CLI 会话与后台连接缓存，daemon/store 管理可靠任务，process 处理原生进程，transfer/screenshot/forwarding/streaming 处理相应业务，service/control/history 提供本机服务与只读历史。Cloudflare Worker、部署脚本和 workerd 测试位于 `cloudflare/`。
 
 支持的公开边界为 `xrun::client` 的用户操作、设置和只读历史，`xrun::runtime` 的进程入口，以及 `protocol` / `error` 的协议类型和错误分类。App 通过这些边界访问核心；config、network、daemon、store、secure 等实现模块保持私有。`xrun::testing` 仅供集成测试夹具，不属于稳定应用 API；`deny(unreachable_pub)` 检查意外公开，client/runtime 边界要求文档注释。
+
+`client::connect` 统一验证部署链接和成员邀请。创建路径调用既有管理设备认领流程；加入路径先验证成员清单，再按用户明确选择保存对管理设备的本机允许或拒绝规则。CLI 与 App 在注册成功后各自启动对应平台服务。Cloudflare 桌面适配器复用原生 OAuth、部署记录和内置 Worker，账户由界面选择，不读取终端输入；取消授权会中止回调服务并释放登录锁，部署重试保留原有私有路由和 ownership 标记。
+
+`client::remote` 通过已授权的端到端 Session 提交脚本、查询和取消任务。复用 `submissions.sqlite`，提交意图在发送前落盘；重复请求编号只查询原任务，数据库代次不匹配时返回 DB_RESET。App 的“最近提交”按本机身份、网络根指纹、目标设备和命令类型筛选，重启界面可恢复查询。输出按序列读取并限制页面与显示缓冲。活动页仍只展示其他设备在本机执行的 Job；远程命令结果从目标设备读取，不增加第二套 Job 表。
 
 `cli.rs` 只负责命令入口，参数、本机操作、远端选择、可靠提交、任务查询、日志、文件和转发分别位于 `src/cli/`。`daemon.rs` 持有共享资源并负责启动、恢复和退出；`src/daemon/requests.rs` 统一检查会话权限并建立 Job 生命周期，再分发给可靠任务、文件和连接型操作模块。各操作保留接收输入后的权限复查、并发配额和进程启动门锁。`network.rs` 保留对外 API 与本机网络状态校验，连接认证、设备同步、链接校验、创建、配对和续证分别位于 `src/network/`；新增请求种类必须显式加入穷尽分发。
 

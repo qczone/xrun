@@ -93,6 +93,19 @@ async function measure(
       });
       return socket;
     }
+    if (protocol.max >= 3) {
+      const path = `/networks/${network.network}/claim`;
+      const owner = await network.member();
+      const socket = await open(path);
+      const challenge = await socket.json();
+      socket.send({
+        type: "authenticate",
+        proof: await owner.proof(path, challenge.nonce, true),
+      });
+      if ((await socket.json()).type !== "relay_info")
+        throw new Error("Relay claim failed");
+      socket.close();
+    }
     const controlPath = `/networks/${network.network}/control`;
     const control = await authenticate(controlPath, target);
     const hello = await control.json();
@@ -117,7 +130,9 @@ async function measure(
       pairs.push({ sender, receiver });
     }
     const namespace = await runtime.getDurableObjectNamespace("NETWORKS");
-    const object = namespace.get(namespace.idFromName(network.network));
+    const object = namespace.get(
+      namespace.idFromName(protocol.max >= 3 ? "relay" : network.network),
+    );
     const metrics = async () =>
       (await object.fetch("https://test/test/metrics")).json() as Promise<{
         enumeration: number;

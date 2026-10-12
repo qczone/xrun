@@ -1,12 +1,12 @@
 //! Offline help routing across the local and device command trees.
 use super::args::{DeviceCli, LocalCli};
-use anyhow::Result;
-use clap::{Command, CommandFactory, Parser};
+use anyhow::{Context, Result};
+use clap::{Command, CommandFactory, Parser, error::ErrorKind};
 
 pub(super) fn run(path: &[String]) -> Result<i32> {
-    let mut local = LocalCli::command();
+    let local = LocalCli::command();
     if path.is_empty() {
-        local.print_help()?;
+        print_help(local)?;
         return Ok(0);
     }
     let remote = DeviceCli::command();
@@ -19,11 +19,24 @@ pub(super) fn run(path: &[String]) -> Result<i32> {
     } else {
         return Ok(unknown(path));
     };
-    let Some(mut command) = select(root, commands, prefix) else {
+    let Some(command) = select(root, commands, prefix) else {
         return Ok(unknown(path));
     };
-    command.print_help()?;
+    print_help(command)?;
     Ok(0)
+}
+
+fn print_help(command: Command) -> Result<()> {
+    // Let Clap choose the same short/long layout as the direct --help entry.
+    let error = command
+        .try_get_matches_from(["xrun", "--help"])
+        .err()
+        .context("command did not handle its help flag")?;
+    if error.kind() != ErrorKind::DisplayHelp {
+        return Err(error.into());
+    }
+    error.print()?;
+    Ok(())
 }
 
 fn select(mut command: Command, path: &[String], prefix: &str) -> Option<Command> {

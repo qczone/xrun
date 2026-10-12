@@ -16,7 +16,7 @@
   <a href="docs/development.md">开发与发布</a>
 </p>
 
-xrun 是面向开发者和 AI 的跨设备工具。通过同一套 CLI，使用已授权的 macOS、Windows 和 Linux 设备完成构建、测试、后台运行、文件传输、端口转发和截图。桌面 App 提供网络、访问权限、后台服务与本机活动的管理界面，支持中英文和明暗主题。
+xrun 是面向开发者和 AI 的跨设备工具。通过同一套 CLI，使用已授权的 macOS、Windows 和 Linux 设备完成构建、测试、后台运行、文件传输、端口转发和截图。桌面 App 提供网络创建、访问权限、后台服务、本机活动和远程命令界面，支持中英文和明暗主题。
 
 ## 能做什么
 
@@ -43,6 +43,8 @@ xrun linux1 forward 8080:3000
 
 创建网络的设备是管理设备，负责签发邀请和撤销成员。**加入网络不等于获得访问权限**：目标设备单独决定允许谁访问本机，所有操作以目标设备的当前用户权限运行。
 
+每个中转只服务一个网络。部署中转的服务器不会自动成为管理设备；在你选择的 Mac、Windows 或 Linux 设备上首次创建网络后，中转会持久绑定该网络和管理设备。其他设备需要管理设备发出的邀请才能加入，不能拿同一个中转链接另建网络。
+
 加入网络时管理设备需要在线；已加入设备的日常执行只需要中转、双方在线且身份和授权有效。
 
 ## 平台与安装
@@ -58,6 +60,8 @@ xrun linux1 forward 8080:3000
 每种系统分别提供两种架构的包：`x86_64` 即 AMD64，`arm64` 对应 Apple Silicon、Windows ARM 和 ARM Linux。
 
 CLI、设备后台服务和 Linux Rust 中转使用同一个二进制。运行发布包不需要安装 Rust、Node.js 或 Bun。
+
+部署 Cloudflare 中转可运行 `xrun relay deploy --provider cloudflare --name xrun-relay`，在浏览器授权后，CLI 直接上传包内的 Worker，无需源码、Wrangler 或编译环境。命令返回完整中转地址，供 App 或 `xrun connect` 创建网络使用。桌面端也可在“新建网络”直接授权、部署并创建。
 
 [Release](https://github.com/qczone/xrun/releases) 提供各平台的独立下载文件、安装脚本和校验清单。[查看安装说明](docs/usage.md#安装)。三个平台均支持命令安装，自动识别架构、校验指定版本及 SHA-256，并返回 JSON 结果，详见 [自动安装](docs/usage.md#ai-和命令行自动安装)。
 

@@ -64,7 +64,7 @@ async fn cli_registration_removal_and_interactive_purge_preserve_identity_until_
     }
     let home = lab.root.path().join("service-home");
     std::fs::create_dir(&home)?;
-    let link = xrun::testing::relay::deployment_link(&lab.relay.config)?;
+    let (mut service_relay, link) = TestRelay::new(&lab.root.path().join("service-relay")).await?;
     ok(
         service_command(&home, &bin, &["up", "--relay", &link, "--name", "managed1"])?
             .output()
@@ -126,5 +126,6 @@ async fn cli_registration_removal_and_interactive_purge_preserve_identity_until_
     );
     stop_daemon(&lab.target, &mut lab.daemon).await?;
     stop_daemon(&lab.source, &mut lab.source_daemon).await?;
+    service_relay.stop().await?;
     Ok(())
 }

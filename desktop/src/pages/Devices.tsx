@@ -12,6 +12,7 @@ import { DeviceRow } from "./devices/DeviceRow";
 import { InvitationDialog } from "./devices/InvitationDialog";
 import { RevocationResult } from "./devices/RevocationResult";
 import { useMembership } from "./devices/useMembership";
+import { RemoteCommandDialog } from "./devices/RemoteCommandDialog";
 
 interface Props {
   active: boolean;
@@ -21,7 +22,7 @@ interface Props {
   feedback: ReactNode;
 }
 export function Devices({ active, paused, status, members, feedback }: Props) {
-  const { busy, pending, confirm, action } = useOperations();
+  const { busy, pending, confirm, action, clearError } = useOperations();
   const { loading, error: listError, message, refresh } = members;
   const devices = members.devices.filter(
     (device) => device.device_id !== status?.local.device_id,
@@ -30,6 +31,7 @@ export function Devices({ active, paused, status, members, feedback }: Props) {
   const joined = !!status?.local.joined;
   const manager = !!network?.is_manager;
   const [inviteOpen, setInviteOpen] = useState(false);
+  const [commandDevice, setCommandDevice] = useState<Device | null>(null);
   const [openDeviceId, setOpenDeviceId] = useState<string | null>(null);
   const [deviceFilter, setDeviceFilter] = useState<"all" | "online">("all");
   const [search, setSearch] = useState("");
@@ -40,12 +42,16 @@ export function Devices({ active, paused, status, members, feedback }: Props) {
   } = useMembership(members);
   useEffect(() => {
     setInviteOpen(false);
+    setCommandDevice(null);
     setOpenDeviceId(null);
     setDeviceFilter("all");
     setSearch("");
   }, [network?.network_id]);
   useEffect(() => {
-    if (!active) setOpenDeviceId(null);
+    if (!active) {
+      setOpenDeviceId(null);
+      setCommandDevice(null);
+    }
     if (!active || !manager) setInviteOpen(false);
   }, [active, manager]);
   const revokeMember = async (device: Device) => {
@@ -74,6 +80,10 @@ export function Devices({ active, paused, status, members, feedback }: Props) {
       }
       close={() => setOpenDeviceId(null)}
       revoke={revokeMember}
+      runCommand={(device) => {
+        clearError();
+        setCommandDevice(device);
+      }}
     />
   );
   const currentMembers = devices.filter((device) => !device.revoked);
@@ -106,7 +116,7 @@ export function Devices({ active, paused, status, members, feedback }: Props) {
           </button>
         )}
       </div>
-      {!inviteOpen && feedback}
+      {!inviteOpen && !commandDevice && feedback}
       <NetworkSetup
         joined={joined}
         busy={busy}
@@ -232,6 +242,19 @@ export function Devices({ active, paused, status, members, feedback }: Props) {
           close={() => setInviteOpen(false)}
           active={active}
           status={status}
+          feedback={feedback}
+        />
+      )}
+      {commandDevice && (
+        <RemoteCommandDialog
+          key={commandDevice.device_id}
+          device={
+            devices.find(
+              (device) => device.device_id === commandDevice.device_id,
+            ) || commandDevice
+          }
+          active={active && !paused}
+          close={() => setCommandDevice(null)}
           feedback={feedback}
         />
       )}

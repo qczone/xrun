@@ -2,6 +2,7 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { fixture, VERSION } from "../tests/fixtures";
 import { RelaySocket } from "./relay-socket";
+import { PROTOCOL } from "../src/protocol";
 
 // Deploy tests/workerd/deployed-probe.ts to a temporary Worker first; the link
 // stays in a private file. No test route is present in the production bundle.
@@ -26,13 +27,14 @@ async function open(path: string): Promise<RelaySocket> {
 async function authenticated(
   path: string,
   member: Awaited<ReturnType<typeof network.member>>,
+  manager = false,
 ) {
   const socket = await open(path);
   const challenge = await socket.json();
   check(challenge.type === "challenge", "missing challenge");
   socket.send({
     type: "authenticate",
-    proof: await member.proof(path, challenge.nonce),
+    proof: await member.proof(path, challenge.nonce, manager),
   });
   return socket;
 }
@@ -54,6 +56,14 @@ async function inspect(): Promise<Snapshot> {
   return response.json() as Promise<Snapshot>;
 }
 try {
+  const claimPath = `/networks/${network.network}/claim`;
+  const claim = await authenticated(claimPath, source, true);
+  const info = await claim.json();
+  check(
+    info.type === "relay_info" && info.owner?.manager_id === source.device,
+    "relay did not confirm its manager",
+  );
+  claim.close();
   const control = await authenticated(
     `/networks/${network.network}/control`,
     target,
@@ -92,7 +102,7 @@ try {
   );
   const cached = before.sockets.find((state) => state.role === "source");
   check(
-    cached?.protocol === 2 && typeof cached.cachedSince === "number",
+    cached?.protocol === PROTOCOL.max && typeof cached.cachedSince === "number",
     "cache state missing before hibernation",
   );
   let after = before;

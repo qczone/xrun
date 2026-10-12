@@ -8,6 +8,8 @@ pub(super) struct Desktop {
     pub(super) action: tokio::sync::Mutex<()>,
     pub(super) error: Mutex<Option<CommandError>>,
     pub(super) navigation: Mutex<Option<DesktopNavigation>>,
+    pub(super) cloudflare_cancel: Mutex<Option<tokio::sync::oneshot::Sender<()>>>,
+    pub(super) cloudflare_authorization: Mutex<Option<String>>,
     upgrade: tokio::sync::OnceCell<()>,
 }
 

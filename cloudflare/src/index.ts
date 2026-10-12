@@ -1,5 +1,5 @@
 import { error, type Env } from "./relay";
-import { route } from "./routes";
+import { RELAY_OBJECT, route } from "./routes";
 import { negotiate, parseRange, PROTOCOL } from "./protocol";
 export { XrunRelay } from "./relay";
 export type { Env } from "./relay";
@@ -37,7 +37,7 @@ export default {
       "X-Xrun-Peer",
       request.headers.get("CF-Connecting-IP") || "unknown",
     );
-    return env.NETWORKS.getByName(parsed.network).fetch(
+    return env.NETWORKS.getByName(RELAY_OBJECT).fetch(
       new Request(request, { headers }),
     );
   },

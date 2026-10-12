@@ -5,7 +5,7 @@ mod relay;
 mod traffic;
 mod version;
 pub use job::*;
-pub use relay::{ChallengeBinding, Proof, RelayMessage, valid_relay_route};
+pub use relay::{ChallengeBinding, Proof, RelayMessage, RelayOwner, valid_relay_route};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 pub use traffic::*;
@@ -486,6 +486,7 @@ pub fn now_ms() -> i64 {
 }
 /// Command names that cannot be used as device selectors.
 pub const RESERVED: &[&str] = &[
+    "connect",
     "up",
     "join",
     "invite",

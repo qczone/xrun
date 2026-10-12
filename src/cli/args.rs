@@ -1,6 +1,6 @@
 //! CLI syntax, options and argument validation.
 use crate::protocol::*;
-use clap::{Args, Parser, Subcommand};
+use clap::{Args, Parser, Subcommand, ValueEnum};
 use std::path::PathBuf;
 
 #[derive(Parser)]
@@ -38,6 +38,26 @@ pub(super) struct LocalCli {
 }
 #[derive(Subcommand)]
 pub(super) enum Local {
+    /// Connect using a relay deployment link or a member invitation
+    #[command(after_help = concat!(
+        "Examples:\n  xrun connect '<deployment link>' --name mac-pro\n",
+        "  xrun connect '<invitation>' --name linux1 --allow-manager\n",
+        "The link selects creation or joining. --allow-manager grants access to this device only.\n",
+        "Full documentation: xrun doc quickstart"
+    ))]
+    Connect {
+        /// Complete deployment link or one-use xrun:// invitation
+        link: String,
+        /// Name for this device (defaults to the local hostname)
+        #[arg(long)]
+        name: Option<String>,
+        /// Allow the verified manager to access this device after joining
+        #[arg(long)]
+        allow_manager: bool,
+        /// Prepare identity and storage without installing a service
+        #[arg(long)]
+        no_daemon: bool,
+    },
     /// Create a network; this device becomes its manager
     #[command(
         after_help = concat!(
@@ -60,7 +80,7 @@ pub(super) enum Local {
         #[arg(long)]
         allow: bool,
     },
-    /// Install or run the Linux ciphertext relay
+    /// Deploy and manage Cloudflare or local Linux relays
     Relay {
         #[command(subcommand)]
         operation: RelayCommand,
@@ -82,6 +102,9 @@ pub(super) enum Local {
         /// Prepare identity and task storage without installing a service
         #[arg(long)]
         no_daemon: bool,
+        /// Allow the verified manager to access this device only
+        #[arg(long)]
+        allow_manager: bool,
     },
     /// Create a ten-minute invitation (registration only by default)
     #[command(
@@ -167,31 +190,94 @@ pub(super) enum Local {
     },
     /// Show concise help for a local or remote command
     Help {
-        /// Command path, such as push or relay install
+        /// Command path, such as push or relay deploy
         #[arg(value_name = "COMMAND", num_args = 0..)]
         command: Vec<String>,
     },
 }
 #[derive(Subcommand)]
 pub(super) enum RelayCommand {
-    /// Configure and start a Linux systemd user relay service
-    Install {
-        /// Listen port (9528 on first install; existing configuration retained)
+    /// Deploy or update a relay using the selected provider
+    #[command(
+        after_help = concat!(
+            "Examples:\n  xrun relay deploy --provider cloudflare --name xrun-relay\n",
+            "  xrun relay deploy --provider local --addr 192.168.1.10:9528\n",
+            "Cloudflare deploys the bundled Worker. Local installs a Linux systemd user service."
+        )
+    )]
+    Deploy {
+        #[arg(long, value_enum)]
+        provider: RelayProvider,
+        /// Cloudflare Worker name; repeat to update the same relay
+        #[arg(long)]
+        name: Option<String>,
+        /// Cloudflare account ID (otherwise reuse the saved account or choose at login)
+        #[arg(long)]
+        account: Option<String>,
+        /// Cloudflare: print the authorization URL without opening a browser
+        #[arg(long)]
+        no_browser: bool,
+        /// Cloudflare: validate the embedded Worker without logging in or changing it
+        #[arg(long)]
+        dry_run: bool,
+        /// Local: listen port (9528 on first deployment; existing configuration retained)
         #[arg(long)]
         port: Option<u16>,
-        /// Reachable HOST:PORT addresses (repeatable or comma-separated)
+        /// Local: reachable HOST:PORT addresses (repeatable or comma-separated)
         #[arg(long,action=clap::ArgAction::Append,value_delimiter=',')]
         addr: Vec<String>,
-        /// Disable automatic address detection
+        /// Local: disable automatic public IP detection
         #[arg(long)]
         no_detect: bool,
     },
-    /// Run the configured relay in the foreground
-    Run,
-    /// Show the relay deployment link
-    Invite,
-    /// Remove the relay service, retaining local data
-    Uninstall,
+    /// Authorize xrun with Cloudflare in your browser
+    Login {
+        #[arg(long, value_enum)]
+        provider: RelayProvider,
+        /// Print the authorization URL without opening a browser
+        #[arg(long)]
+        no_browser: bool,
+    },
+    /// Revoke the saved Cloudflare login; keep deployed relays
+    Logout {
+        #[arg(long, value_enum)]
+        provider: RelayProvider,
+    },
+    /// Run a configured local Linux relay in the foreground
+    Run {
+        #[arg(long, value_enum)]
+        provider: RelayProvider,
+    },
+    /// Show a previously deployed relay's address
+    Link {
+        #[arg(long, value_enum)]
+        provider: RelayProvider,
+        /// Cloudflare Worker name (default: xrun-relay)
+        #[arg(long)]
+        name: Option<String>,
+    },
+    /// Remove a relay deployment
+    Remove {
+        #[arg(long, value_enum)]
+        provider: RelayProvider,
+        /// Cloudflare Worker name (default: xrun-relay)
+        #[arg(long)]
+        name: Option<String>,
+        /// Cloudflare: permanently delete Durable Objects and traffic data (required)
+        #[arg(long)]
+        purge: bool,
+        /// Cloudflare: print any required authorization URL without opening a browser
+        #[arg(long)]
+        no_browser: bool,
+    },
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, ValueEnum)]
+pub(super) enum RelayProvider {
+    /// Cloudflare Worker and Durable Objects
+    Cloudflare,
+    /// Linux systemd user service on this machine
+    Local,
 }
 #[derive(Subcommand)]
 pub(super) enum DaemonCommand {

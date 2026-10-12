@@ -50,11 +50,19 @@ export function useOperationController(
     } catch (e) {
       const detail = errorText(e);
       const title =
-        errorCode(e) === "SERVICE_START_FAILED"
-          ? context.name === "create_network"
-            ? "action.createdServiceFailed"
-            : "action.joinedServiceFailed"
-          : context.title;
+        context.name === "remote_submit" &&
+        errorCode(e) === "SOURCE_NOT_ALLOWED"
+          ? "remote.accessDenied"
+          : (context.name === "create_network" ||
+                context.name === "deploy_cloudflare") &&
+              errorCode(e) === "RELAY_CLAIMED"
+            ? "action.relayClaimed"
+            : errorCode(e) === "SERVICE_START_FAILED"
+              ? context.name === "create_network" ||
+                context.name === "deploy_cloudflare"
+                ? "action.createdServiceFailed"
+                : "action.joinedServiceFailed"
+              : context.title;
       setError({ page: origin, title, detail });
     } finally {
       await refreshStatus();
@@ -70,6 +78,7 @@ export function useOperationController(
       hide_icon: "action.hideFailed",
       join: "action.joinFailed",
       create_network: "action.createFailed",
+      connect: "action.connectFailed",
       autostart: "action.autostartFailed",
       permission: "action.permissionFailed",
       all_permissions: "action.allPermissionsFailed",
@@ -83,7 +92,15 @@ export function useOperationController(
           await api.action(request);
           return true;
         },
-        { name: request.command, title: titles[request.command] },
+        {
+          name:
+            request.command === "connect"
+              ? request.args.link.trim().startsWith("xrun://")
+                ? "join"
+                : "create_network"
+              : request.command,
+          title: titles[request.command],
+        },
       )) === true;
     if (success) {
       if (request.command === "start") setToast("action.started");

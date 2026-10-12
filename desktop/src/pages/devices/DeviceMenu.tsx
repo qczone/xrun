@@ -14,6 +14,7 @@ interface Props {
   toggle: () => void;
   close: () => void;
   revoke: () => void;
+  runCommand: () => void;
 }
 export function DeviceMenu({
   device,
@@ -23,6 +24,7 @@ export function DeviceMenu({
   toggle,
   close,
   revoke,
+  runCommand,
 }: Props) {
   const { busy } = useOperations();
   const menu = useRef<HTMLDetailsElement>(null);
@@ -121,6 +123,17 @@ export function DeviceMenu({
             </>
           )}
         </dl>
+        <button
+          className="remote-command-entry"
+          disabled={busy || device.revoked || !device.online}
+          onClick={() => {
+            close();
+            runCommand();
+          }}
+        >
+          <Icon name="terminal" />
+          {t("remote.open")}
+        </button>
         {manager && !device.revoked && device.device_id !== managerId && (
           <button
             className="danger-button"

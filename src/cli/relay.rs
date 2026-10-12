@@ -1,4 +1,4 @@
-//! Linux relay deployment and address detection.
+//! Provider-aware relay commands and local Linux deployment.
 use crate::error::ErrorCode;
 use crate::{
     config::{self, ServerConfig},
@@ -7,7 +7,146 @@ use crate::{
 use anyhow::{Result, bail};
 use std::time::Duration;
 
+use super::args::{RelayCommand, RelayProvider};
 use super::support::*;
+
+fn require_provider(actual: RelayProvider, expected: RelayProvider, command: &str) -> Result<()> {
+    if actual != expected {
+        let provider = match expected {
+            RelayProvider::Cloudflare => "cloudflare",
+            RelayProvider::Local => "local",
+        };
+        bail!(ErrorCode::InvalidRequest.error(format!(
+            "relay {command} supports only --provider {provider}"
+        )))
+    }
+    Ok(())
+}
+
+pub(super) async fn manage(operation: RelayCommand, json: bool) -> Result<()> {
+    match operation {
+        RelayCommand::Deploy {
+            provider,
+            name,
+            account,
+            no_browser,
+            dry_run,
+            port,
+            addr,
+            no_detect,
+        } => match provider {
+            RelayProvider::Cloudflare => {
+                if port.is_some() || !addr.is_empty() || no_detect {
+                    bail!(
+                        ErrorCode::InvalidRequest
+                            .error("--port, --addr and --no-detect require --provider local")
+                    )
+                }
+                let name = name.as_deref().unwrap_or("xrun-relay");
+                if dry_run {
+                    let bundle = crate::cloudflare::check(name)?;
+                    print(json, &bundle, || {
+                        println!(
+                            "Cloudflare relay {} is bundled (OAuth configured: {})",
+                            crate::protocol::VERSION,
+                            bundle["oauth_configured"]
+                        )
+                    });
+                } else {
+                    let relay = crate::cloudflare::deploy(name, account, no_browser).await?;
+                    print(json, &relay, || {
+                        println!("relay: {}", relay.link);
+                        println!("xrun up --relay '{}'", relay.link);
+                    });
+                }
+            }
+            RelayProvider::Local => {
+                if name.is_some() || account.is_some() || no_browser || dry_run {
+                    bail!(ErrorCode::InvalidRequest.error("--name, --account, --no-browser and --dry-run require --provider cloudflare"))
+                }
+                deploy_local(port, addr, no_detect, json).await?;
+            }
+        },
+        RelayCommand::Login {
+            provider,
+            no_browser,
+        } => {
+            require_provider(provider, RelayProvider::Cloudflare, "login")?;
+            crate::cloudflare::login(no_browser).await?;
+            print(
+                json,
+                &serde_json::json!({"provider":"cloudflare", "authenticated":true}),
+                || println!("Cloudflare login saved"),
+            );
+        }
+        RelayCommand::Logout { provider } => {
+            require_provider(provider, RelayProvider::Cloudflare, "logout")?;
+            crate::cloudflare::logout().await?;
+            print(
+                json,
+                &serde_json::json!({"provider":"cloudflare", "authenticated":false}),
+                || println!("Cloudflare logout complete"),
+            );
+        }
+        RelayCommand::Run { provider } => {
+            require_provider(provider, RelayProvider::Local, "run")?;
+            run_relay().await?;
+        }
+        RelayCommand::Link { provider, name } => match provider {
+            RelayProvider::Cloudflare => {
+                let relay = crate::cloudflare::link(name.as_deref().unwrap_or("xrun-relay"))?;
+                print(json, &relay, || println!("{}", relay.link));
+            }
+            RelayProvider::Local => {
+                if name.is_some() {
+                    bail!(ErrorCode::InvalidRequest.error("--name requires --provider cloudflare"))
+                }
+                require_linux()?;
+                let link = crate::relay::deployment_link(&ServerConfig::load()?)?;
+                print(
+                    json,
+                    &serde_json::json!({"provider":"local", "link":link}),
+                    || println!("{link}"),
+                );
+            }
+        },
+        RelayCommand::Remove {
+            provider,
+            name,
+            purge,
+            no_browser,
+        } => match provider {
+            RelayProvider::Cloudflare => {
+                if !purge {
+                    bail!(ErrorCode::InvalidRequest.error("Cloudflare removal permanently deletes Durable Objects and traffic data; specify --purge"))
+                }
+                let removed =
+                    crate::cloudflare::remove(name.as_deref().unwrap_or("xrun-relay"), no_browser)
+                        .await?;
+                print(json, &removed, || {
+                    println!("Cloudflare relay {} removed", removed.name)
+                });
+            }
+            RelayProvider::Local => {
+                if name.is_some() || purge || no_browser {
+                    bail!(
+                        ErrorCode::InvalidRequest.error(
+                            "--name, --purge and --no-browser require --provider cloudflare"
+                        )
+                    )
+                }
+                require_linux()?;
+                service::uninstall("server").await?;
+                print(
+                    json,
+                    &serde_json::json!({"provider":"local", "removed":true, "data_retained":true}),
+                    || println!("Local relay service removed; data retained"),
+                );
+            }
+        },
+    }
+    Ok(())
+}
 
 async fn detect_addresses(port: u16, no_detect: bool) -> Result<Vec<String>> {
     let mut addresses = vec![];
@@ -65,7 +204,7 @@ pub(super) async fn run_relay() -> Result<()> {
     }
     tokio::select! {result=crate::relay::run(cfg)=>result,_=daemon::shutdown_signal()=>Ok(())}
 }
-pub(super) async fn relay_install(
+async fn deploy_local(
     port: Option<u16>,
     addresses: Vec<String>,
     no_detect: bool,
@@ -105,7 +244,7 @@ pub(super) async fn relay_install(
     }
     print(
         json,
-        &serde_json::json!({"link":link,"addresses":crate::relay::addresses(&cfg)?}),
+        &serde_json::json!({"provider":"local","link":link,"addresses":crate::relay::addresses(&cfg)?}),
         || {
             println!("relay: {}", cfg.addresses.join(", "));
             println!("xrun up --relay '{link}'");

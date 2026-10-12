@@ -5,6 +5,7 @@ import { serviceState } from "../../format";
 import { t } from "../../i18n";
 import { Icon } from "../../components/Icon";
 import { Identifier } from "../../components/Identifier";
+import { CloudflareRelays } from "../../components/CloudflareRelays";
 
 export function NetworkSettings({
   status,
@@ -37,6 +38,7 @@ export function NetworkSettings({
         <Icon name="arrow" />
       </summary>
       <div className="settings-disclosure-content">
+        <CloudflareRelays networkId={network?.network_id} />
         {network && (
           <dl className="network-facts">
             <dt>{t("common.manager")}</dt>

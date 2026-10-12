@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import type { ApiError } from "./errors";
 import type { PlainMessageKey } from "./i18n";
 
@@ -211,6 +212,10 @@ export type ActivityFilter = "all" | "running" | "failed";
 export type ActionRequest =
   | { command: "start" | "stop" | "remove_service" | "hide_icon" }
   | { command: "join" | "create_network"; args: { link: string; name: string } }
+  | {
+      command: "connect";
+      args: { link: string; name: string; allowManager: boolean };
+    }
   | { command: "autostart"; args: { enabled: boolean } }
   | { command: "permission"; args: { device: string; allow: boolean } }
   | { command: "all_permissions"; args: { allow: boolean } }
@@ -232,7 +237,36 @@ export type PendingOperation =
   | "invite"
   | "copy_invitation"
   | "copy_identifier"
-  | "revoke";
+  | "revoke"
+  | "cloudflare_accounts"
+  | "deploy_cloudflare"
+  | "remote_submit"
+  | "remote_cancel";
+
+export interface CloudflareAccount {
+  id: string;
+  name: string;
+}
+export interface RelayDeployment {
+  provider: "cloudflare";
+  name: string;
+  account_id: string;
+  link: string;
+}
+export interface RemoteCommand {
+  request_id: string;
+  script: string;
+  shell: string;
+  cwd: string | null;
+  timeout: number;
+}
+export interface RemoteReceipt {
+  request_id: string;
+  db_id: string;
+  job_id: string | null;
+  status: string;
+  created_at_ms: number;
+}
 export type Operation = <T>(
   operation: () => Promise<T>,
   context: { name: PendingOperation; title: PlainMessageKey },
@@ -253,6 +287,40 @@ export interface Revocation {
 }
 
 export const api = {
+  connectionDefaults: () => invoke<string>("connection_defaults"),
+  cloudflareAccounts: async (
+    onAuthorization: () => void,
+    reauthorize = false,
+  ) => {
+    const unlisten = await listen<string>(
+      "xrun-cloudflare-authorization",
+      onAuthorization,
+    );
+    try {
+      return await invoke<CloudflareAccount[] | null>("cloudflare_accounts", {
+        reauthorize,
+      });
+    } finally {
+      unlisten();
+    }
+  },
+  cancelCloudflareAuthorization: () =>
+    invoke<void>("cancel_cloudflare_authorization"),
+  openCloudflareAuthorization: () =>
+    invoke<void>("open_cloudflare_authorization"),
+  deployCloudflare: (name: string, account: string) =>
+    invoke<RelayDeployment>("deploy_cloudflare", { name, account }),
+  cloudflareRelays: () => invoke<RelayDeployment[]>("cloudflare_relays"),
+  remoteSubmit: (device: string, command: RemoteCommand) =>
+    invoke<CommandJob>("remote_submit", { device, command }),
+  remoteRecent: (device: string) =>
+    invoke<RemoteReceipt[]>("remote_recent", { device }),
+  remoteQuery: (device: string, requestId: string) =>
+    invoke<CommandJob>("remote_query", { device, requestId }),
+  remoteOutput: (device: string, dbId: string, jobId: string, after: number) =>
+    invoke<JobOutput>("remote_output", { device, dbId, jobId, after }),
+  remoteCancel: (device: string, dbId: string, jobId: string) =>
+    invoke<CommandJob>("remote_cancel", { device, dbId, jobId }),
   windowVisible: () => invoke<boolean>("window_visible"),
   desktopNavigation: () =>
     invoke<DesktopNavigation | null>("desktop_navigation"),

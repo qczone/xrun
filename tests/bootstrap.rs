@@ -137,11 +137,18 @@ async fn initial_creation_recovers_only_matching_pending_authority() -> Result<(
                 ..Default::default()
             };
             config::write(&legacy.join(".xrun/daemon.toml"), &cfg)?;
-            ok(cli(&legacy, &["up", "--relay", &link, "--no-daemon"]).await);
+            let (mut replacement, replacement_link) =
+                TestRelay::new(&root.path().join("replacement-relay")).await?;
+            ok(cli(
+                &legacy,
+                &["up", "--relay", &replacement_link, "--no-daemon"],
+            )
+            .await);
             let archived: Identity = config::read(&legacy.join(".xrun/identity.previous.toml"))?;
             assert_eq!(archived.key_pem, old.key_pem);
             let policy: config::DaemonConfig = config::read(&legacy.join(".xrun/daemon.toml"))?;
             assert!(!policy.allow_all && policy.allow_from.is_empty());
+            replacement.stop().await?;
         }
         assert_eq!(std::fs::read(dir.join("root.key"))?, authority_key);
     }

@@ -47,6 +47,54 @@ fn joined(id: Identity) -> Result<JoinInfo> {
     })
 }
 
+/// Meaning of a validated connection link. Inspecting it performs no network IO.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ConnectionKind {
+    /// Create or resume a manager identity using a complete relay deployment link.
+    Create,
+    /// Register a member using an invitation issued by its manager.
+    Join,
+}
+
+/// Validate and classify a deployment link or member invitation.
+pub fn connection_kind(link: &str) -> Result<ConnectionKind> {
+    let link = link.trim();
+    crate::network::validate_connection_link(link)?;
+    if link.starts_with("xrun://") {
+        Ok(ConnectionKind::Join)
+    } else {
+        Ok(ConnectionKind::Create)
+    }
+}
+
+/// Create or join a network with an explicit local rule for its verified manager.
+/// The manager receives no reciprocal grant; false denies its access even when an
+/// invitation contains an optional mutual grant. Services are started
+/// by the CLI or desktop adapter after this operation saves registration and policy.
+pub async fn connect(link: &str, name: Option<String>, allow_manager: bool) -> Result<JoinInfo> {
+    match connection_kind(link)? {
+        ConnectionKind::Create => {
+            if allow_manager {
+                bail!(
+                    ErrorCode::InvalidRequest.error("--allow-manager requires a member invitation")
+                )
+            }
+            create_network(link.trim(), name).await
+        }
+        ConnectionKind::Join => {
+            let id = super::join_identity(link.trim(), name).await?;
+            // Trust the manager in the verified identity and roster, not an
+            // unverified device ID taken from the pasted link. An unchecked
+            // desktop consent must also override an invitation's mutual grant.
+            let roster = crate::network::current(&id)?;
+            config::update_permission(&roster.roster.manager_id, allow_manager)?;
+            crate::control::refresh_access().await?;
+            joined(id)
+        }
+    }
+}
+
 /// Create and publish a manager identity. Success means registration is saved,
 /// not that the daemon is initialized or running. Retryable publication failures
 /// retain pending authority, and never create a second root on retry.

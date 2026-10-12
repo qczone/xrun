@@ -8,6 +8,7 @@
     "test:interop": "bun scripts/build.ts && bun scripts/interop.ts",
     "benchmark": "bun scripts/benchmark-relay.ts",
     "deploy": "bun scripts/deploy.ts",
+    "package": "bun scripts/package.ts",
     "remove": "bun scripts/remove.ts"
   },
   "devDependencies": {

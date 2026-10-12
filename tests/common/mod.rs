@@ -213,7 +213,14 @@ impl TestRelay {
         let log_path = process_log_path(&self.home, "relay");
         let log_offset = std::fs::metadata(&log_path).map_or(0, |m| m.len() as usize);
         if cfg!(target_os = "linux") {
-            self.process = Some(logged(&self.home, &["relay", "run"], "relay")?.spawn()?);
+            self.process = Some(
+                logged(
+                    &self.home,
+                    &["relay", "run", "--provider", "local"],
+                    "relay",
+                )?
+                .spawn()?,
+            );
         } else {
             // Service deployment is Linux-only; other platforms exercise the
             // same relay library with the selected device binary on both ends.

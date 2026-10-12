@@ -97,6 +97,55 @@ async fn authed(
     xrun::testing::network::authenticate(&mut ws, id, network, path, manager).await?;
     Ok(ws)
 }
+async fn claim(cfg: &ServerConfig, network: &Network) -> Result<()> {
+    let path = format!("/networks/{}/claim", network.id);
+    let mut socket = authed(
+        cfg,
+        &network.id,
+        &path,
+        Some(&network.manager_identity),
+        Some(&network.manager),
+    )
+    .await?;
+    let RelayMessage::RelayInfo { owner: Some(owner) } = net::receive(&mut socket).await? else {
+        anyhow::bail!("relay did not confirm ownership");
+    };
+    assert_eq!(owner.network_id, network.id);
+    assert_eq!(owner.manager_id, network.manager_identity.device_id);
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn existing_manager_reconnect_claims_relay_but_an_ordinary_member_cannot() -> Result<()> {
+    let root = tempfile::tempdir()?;
+    let (mut relay, _) = common::TestRelay::new(&root.path().join("relay")).await?;
+    let network = network(&root.path().join("manager"), &relay.config)?;
+    let path = format!("/networks/{}/control", network.id);
+    let mut ordinary = authed(
+        &relay.config,
+        &network.id,
+        &path,
+        Some(&network.source),
+        None,
+    )
+    .await?;
+    refused(&mut ordinary, "RELAY_UNCLAIMED").await?;
+    assert!(!relay.config.data_dir.join("owner.json").exists());
+    let (_manager, _) = control(
+        &relay.config,
+        &network.id,
+        &network.manager_identity,
+        Some(&network.manager),
+    )
+    .await?;
+    let owner: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(relay.config.data_dir.join("owner.json"))?)?;
+    assert_eq!(owner["network_id"], network.id);
+    assert_eq!(owner["manager_id"], network.manager_identity.device_id);
+    let (_member, _) = control(&relay.config, &network.id, &network.source, None).await?;
+    relay.stop().await?;
+    Ok(())
+}
 async fn forged(
     cfg: &ServerConfig,
     path: &str,
@@ -219,6 +268,7 @@ async fn traffic_counts_both_legs_once_and_survives_relay_restart() -> Result<()
             assert!(!server.0.is_finished());
             tokio::time::sleep(Duration::from_millis(20)).await;
         }
+        claim(&cfg, &n).await?;
         let (mut ctl, generation) = control(&cfg, &n.id, &n.target, None).await?;
         let mut sender = source(&cfg, &n.id, &n.target.device_id, Some(&n.source)).await?;
         let sid = incoming(&mut ctl).await?;
@@ -311,6 +361,7 @@ async fn authenticated_devices_behind_one_nat_do_not_share_a_source_quota() -> R
             assert!(!server.0.is_finished());
             tokio::time::sleep(Duration::from_millis(20)).await;
         }
+        claim(&cfg, &network).await?;
         let (mut control, generation) = control(&cfg, &network.id, &network.target, None).await?;
         let mut devices = vec![network.source.clone()];
         for index in 0..4 {
@@ -433,6 +484,7 @@ async fn relay_routes_only_proven_members_and_keeps_binding_and_resource_limits(
             );
         }
 
+        claim(&cfg, &net).await?;
         // A routing slot requires a fresh proof from that device's own key.
         let control_path = format!("/networks/{n}/control");
         let mut anonymous = authed(&cfg, &n, &control_path, None, None).await?;

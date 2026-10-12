@@ -8,44 +8,50 @@ use crate::{
 use anyhow::{Context, Result, bail};
 use std::io::{IsTerminal, Write};
 
-use super::args::{DaemonCommand, Local, LocalCli, PermissionArgs, RelayCommand};
-use super::relay::{relay_install, run_relay};
+use super::args::{DaemonCommand, Local, LocalCli, PermissionArgs};
+use super::relay::run_relay;
 use super::support::*;
 
 pub(super) async fn run(cli: LocalCli) -> Result<i32> {
     let json = cli.json;
     match cli.command {
+        Local::Connect {
+            link,
+            name,
+            allow_manager,
+            no_daemon,
+        } => {
+            let joined = crate::client::connect(&link, name, allow_manager).await?;
+            daemon::init()?;
+            if !no_daemon {
+                service::install("daemon").await?;
+            }
+            print(json, &joined, || {
+                println!("{} ({})", joined.name, joined.device_id)
+            });
+        }
         Local::Up {
             relay,
             name,
             no_daemon,
             allow,
         } => up(&relay, name, no_daemon, allow, json).await?,
-        Local::Relay { operation } => match operation {
-            RelayCommand::Install {
-                port,
-                addr,
-                no_detect,
-            } => relay_install(port, addr, no_detect, json).await?,
-            RelayCommand::Run => run_relay().await?,
-            RelayCommand::Invite => {
-                require_linux()?;
-                let link = crate::relay::deployment_link(&ServerConfig::load()?)?;
-                print(json, &serde_json::json!({"link":link}), || {
-                    println!("{link}")
-                });
-            }
-            RelayCommand::Uninstall => {
-                require_linux()?;
-                service::uninstall("server").await?;
-            }
-        },
+        Local::Relay { operation } => super::relay::manage(operation, json).await?,
         Local::Join {
             link,
             name,
             no_daemon,
+            allow_manager,
         } => {
-            let id = crate::client::join(&link, name).await?;
+            // join remains the explicit invitation-only entry point.
+            if crate::client::connection_kind(&link)? != crate::client::ConnectionKind::Join {
+                bail!(ErrorCode::InvalidLink.error("join requires a member invitation"))
+            }
+            let id = if allow_manager {
+                crate::client::connect(&link, name, true).await?
+            } else {
+                crate::client::join(&link, name).await?
+            };
             daemon::init()?;
             if !no_daemon {
                 service::install("daemon").await?

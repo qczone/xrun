@@ -33,3 +33,32 @@
 .network-setup .hero-actions .primary {
   flex: 1;
 }
+.network-setup-form > label {
+  display: block;
+  font-size: 12px;
+  margin: 16px 0 7px;
+}
+.network-setup-form > .invitation-option {
+  display: flex;
+}
+.setup-advanced {
+  font-size: 12px;
+  margin: 20px 0;
+}
+.setup-advanced summary {
+  color: var(--muted);
+  cursor: pointer;
+}
+.setup-advanced label {
+  display: block;
+  margin: 14px 0 7px;
+}
+.relay-deployment-result {
+  border-left: 2px solid var(--accent);
+  padding-left: 12px;
+  font-size: 12px;
+}
+.cloudflare-relays h3 {
+  font-size: 12px;
+  margin: 0;
+}

@@ -1,0 +1,66 @@
+.remote-command-entry {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  width: 100%;
+  margin-top: 12px;
+}
+.remote-command-dialog {
+  width: min(620px, calc(100vw - 40px));
+  max-height: calc(100vh - 60px);
+  overflow-y: auto;
+}
+.remote-command-dialog .dialog-heading h2 {
+  overflow-wrap: anywhere;
+}
+.remote-command-form > label,
+.remote-options label,
+.remote-recent label {
+  display: block;
+  margin: 16px 0 7px;
+  font-size: 12px;
+}
+.remote-command-form textarea {
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  line-height: 1.6;
+}
+.remote-options {
+  font-size: 12px;
+  margin-top: 16px;
+}
+.remote-options summary {
+  color: var(--muted);
+  cursor: pointer;
+}
+.remote-result {
+  margin-top: 20px;
+}
+.remote-job-state {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 10px;
+  font-size: 12px;
+}
+.remote-output {
+  margin: 12px 0;
+  padding: 14px;
+  min-height: 100px;
+  max-height: 300px;
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--sidebar);
+  font-size: 12px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.remote-output .stderr {
+  color: var(--danger);
+}
+@media (max-width: 600px) {
+  .remote-command-dialog {
+    padding: 18px;
+    width: calc(100vw - 24px);
+  }
+}

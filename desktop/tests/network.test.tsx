@@ -10,28 +10,59 @@ import { Profiler } from "react";
 import { fixture } from "./fixtures";
 import type { Status } from "../src/api";
 import { NetworkSetup } from "../src/components/NetworkSetup";
-import { t } from "../src/i18n";
-test("joining passes the link only to join and clears it from the form", async () => {
-  const { calls } = await fixture({}, false);
-  const link = screen.getByLabelText("邀请链接") as HTMLInputElement;
-  fireEvent.change(link, { target: { value: "xrun://test-secret" } });
-  fireEvent.change(screen.getByLabelText("本机名称"), {
-    target: { value: "mac2" },
+import { setLanguage } from "../src/i18n";
+
+const fillLink = (link: string) =>
+  fireEvent.change(screen.getByLabelText("接入链接"), {
+    target: { value: link },
   });
+const submit = async () => {
   await act(async () => {
-    fireEvent.submit(document.getElementById("join-form")!);
+    fireEvent.submit(document.getElementById("connect-form")!);
   });
-  await waitFor(() =>
-    expect(screen.queryByLabelText("邀请链接") === null).toBe(true),
+};
+
+test("creating on an owned relay directs the device to a manager invitation", async () => {
+  await fixture(
+    {
+      connect: () => {
+        throw { code: "RELAY_CLAIMED", message: "Relay is already claimed" };
+      },
+    },
+    false,
   );
-  expect(calls.find((call) => call.command === "join")?.args).toEqual({
-    link: "xrun://test-secret",
-    name: "mac2",
-  });
-  expect(document.body.textContent).not.toContain("test-secret");
+  fillLink("https://relay.test/secret");
+  expect(screen.getByText("将创建网络，本机成为管理设备")).toBeTruthy();
+  expect(screen.queryByLabelText("允许管理设备访问本机")).toBeNull();
+  await submit();
+  await screen.findByText("中转已绑定网络，请向管理设备获取邀请后加入。");
 });
 
-test("network creation clears secrets, prevents duplicate submissions and opens member management", async () => {
+for (const allowManager of [true, false]) {
+  test(`invitation joining saves explicit manager consent (${allowManager}) and clears the secret`, async () => {
+    const { calls } = await fixture({}, false);
+    fillLink(" xrun://test-secret ");
+    expect(screen.getByText("将加入已有网络")).toBeTruthy();
+    const checkbox = screen.getByLabelText(
+      "允许管理设备访问本机",
+    ) as HTMLInputElement;
+    expect(checkbox.checked).toBe(true);
+    if (!allowManager) fireEvent.click(checkbox);
+    fireEvent.change(screen.getByLabelText("本机名称"), {
+      target: { value: "mac2" },
+    });
+    await submit();
+    await waitFor(() => expect(screen.queryByLabelText("接入链接")).toBeNull());
+    expect(calls.find((call) => call.command === "connect")?.args).toEqual({
+      link: "xrun://test-secret",
+      name: "mac2",
+      allowManager,
+    });
+    expect(document.body.textContent).not.toContain("test-secret");
+  });
+}
+
+test("link detection replaces separate modes and duplicate submissions are prevented", async () => {
   let complete!: () => void;
   const pending = new Promise<void>((resolve) => {
     complete = resolve;
@@ -39,7 +70,7 @@ test("network creation clears secrets, prevents duplicate submissions and opens 
   let current!: Status;
   const { calls, status } = await fixture(
     {
-      create_network: async () => {
+      connect: async () => {
         await pending;
         current.local.joined = true;
         current.network = {
@@ -54,46 +85,32 @@ test("network creation clears secrets, prevents duplicate submissions and opens 
     false,
   );
   current = status;
-  fireEvent.change(screen.getByLabelText("邀请链接"), {
-    target: { value: "xrun://old-secret" },
-  });
-  fireEvent.click(screen.getByRole("button", { name: "创建新网络" }));
-  const link = screen.getByLabelText("中转部署链接") as HTMLInputElement;
-  expect(link.value).toBe("");
-  fireEvent.change(link, { target: { value: "xrun-relay://creation-secret" } });
+  fillLink("xrun://old-secret");
+  expect(screen.getByLabelText("允许管理设备访问本机")).toBeTruthy();
+  fillLink("xrun-relay://creation-secret");
+  expect(screen.queryByLabelText("允许管理设备访问本机")).toBeNull();
   fireEvent.change(screen.getByLabelText("本机名称"), {
     target: { value: "mac2" },
   });
-  fireEvent.submit(document.getElementById("create-network-form")!);
-  fireEvent.submit(document.getElementById("create-network-form")!);
-  expect(
-    calls.filter((call) => call.command === "create_network"),
-  ).toHaveLength(1);
+  fireEvent.submit(document.getElementById("connect-form")!);
+  fireEvent.submit(document.getElementById("connect-form")!);
+  expect(calls.filter((call) => call.command === "connect")).toHaveLength(1);
   await act(async () => complete());
-  await waitFor(() =>
-    expect(screen.queryByLabelText("中转部署链接") === null).toBe(true),
-  );
-  expect(
-    document
-      .querySelector('[data-page="devices"]')
-      ?.getAttribute("aria-current"),
-  ).toBe("page");
-  expect(calls.find((call) => call.command === "create_network")?.args).toEqual(
-    {
-      link: "xrun-relay://creation-secret",
-      name: "mac2",
-    },
-  );
+  await screen.findByRole("button", { name: "邀请设备" });
+  expect(calls.find((call) => call.command === "connect")?.args).toEqual({
+    link: "xrun-relay://creation-secret",
+    name: "mac2",
+    allowManager: false,
+  });
   expect(document.body.textContent).not.toContain("creation-secret");
-  expect(calls.some((call) => call.command === "join")).toBe(false);
 });
 
-test("creation can retry after an identity was saved but publication failed", async () => {
+test("creation can retry after publication fails without discarding its link", async () => {
   let current!: Status;
   let attempts = 0;
   const { calls, status } = await fixture(
     {
-      create_network: () => {
+      connect: () => {
         current.local.joined = true;
         if (++attempts === 1) throw "CONNECT_FAILED: relay unavailable";
       },
@@ -101,37 +118,23 @@ test("creation can retry after an identity was saved but publication failed", as
     false,
   );
   current = status;
-  fireEvent.click(screen.getByRole("button", { name: "创建新网络" }));
-  fireEvent.change(screen.getByLabelText("中转部署链接"), {
-    target: { value: "xrun-relay://retry-secret" },
-  });
-  fireEvent.change(screen.getByLabelText("本机名称"), {
-    target: { value: "mac2" },
-  });
-  await act(async () => {
-    fireEvent.submit(document.getElementById("create-network-form")!);
-  });
-  await screen.findByRole("button", { name: "重试创建网络" });
-  expect(
-    (screen.getByLabelText("中转部署链接") as HTMLInputElement).value,
-  ).toBe("xrun-relay://retry-secret");
-  await act(async () => {
-    fireEvent.submit(document.getElementById("create-network-form")!);
-  });
-  await waitFor(() =>
-    expect(screen.queryByLabelText("中转部署链接") === null).toBe(true),
+  fillLink("xrun-relay://retry-secret");
+  await submit();
+  await screen.findByRole("button", { name: "重试连接" });
+  expect((screen.getByLabelText("接入链接") as HTMLInputElement).value).toBe(
+    "xrun-relay://retry-secret",
   );
-  expect(
-    calls.filter((call) => call.command === "create_network"),
-  ).toHaveLength(2);
+  await submit();
+  await waitFor(() => expect(screen.queryByLabelText("接入链接")).toBeNull());
+  expect(calls.filter((call) => call.command === "connect")).toHaveLength(2);
 });
 
-for (const command of ["join", "create_network"] as const) {
-  test(`${command} clears the link after registration and retries only service startup`, async () => {
+for (const invitation of [true, false]) {
+  test(`registration (${invitation ? "join" : "create"}) retries only service startup after saving identity`, async () => {
     let current!: Status;
     const { calls, status } = await fixture(
       {
-        [command]: () => {
+        connect: () => {
           current.local.joined = true;
           current.local.daemon_running = false;
           current.local.daemon_connected = false;
@@ -149,60 +152,38 @@ for (const command of ["join", "create_network"] as const) {
       false,
     );
     current = status;
-    if (command === "create_network")
-      fireEvent.click(screen.getByRole("button", { name: "创建新网络" }));
-    fireEvent.change(
-      screen.getByLabelText(command === "join" ? "邀请链接" : "中转部署链接"),
-      { target: { value: "xrun://registered-secret" } },
-    );
-    fireEvent.change(screen.getByLabelText("本机名称"), {
-      target: { value: "mac2" },
-    });
-    await act(async () => {
-      fireEvent.submit(
-        document.getElementById(
-          command === "join" ? "join-form" : "create-network-form",
-        )!,
-      );
-    });
+    fillLink(invitation ? "xrun://saved-secret" : "xrun-relay://saved-secret");
+    await submit();
     await screen.findByText(
-      command === "join"
+      invitation
         ? "已加入网络，后台服务未启动。请启动服务。"
         : "网络已创建，后台服务未启动。请启动服务。",
     );
-    await waitFor(() =>
-      expect(
-        screen.queryByLabelText(
-          command === "join" ? "邀请链接" : "中转部署链接",
-        ) === null,
-      ).toBe(true),
+    expect(screen.queryByLabelText("接入链接")).toBeNull();
+    expect(document.body.textContent).not.toContain("saved-secret");
+    await act(async () =>
+      fireEvent.click(screen.getByRole("button", { name: "启动服务" })),
     );
-    expect(document.body.textContent).not.toContain("registered-secret");
-    await act(async () => {
-      fireEvent.click(screen.getByRole("button", { name: "启动服务" }));
-    });
-    await screen.findByText("后台服务已启动");
-    expect(calls.filter((call) => call.command === command)).toHaveLength(1);
+    expect(calls.filter((call) => call.command === "connect")).toHaveLength(1);
     expect(calls.filter((call) => call.command === "start")).toHaveLength(1);
-    expect(screen.queryByRole("alert") === null).toBe(true);
+    expect(screen.queryByRole("alert")).toBeNull();
   });
 }
 
-test("completed registration never reopens the secret form while handling a service startup failure", async () => {
+test("a completed registration never flashes the secret form after a service failure", async () => {
+  setLanguage("zh");
   let complete!: (success: boolean) => void;
   const pending = new Promise<boolean>((resolve) => {
     complete = resolve;
   });
   let registered = false;
-  const visibleAfterRegistration: boolean[] = [];
+  const visible: boolean[] = [];
   const form = () => (
     <Profiler
       id="network-setup"
       onRender={() => {
         if (registered)
-          visibleAfterRegistration.push(
-            document.getElementById("create-network-form") !== null,
-          );
+          visible.push(document.getElementById("connect-form") !== null);
       }}
     >
       <NetworkSetup
@@ -216,15 +197,14 @@ test("completed registration never reopens the secret form while handling a serv
     </Profiler>
   );
   const view = render(form());
-  fireEvent.click(screen.getByRole("button", { name: t("setup.createNew") }));
-  fireEvent.change(screen.getByLabelText(t("setup.relayLink")), {
-    target: { value: "xrun-relay://registered-secret" },
+  fillLink("https://relay.test/secret");
+  fireEvent.change(screen.getByLabelText("本机名称"), {
+    target: { value: "mac2" },
   });
-  fireEvent.submit(document.getElementById("create-network-form")!);
+  fireEvent.submit(document.getElementById("connect-form")!);
   registered = true;
   view.rerender(form());
-  // Observe every commit, including the frame before passive effects clear retry state.
   await act(async () => complete(false));
-  expect(visibleAfterRegistration.length).toBeGreaterThan(0);
-  expect(visibleAfterRegistration.some(Boolean)).toBe(false);
+  expect(visible.length).toBeGreaterThan(0);
+  expect(visible.every((value) => !value)).toBe(true);
 });

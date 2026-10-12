@@ -128,6 +128,8 @@ codes! {
     PermissionDenied => "PERMISSION_DENIED",
     ProgramNotFound => "PROGRAM_NOT_FOUND",
     RelayChanged => "RELAY_CHANGED",
+    RelayClaimed => "RELAY_CLAIMED",
+    RelayUnclaimed => "RELAY_UNCLAIMED",
     RenewTimeout => "RENEW_TIMEOUT",
     RequestConflict => "REQUEST_CONFLICT",
     ResultLost => "RESULT_LOST",
@@ -182,6 +184,8 @@ impl ErrorCode {
                 | Self::DeviceOffline
                 | Self::SessionLimit
                 | Self::NotManager
+                | Self::RelayClaimed
+                | Self::RelayUnclaimed
                 | Self::MigrationRequired
                 | Self::IdentityMismatch
                 | Self::UnknownDevice

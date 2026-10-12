@@ -1,6 +1,8 @@
 import { DEVICE } from "./auth";
 
 export const NETWORK = /^(net_[a-z2-7]{52}|probe)$/;
+/** One durable admission and routing authority per deployed relay. */
+export const RELAY_OBJECT = "relay";
 export const SESSION_TOKEN = /^[a-f0-9]{32}$/;
 interface RouteBase {
   network: string;
@@ -11,6 +13,7 @@ export type ChallengeRoute = RouteBase &
     | { action: "status" }
     | { action: "traffic" }
     | { action: "control" }
+    | { action: "claim" }
     | { action: "connect"; target: string }
   );
 export type AttachRoute = RouteBase & {
@@ -28,7 +31,10 @@ export function relativeRoute(path: string): Route | undefined {
   const [resource, network, action, target, generation, sid] = parts;
   if (resource !== "networks" || !NETWORK.test(network)) return;
   if (
-    (action === "status" || action === "control" || action === "traffic") &&
+    (action === "status" ||
+      action === "control" ||
+      action === "traffic" ||
+      action === "claim") &&
     parts.length === 3
   ) {
     return { network, action, path };
