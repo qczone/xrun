@@ -301,24 +301,57 @@ async fn channel_operation(rt: Arc<Runtime>, mut ws: Ws, pair: PairContext) -> R
         expiry,
         authority_generation,
     };
-    let result=async{
-let Data::SessionProbe {roster_version}=tokio::time::timeout(CONNECT_TIMEOUT,net::receive(&mut ws)).await??
-        else {bail!(ErrorCode::InvalidMessage.error("operation stream requires a membership probe"));
+    let result = async {
+        let Data::SessionProbe { roster_version } =
+            tokio::time::timeout(CONNECT_TIMEOUT, net::receive(&mut ws)).await??
+        else {
+            bail!(ErrorCode::InvalidMessage.error("operation stream requires a membership probe"));
         };
 
-        super::access::refresh(rt.clone(),crate::config::device_dir()?,false).await?;
+        super::access::refresh(rt.clone(), crate::config::device_dir()?, false).await?;
         lease.check(&rt)?;
-        let current=rt.members.require_fresh(&rt.network_id,now_ms())?;
-net::send(&mut ws,&Data::Membership{roster:(roster_version!=current.roster.roster.version).then_some(current.roster),lease:current.lease}).await?;
+        let current = rt.members.require_fresh(&rt.network_id, now_ms())?;
+        net::send(
+            &mut ws,
+            &Data::Membership {
+                roster: (roster_version != current.roster.roster.version).then_some(current.roster),
+                lease: current.lease,
+            },
+        )
+        .await?;
 
-        send_ready(&rt,&mut ws,protocol).await?;
-let Data::Request {request}=tokio::time::timeout(REQUEST_IDLE_TIMEOUT,net::receive(&mut ws)).await??
-        else {bail!(ErrorCode::InvalidMessage.error("one operation per stream"));
+        send_ready(&rt, &mut ws, protocol).await?;
+        let Data::Request { request } =
+            tokio::time::timeout(REQUEST_IDLE_TIMEOUT, net::receive(&mut ws)).await??
+        else {
+            bail!(ErrorCode::InvalidMessage.error("one operation per stream"));
         };
 
-        tokio::select!{result=serve(rt.clone(),&source,generation,&mut ws,request)=>result?,result=access_ended(&rt,&lease)=>return result}
-        net::send(&mut ws,&Data::Complete).await
-    }.await;
+        let changes_remote_state = matches!(
+            &request,
+            Request::Exec { .. }
+                | Request::Push { .. }
+                | Request::Pull { .. }
+                | Request::Screenshot { .. }
+                | Request::ResumeTransfer { .. }
+                | Request::Kill { .. }
+        );
+        tokio::select! {
+            result=serve(rt.clone(),&source,generation,&mut ws,request)=>result?,
+            result=access_ended(&rt,&lease)=>{
+                // Once a request is read, dropping its worker cannot prove a
+                // pending database write or file operation was never committed.
+                if changes_remote_state {
+                    return result.map_err(|error| anyhow::anyhow!(ErrorCode::Unconfirmed.error(
+                        format!("operation interrupted; confirm its outcome: {error:#}")
+                    )));
+                }
+                return result;
+            }
+        }
+        net::send(&mut ws, &Data::Complete).await
+    }
+    .await;
     close_result(&rt, ws, result).await
 }
 
