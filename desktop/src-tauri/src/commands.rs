@@ -852,7 +852,22 @@ pub(crate) mod tests {
     #[test]
     fn permissions_and_pause_persist_through_native_ipc() -> Result<()> {
         isolated("permissions_and_pause_persist_through_native_ipc", || {
-            seed(&relay_config(&config::home_dir()?)?)?;
+            let mut member = seed(&relay_config(&config::home_dir()?)?)?;
+            let dir = config::device_dir()?;
+            let manager = NetworkManager::open(&dir.join("manager"))?;
+            let (key, csr) = xrun::testing::crypto::new_device_request()?;
+            let pair = manager.pair(&manager.invite(false)?, "member1", &csr)?;
+            member.device_id = pair.member.device_id;
+            member.name = pair.member.name;
+            member.cert_pem = pair.cert_pem;
+            member.key_pem = key;
+            RosterCache::open(&dir.join("roster.db"))?
+                .observe(&pair.roster.roster.network_id, &pair.roster)?;
+            member.save()?;
+            drop(manager);
+            // This isolated permission fixture is an ordinary member: manager
+            // grant rejection is covered separately and cannot be bypassed here.
+            std::fs::remove_dir_all(dir.join("manager"))?;
             let (_app, window) = build_app();
             let peer = format!("dev_{}", "a".repeat(32));
             assert_eq!(
@@ -887,7 +902,7 @@ pub(crate) mod tests {
                 let status = invoke(&window, "status", json!({})).unwrap();
                 assert_eq!(status["local"]["remote_access_paused"], paused);
                 assert_eq!(status["deny_from"], json!([peer]));
-                assert_eq!(status["network"]["is_manager"], true);
+                assert_eq!(status["network"]["is_manager"], false);
             }
             let bytes = std::fs::read(config::device_dir()?.join("daemon.toml"))?;
             assert!(
