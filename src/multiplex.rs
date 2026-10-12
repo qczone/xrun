@@ -41,9 +41,50 @@ pub(crate) struct Channel {
     requests: mpsc::Sender<Open>,
     slots: Arc<Semaphore>,
 }
+struct OpenWake(Arc<Shared>);
+impl Drop for OpenWake {
+    fn drop(&mut self) {
+        self.0.changed.notify_one();
+    }
+}
 struct Open {
     reply: oneshot::Sender<Result<Ws>>,
     permit: OwnedSemaphorePermit,
+}
+struct ChannelIo {
+    inner: net::Io,
+    blocked: Arc<AtomicBool>,
+}
+impl AsyncRead for ChannelIo {
+    fn poll_read(
+        mut self: Pin<&mut Self>,
+        cx: &mut TaskContext<'_>,
+        buf: &mut ReadBuf<'_>,
+    ) -> Poll<std::io::Result<()>> {
+        Pin::new(&mut self.inner).poll_read(cx, buf)
+    }
+}
+impl AsyncWrite for ChannelIo {
+    fn poll_write(
+        mut self: Pin<&mut Self>,
+        cx: &mut TaskContext<'_>,
+        bytes: &[u8],
+    ) -> Poll<std::io::Result<usize>> {
+        let result = Pin::new(&mut self.inner).poll_write(cx, bytes);
+        self.blocked.store(result.is_pending(), Ordering::Release);
+        result
+    }
+    fn poll_flush(mut self: Pin<&mut Self>, cx: &mut TaskContext<'_>) -> Poll<std::io::Result<()>> {
+        let result = Pin::new(&mut self.inner).poll_flush(cx);
+        self.blocked.store(result.is_pending(), Ordering::Release);
+        result
+    }
+    fn poll_shutdown(
+        mut self: Pin<&mut Self>,
+        cx: &mut TaskContext<'_>,
+    ) -> Poll<std::io::Result<()>> {
+        Pin::new(&mut self.inner).poll_shutdown(cx)
+    }
 }
 struct Stream {
     inner: Compat<yamux::Stream>,
@@ -107,6 +148,7 @@ impl Channel {
                 ErrorCode::DeviceBusy.error("device pair already has 32 active operations"),
             )?;
         let (reply, response) = oneshot::channel();
+        let _wake = OpenWake(self.shared.clone());
         self.requests
             .send(Open { reply, permit })
             .await
@@ -164,8 +206,12 @@ pub(crate) fn start(ws: Ws, mode: yamux::Mode) -> (Channel, mpsc::Receiver<Ws>) 
     config.set_max_num_streams(MAX_STREAMS);
     config.set_max_connection_receive_window(Some(8 * 1024 * 1024));
     config.set_split_send_size(16 * 1024);
-    let mut connection =
-        yamux::Connection::new(secure::stream_transport(ws).compat(), config, mode);
+    let blocked = Arc::new(AtomicBool::new(false));
+    let io = ChannelIo {
+        inner: secure::stream_transport(ws),
+        blocked: blocked.clone(),
+    };
+    let mut connection = yamux::Connection::new(io.compat(), config, mode);
     tokio::spawn(async move {
         enum Event {
             Inbound(Option<std::result::Result<yamux::Stream, yamux::ConnectionError>>),
@@ -177,48 +223,61 @@ pub(crate) fn start(ws: Ws, mode: yamux::Mode) -> (Channel, mpsc::Receiver<Ws>) 
         let mut pending = None::<Open>;
         let mut idle = false;
         let mut used = false;
-        let result=async {
-            loop{
-                let inactive=shared.active.load(Ordering::Acquire)==0 && pending.is_none();
-                let current_idle=inactive && used;
-                if current_idle!=idle {
-                    if let Some(cache)=&cache{tokio::time::timeout(Duration::from_secs(5),cache.update(current_idle)).await??;}
-                    idle=current_idle;
+        let result = async {
+            loop {
+                if pending.as_ref().is_some_and(|open| open.reply.is_closed()) { pending = None; }
+                let inactive = shared.active.load(Ordering::Acquire) == 0 && pending.is_none();
+                let current_idle = inactive && used;
+                if current_idle != idle {
+                    if let Some(cache) = &cache {
+                        tokio::time::timeout(Duration::from_secs(5), cache.update(current_idle)).await??;
+                    }
+                    idle = current_idle;
                 }
-                if inactive && shared.last.lock().unwrap().elapsed()>=IDLE{break;}
-                let expires=async {
-                    if inactive {let deadline=*shared.last.lock().unwrap()+IDLE;tokio::time::sleep_until(deadline).await;}
-                    else {std::future::pending::<()>().await;}
+                if inactive && shared.last.lock().unwrap().elapsed() >= IDLE { break; }
+                let expires = async {
+                    if inactive {
+                        let deadline = *shared.last.lock().unwrap() + IDLE;
+                        tokio::time::sleep_until(deadline).await;
+                    } else { std::future::pending::<()>().await; }
                 };
-                tokio::select!{
-                    event=poll_fn(|cx|{
-if pending.is_some() && let Poll::Ready(result)=connection.poll_new_outbound(cx){return Poll::Ready(Event::Outbound(pending.take().unwrap(),result));
+                tokio::select! {
+                    event = poll_fn(|cx| {
+                        // Drive resets/closed stream cleanup before allocating a replacement.
+                        // Yamux treats TooManyStreams as a fatal connection error. When its
+                        // socket is backpressured, wait for that socket's registered waker.
+                        if let Poll::Ready(inbound) = connection.poll_next_inbound(cx) {
+                            return Poll::Ready(Event::Inbound(inbound));
                         }
-                        connection.poll_next_inbound(cx).map(Event::Inbound)
-                    })=>match event{
-                        Event::Inbound(Some(Ok(stream)))=>{
-                            if mode==yamux::Mode::Client{bail!(ErrorCode::InvalidMessage.error("target cannot initiate business streams"));}
-                            let ws=framed(stream,shared.clone(),None,Role::Server).await;
+                        if !blocked.load(Ordering::Acquire) && pending.is_some()
+                            && let Poll::Ready(result) = connection.poll_new_outbound(cx) {
+                            return Poll::Ready(Event::Outbound(pending.take().unwrap(), result));
+                        }
+                        Poll::Pending
+                    }) => match event {
+                        Event::Inbound(Some(Ok(stream))) => {
+                            if mode == yamux::Mode::Client { bail!(ErrorCode::InvalidMessage.error("target cannot initiate business streams")); }
+                            let ws = framed(stream, shared.clone(), None, Role::Server).await;
                             incoming.send(ws).await.map_err(|_| ErrorCode::ConnectionClosed.error("channel gateway closed"))?;
-                        },
-                        Event::Inbound(None)=>break,
-                        Event::Inbound(Some(Err(error)))=>return Err(error.into()),
-Event::Outbound(open,Ok(stream))=>{
-                        let ws=framed(stream,shared.clone(),Some(open.permit),Role::Client).await;
-                        let _=open.reply.send(Ok(ws));
-                        },
-                        Event::Outbound(open,Err(error))=>{let _=open.reply.send(Err(error.into()));},
+                        }
+                        Event::Inbound(None) => break,
+                        Event::Inbound(Some(Err(error))) => return Err(error.into()),
+                        Event::Outbound(open, Ok(stream)) => {
+                            let ws = framed(stream, shared.clone(), Some(open.permit), Role::Client).await;
+                            let _ = open.reply.send(Ok(ws));
+                        }
+                        Event::Outbound(open, Err(error)) => { let _ = open.reply.send(Err(error.into())); }
                     },
-open=openings.recv(),if pending.is_none() && mode==yamux::Mode::Client=>match open{Some(open)=>{
-                    pending=Some(open);
-                    used=true;
-                    },None=>break},
-                    _=shared.changed.notified()=>{},
-                    _=shared.stop.notified()=>break,
-                    _=expires=>{},
+                    open = openings.recv(), if pending.is_none() && mode == yamux::Mode::Client => match open {
+                        Some(open) => { pending = Some(open); used = true; }
+                        None => break,
+                    },
+                    _ = shared.changed.notified() => {},
+                    _ = shared.stop.notified() => break,
+                    _ = expires => {},
                 }
             }
-            Ok::<_,anyhow::Error>(())
+            Ok::<_, anyhow::Error>(())
         }.await;
         shared.closed.store(true, Ordering::Release);
         if let Err(error) = result {
@@ -303,9 +362,11 @@ pub(crate) mod tests {
             &client.open().await.err().context("stream cap")?,
             ErrorCode::DeviceBusy
         ));
-        held.pop();
-        let reopened = client.open().await?;
-        drop(reopened);
+        for _ in 0..128 {
+            held.pop();
+            let reopened = tokio::time::timeout(Duration::from_secs(2), client.open()).await??;
+            held.push(reopened);
+        }
         drop(held);
         client.close();
         assert!(crate::error::is(
