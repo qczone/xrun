@@ -34,21 +34,49 @@ fn save_download(
     Ok(path)
 }
 
-fn interrupted_upload(sent: &std::sync::atomic::AtomicBool, json: bool) -> i32 {
-    if sent.load(std::sync::atomic::Ordering::SeqCst) {
-        diagnostic(
-            json,
-            &anyhow::anyhow!(
-                ErrorCode::Unconfirmed
-                    .error("upload interrupted; pull the destination before retrying")
-            ),
-        );
-        75
-    } else {
-        130
+fn show_transfer(
+    json: bool,
+    target: &str,
+    result: crate::client::files::FileTransfer,
+) -> Result<i32> {
+    if result.job.kind() == JobKind::Pull && result.path.is_none() {
+        return Ok(0);
     }
+    print(
+        json,
+        &serde_json::json!({
+            "path":result.path,"device_id":target,"remote_path":result.remote_path,
+            "size":result.size,"sha256":result.sha256,"skipped":result.skipped,
+            "resumed_from":result.resumed_from,"job":job_ref(&result.job),"request_id":result.job.request_id
+        }),
+        || {
+            if let Some(path) = &result.path {
+                println!("{}", path.display());
+            } else {
+                println!("{}", result.remote_path);
+            }
+        },
+    );
+    Ok(0)
 }
 pub(super) async fn run(id: &Identity, target: &str, command: Remote, json: bool) -> Result<i32> {
+    match operation(id, target, command, json).await {
+        Ok(code) => Ok(code),
+        Err(error) => {
+            diagnostic(json, &error);
+            Ok(if crate::error::is(&error, ErrorCode::Unconfirmed) {
+                75
+            } else if net::explicit(&error) || crate::error::is(&error, ErrorCode::DeviceBusy) {
+                125
+            } else if definitive(&error) {
+                1
+            } else {
+                75
+            })
+        }
+    }
+}
+async fn operation(id: &Identity, target: &str, command: Remote, json: bool) -> Result<i32> {
     match command {
         Remote::Push {
             local,
@@ -58,114 +86,36 @@ pub(super) async fn run(id: &Identity, target: &str, command: Remote, json: bool
             no_overwrite,
             expect,
         } => {
-            let input_snapshot;
-            let (file, size, hash) = if local == "-" {
-                let (temp, size, hash) = crate::transfer::snapshot_input(std::io::stdin().lock())?;
-                input_snapshot = temp;
-                (input_snapshot.reopen()?, size, hash)
-            } else {
-                crate::transfer::prepare_upload(Path::new(&local))?
-            };
-            let mut s = session(id, target).await?;
-            let path = remote;
-            let sent = std::sync::atomic::AtomicBool::new(false);
-            let operation = async {
-                sent.store(true, std::sync::atomic::Ordering::SeqCst);
-                s.send_request(Request::Push {
-                    context: JobContext::new(&s.db_id),
-                    path,
+            let result = crate::client::files::push_with_identity(
+                id,
+                target,
+                &local,
+                crate::client::files::UploadOptions {
+                    path: remote,
                     cwd,
-                    size,
-                    sha256: hash.clone(),
                     mkdir,
                     no_overwrite,
                     expect,
-                })
-                .await?;
-                let job = s.accept_operation().await?;
-                net::send_file(&mut s.ws, &file).await?;
-                Ok::<_, anyhow::Error>((response(&mut s.ws).await?, job))
-            };
-            let result = tokio::select! {
-                r=operation=>r,
-                _=tokio::signal::ctrl_c()=>return Ok(interrupted_upload(&sent, json)),
-                _=termination()=>{return Ok(if sent.load(std::sync::atomic::Ordering::SeqCst){75}else{125});},
-            };
-            match result {
-                Ok((Data::File { path, .. }, job)) => {
-                    s.finish().await;
-                    print(
-                        json,
-                        &serde_json::json!({"device_id":target,
-                        "remote_path":path,
-                        "size":size,
-                        "sha256":hash,
-                        "job":job_ref(&job),
-                        "request_id":job.request_id}),
-                        || println!("{path}"),
-                    );
-                    Ok(0)
-                }
-                Ok(_) => bail!(ErrorCode::InvalidMessage.error("expected file confirmation")),
-                Err(e) => {
-                    diagnostic(json, &e);
-                    Ok(
-                        if net::explicit(&e) || crate::error::is(&e, ErrorCode::DeviceBusy) {
-                            125
-                        } else if definitive(&e) {
-                            1
-                        } else {
-                            75
-                        },
-                    )
-                }
-            }
+                },
+            )
+            .await?;
+            show_transfer(json, target, result)
         }
         Remote::Pull { remote, local, cwd } => {
-            let mut s = session(id, target).await?;
-            let path = remote.clone();
-            s.send_request(Request::Pull {
-                context: JobContext::new(&s.db_id),
-                path,
+            let result = crate::client::files::pull_with_identity(
+                id,
+                target,
+                &remote,
+                local.as_deref().map(Path::new),
                 cwd,
-            })
+            )
             .await?;
-            let job = s.accept_operation().await?;
-            let Data::File {
-                path, size, sha256, ..
-            } = response(&mut s.ws).await?
-            else {
-                bail!(ErrorCode::InvalidMessage.error("expected file header"))
-            };
-            let mut temp =
-                net::receive_file_with_prefix(&mut s.ws, size, &sha256, "xrun-pull-").await?;
-            s.finish().await;
-            if local.as_deref() == Some("-") {
-                std::io::copy(temp.as_file_mut(), &mut std::io::stdout().lock())?;
-                return Ok(0);
-            }
-            let local = if let Some(path) = local {
-                crate::transfer::save_local_reader(
-                    &std::env::current_dir()?.join(path),
-                    temp.as_file_mut(),
-                )?
-            } else {
-                temp.as_file().sync_all()?;
-                config::sync_parent(temp.path())?;
-                temp.keep()?.1
-            };
-            print(
-                json,
-                &serde_json::json!({"path":local,
-                        "device_id":target,
-                        "remote_path":path,
-                        "size":size,
-                        "sha256":sha256,
-                        "job":job_ref(&job),
-                        "request_id":job.request_id}),
-                || println!("{}", local.display()),
-            );
-            Ok(0)
+            show_transfer(json, target, result)
+        }
+        Remote::Resume { id: request_id } => {
+            let result =
+                crate::client::files::resume_with_identity(id, target, &request_id).await?;
+            show_transfer(json, target, result)
         }
         Remote::Screenshot {
             local,

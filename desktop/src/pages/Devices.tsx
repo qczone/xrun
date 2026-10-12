@@ -14,6 +14,7 @@ import { InvitationDialog } from "./devices/InvitationDialog";
 import { RevocationResult } from "./devices/RevocationResult";
 import { useMembership } from "./devices/useMembership";
 import { RemoteCommandDialog } from "./devices/RemoteCommandDialog";
+import { FileDialog } from "./devices/FileDialog";
 import { ScreenshotDialog } from "./devices/ScreenshotDialog";
 
 interface Props {
@@ -34,6 +35,7 @@ export function Devices({ active, paused, status, members, feedback }: Props) {
   const manager = !!network?.is_manager;
   const [inviteOpen, setInviteOpen] = useState(false);
   const [commandDevice, setCommandDevice] = useState<Device | null>(null);
+  const [fileDevice, setFileDevice] = useState<Device | null>(null);
   const [captureDevice, setCaptureDevice] = useState<Device | null>(null);
   const [openDeviceId, setOpenDeviceId] = useState<string | null>(null);
   const [deviceFilter, setDeviceFilter] = useState<"all" | "online">("all");
@@ -47,6 +49,7 @@ export function Devices({ active, paused, status, members, feedback }: Props) {
     setInviteOpen(false);
     setCommandDevice(null);
     setCaptureDevice(null);
+    setFileDevice(null);
     setOpenDeviceId(null);
     setDeviceFilter("all");
     setSearch("");
@@ -56,6 +59,7 @@ export function Devices({ active, paused, status, members, feedback }: Props) {
       setOpenDeviceId(null);
       setCommandDevice(null);
       setCaptureDevice(null);
+      setFileDevice(null);
     }
     if (!active || !manager) setInviteOpen(false);
   }, [active, manager]);
@@ -88,6 +92,10 @@ export function Devices({ active, paused, status, members, feedback }: Props) {
       runCommand={(device) => {
         clearError();
         setCommandDevice(device);
+      }}
+      transferFile={(device) => {
+        clearError();
+        setFileDevice(device);
       }}
       captureScreen={(device) => {
         clearError();
@@ -266,6 +274,16 @@ export function Devices({ active, paused, status, members, feedback }: Props) {
           active={active && !paused}
           close={() => setCommandDevice(null)}
           feedback={feedback}
+        />
+      )}
+      {fileDevice && (
+        <FileDialog
+          device={
+            members.devices.find(
+              (device) => device.device_id === fileDevice.device_id,
+            ) || fileDevice
+          }
+          close={() => setFileDevice(null)}
         />
       )}
       {captureDevice && (

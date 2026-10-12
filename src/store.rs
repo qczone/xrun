@@ -195,6 +195,10 @@ impl JobStore {
         let id = id.to_owned();
         self.worker.query(move |db| db.mark_running(&id)).await
     }
+    pub(crate) fn interrupt_transfer(&self, id: &str) -> Result<Job> {
+        let id = id.to_owned();
+        self.worker.call(move |db| db.interrupt_transfer(&id))
+    }
     pub(crate) fn finish_sync(&self, id: &str, outcome: JobOutcome) -> Result<Job> {
         let id = id.to_owned();
         self.worker.call(move |db| db.finish(&id, outcome))

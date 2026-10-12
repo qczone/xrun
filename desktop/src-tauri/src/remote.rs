@@ -133,3 +133,82 @@ mod tests {
         )
     }
 }
+
+#[tauri::command]
+pub(super) async fn choose_transfer_file<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    upload: bool,
+    name: String,
+) -> Result<Option<String>, CommandError> {
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    let dialog = app.dialog().file().set_file_name(name);
+    let chosen = move |path| {
+        let _ = tx.send(path);
+    };
+    if upload {
+        dialog.pick_file(chosen);
+    } else {
+        dialog.save_file(chosen);
+    }
+    rx.await
+        .map_err(CommandError::from_error)?
+        .map(|path| {
+            path.into_path()
+                .map(|path| path.to_string_lossy().into_owned())
+                .map_err(CommandError::from_error)
+        })
+        .transpose()
+}
+#[tauri::command]
+pub(super) fn remote_file_receipts(
+    device: String,
+) -> Result<Vec<xrun::client::files::TransferReceipt>, CommandError> {
+    xrun::client::files::recent(&device).map_err(CommandError::from_error)
+}
+#[tauri::command]
+pub(super) async fn remote_file_upload(
+    state: State<'_, Desktop>,
+    device: String,
+    local: String,
+    options: xrun::client::files::UploadOptions,
+) -> Result<xrun::client::files::FileTransfer, CommandError> {
+    let _guard = state.action.lock().await;
+    xrun::client::files::push(&device, std::path::Path::new(&local), options)
+        .await
+        .map_err(CommandError::from_error)
+}
+#[tauri::command]
+pub(super) async fn remote_file_download(
+    state: State<'_, Desktop>,
+    device: String,
+    remote: String,
+    local: String,
+    cwd: Option<String>,
+) -> Result<xrun::client::files::FileTransfer, CommandError> {
+    let _guard = state.action.lock().await;
+    xrun::client::files::pull(&device, &remote, Some(std::path::Path::new(&local)), cwd)
+        .await
+        .map_err(CommandError::from_error)
+}
+#[tauri::command]
+pub(super) async fn remote_file_resume(
+    state: State<'_, Desktop>,
+    device: String,
+    request_id: String,
+) -> Result<xrun::client::files::FileTransfer, CommandError> {
+    let _guard = state.action.lock().await;
+    xrun::client::files::resume(&device, &request_id)
+        .await
+        .map_err(CommandError::from_error)
+}
+#[tauri::command]
+pub(super) async fn remote_file_cancel(
+    state: State<'_, Desktop>,
+    device: String,
+    request_id: String,
+) -> Result<(), CommandError> {
+    let _guard = state.action.lock().await;
+    xrun::client::files::cancel(&device, &request_id)
+        .await
+        .map_err(CommandError::from_error)
+}

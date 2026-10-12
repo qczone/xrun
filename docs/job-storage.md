@@ -2,7 +2,7 @@
 
 所有业务操作由目标设备接受为一个 Job：`exec`、`stream_exec`、`push`、`pull`、`screenshot`、`forward`。查询、状态轮询和取消不新建 Job。桌面活动只展示其他设备在本机执行的操作，直接读取本机 `daemon.db`，不向其他设备查询。
 
-唯一建表定义是 [src/store/schema.sql](../src/store/schema.sql)。daemon schema 为 3，直接初始化新结构，不迁移或回填旧记录、不保留旧接口。遇到更旧的活动库或提交记录库，先用 SQLite 完整备份（包含 WAL 中已提交的数据）到私有 `database-backups/`，再在事务中建立新结构；备份或建表失败保留原库。未知的较新 schema、非空且无版本的库以及损坏的库仍明确报错。数据库使用 WAL、FULL 持久化和外键约束。
+唯一建表定义是 [src/store/schema.sql](../src/store/schema.sql)。daemon schema 为 4，直接初始化新结构，不迁移或回填旧记录、不保留旧接口。遇到更旧的活动库或提交记录库，先用 SQLite 完整备份（包含 WAL 中已提交的数据）到私有 `database-backups/`，再在事务中建立新结构；备份或建表失败保留原库。未知的较新 schema、非空且无版本的库以及损坏的库仍明确报错。数据库使用 WAL、FULL 持久化和外键约束。
 
 桌面 App 打开时完成这一流程，活动查询等待准备完成。原来运行的旧 daemon 先正常停止、清理操作，再换用当前 App 的 CLI helper 并恢复运行；原来停止的服务保持停止。重启意图保存在私有标记中，失败或退出后可以重试。设备身份、网络成员清单和授权配置保留。旧记录只存在备份中，不显示在新活动；备份不参与附件保留期限的自动清理。
 
@@ -20,7 +20,7 @@
 | kind | TEXT NOT NULL | 六种业务类型之一 |
 | params_json | TEXT NOT NULL | 类型专属参数，必须是合法 JSON |
 | result_json | TEXT | 类型专属结果，未确定时为空 |
-| state | TEXT NOT NULL | accepted/running/succeeded/failed/canceled/timed_out/lost |
+| state | TEXT NOT NULL | accepted/running/interrupted/succeeded/failed/canceled/timed_out/lost |
 | error_code | TEXT | 机器可读错误码 |
 | error_message | TEXT | 最多 1024 UTF-8 字节的诊断 |
 | created_at_ms | INTEGER NOT NULL | 不可变受理时间，时间线排序依据 |
@@ -96,3 +96,9 @@ exec 在客户端断线后继续运行。stream_exec 和 forward 连接绑定，
 时间线按 created_at_ms/job_id 倒序，50 条一页；游标包含 db_id。Job 完成、日志追加或附件到期不会改变受理时间，因此不会将老操作移动到最新位置。running 筛选 accepted/running，failed 筛选 failed/canceled/timed_out/lost。
 
 调用方的 `submissions.sqlite` 独立保存所有类型的 request_id、来源/目标、网络根、db_id、request_hash、kind、label、提交时间和已知 job_id，先记录再发送。`recent` 展示最近 24 小时的提交，记录保留 7 天；它不是活动记录的第二份数据来源。
+
+## 文件续传检查点
+
+传输仍只有原来的 Job。私有 `job-transfers/<job_id>.json` 和 `.blob` 保存原请求、网络、来源、目标、数据库代次、已解析路径、内容大小与摘要、已落盘偏移和到期时间；上传暂存已接收的内容，下载暂存不可变快照。客户端的 `client-transfers/` 保存同一请求与本地不可变副本。检查点单独加锁，不能并发继续同一个传输。
+
+每 1 MiB 窗口先 fsync 内容，再原子落盘偏移，最后回 ACK；每个 64 KiB 块还单独校验明文摘要。断线标记 interrupted（待续传），明确请求才继续，不新建 Job。目标崩溃后保留有效检查点；正常停止或取消结束未完成的操作。24 小时后清理暂存并保留失败摘要，目标最多保留 32 个暂存意图，连接仍受原文件并发配额约束。完成上传的重试返回原结果，不再改写目的文件。

@@ -94,6 +94,7 @@ export function jobState(job: Job): [string, string] {
   const states = {
     accepted: [t("job.accepted"), "active"],
     running: [t("status.running"), "active"],
+    interrupted: [t("job.interrupted"), "neutral"],
     succeeded: [t("job.success"), "success"],
     failed: [t("job.failed"), "failed"],
     canceled: [t("job.canceled"), "neutral"],

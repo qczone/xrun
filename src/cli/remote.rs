@@ -128,8 +128,9 @@ pub(super) async fn run(cli: DeviceCli) -> Result<i32> {
         | Remote::Wait { .. }
         | Remote::Logs { .. }
         | Remote::Kill { .. }) => jobs::run(&id, target, &target_name, command, json).await,
-        command @ (Remote::Push { .. } | Remote::Pull { .. } | Remote::Screenshot { .. }) => {
-            files::run(&id, target, command, json).await
-        }
+        command @ (Remote::Push { .. }
+        | Remote::Pull { .. }
+        | Remote::Resume { .. }
+        | Remote::Screenshot { .. }) => files::run(&id, target, command, json).await,
     }
 }

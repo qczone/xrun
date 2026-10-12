@@ -160,6 +160,8 @@ pub enum JobState {
     Accepted,
     /// Operation is running.
     Running,
+    /// File connection interrupted; the source may explicitly resume the same intent.
+    Interrupted,
     /// Operation completed successfully.
     Succeeded,
     /// Operation failed, including a nonzero process exit.
@@ -174,7 +176,7 @@ pub enum JobState {
 impl JobState {
     /// Whether lifecycle updates must no longer return this task to active state.
     pub fn terminal(&self) -> bool {
-        !matches!(self, Self::Accepted | Self::Running)
+        !matches!(self, Self::Accepted | Self::Running | Self::Interrupted)
     }
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -293,6 +295,13 @@ pub enum Request {
     Kill {
         /// Target-local job identifier.
         id: String,
+    },
+    /// Explicit recovery of an existing file job; never creates another operation.
+    ResumeTransfer {
+        /// Source-owned target job.
+        id: String,
+        /// Original request and database binding.
+        context: JobContext,
     },
     /// Receive a file with optional compare-and-replace semantics.
     Push {
@@ -441,6 +450,29 @@ pub enum Data {
         format: Option<ScreenshotFormat>,
         /// Actual encoded image MIME, absent for ordinary files.
         mime: Option<String>,
+    },
+    /// Verified transfer cursor selected by the recipient.
+    TransferOffer {
+        /// Immutable content size.
+        size: u64,
+        /// Immutable content digest.
+        sha256: String,
+        /// Durable acknowledged offset.
+        offset: u64,
+        /// Full content already exists; no payload follows.
+        skipped: bool,
+    },
+    /// Download recipient proposes a verified durable prefix.
+    TransferWant {
+        /// Existing full file digest or saved prefix digest.
+        sha256: String,
+        /// Length covered by that digest.
+        offset: u64,
+    },
+    /// Acknowledgment issued after fsync and checkpoint publication.
+    TransferAck {
+        /// Exact durable byte offset.
+        offset: u64,
     },
     /// End of the current binary/log stream.
     End,

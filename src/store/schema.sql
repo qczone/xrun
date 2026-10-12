@@ -11,7 +11,7 @@ CREATE TABLE jobs(
     kind TEXT NOT NULL CHECK(kind IN ('exec','stream_exec','push','pull','screenshot','forward')),
     params_json TEXT NOT NULL CHECK(json_valid(params_json)),
     result_json TEXT CHECK(result_json IS NULL OR json_valid(result_json)),
-    state TEXT NOT NULL CHECK(state IN ('accepted','running','succeeded','failed','canceled','timed_out','lost')),
+    state TEXT NOT NULL CHECK(state IN ('accepted','running','interrupted','succeeded','failed','canceled','timed_out','lost')),
     error_code TEXT,
     error_message TEXT,
     created_at_ms INTEGER NOT NULL,
@@ -28,10 +28,10 @@ CREATE TABLE jobs(
 );
 CREATE INDEX jobs_timeline ON jobs(created_at_ms DESC,job_id DESC);
 CREATE INDEX jobs_source_timeline ON jobs(source_device_id,created_at_ms DESC,job_id DESC);
-CREATE INDEX jobs_active ON jobs(kind,source_device_id) WHERE state IN ('accepted','running');
+CREATE INDEX jobs_active ON jobs(kind,source_device_id) WHERE state IN ('accepted','running','interrupted');
 CREATE INDEX jobs_failed ON jobs(created_at_ms DESC,job_id DESC)
     WHERE state IN ('failed','canceled','timed_out','lost');
-CREATE INDEX jobs_finished_logs ON jobs(finished_at_ms) WHERE log_bytes>0 AND state NOT IN ('accepted','running');
+CREATE INDEX jobs_finished_logs ON jobs(finished_at_ms) WHERE log_bytes>0 AND state NOT IN ('accepted','running','interrupted');
 
 CREATE TABLE job_logs(
     job_id TEXT NOT NULL REFERENCES jobs(job_id) ON DELETE CASCADE,

@@ -174,7 +174,11 @@ async fn heartbeat(ws: &mut net::Ws, last: tokio::time::Instant) -> Result<()> {
     Ok(())
 }
 async fn prune_logs(rt: Arc<Runtime>) -> Result<()> {
-    tokio::task::spawn_blocking(move || rt.store.prune()).await?
+    tokio::task::spawn_blocking(move || {
+        rt.store.prune()?;
+        super::transfers::expire_at(&crate::config::device_dir()?, &rt.store)
+    })
+    .await?
 }
 async fn handle_control_message(
     rt: &Arc<Runtime>,

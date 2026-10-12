@@ -57,7 +57,7 @@ async fn transfers_deduplicate_by_type_and_request_without_replaying_files() -> 
         assert_eq!(accepted.state, JobState::Accepted);
         assert!(accepted.result.is_none());
         assert_eq!(store.active_count()?, 0, "file jobs must not consume command admission");
-        net::send_bytes(&mut ws, bytes).await?;
+        net::send_transfer_bytes(&mut ws, bytes).await?;
         assert!(matches!(net::receive::<Data>(&mut ws).await?, Data::File {..}));
         assert!(matches!(net::receive::<Data>(&mut ws).await?, Data::Complete));
         let completed = finished(&store, &accepted.job_id).await?;
@@ -73,6 +73,13 @@ async fn transfers_deduplicate_by_type_and_request_without_replaying_files() -> 
         assert_eq!(repeated.state, JobState::Succeeded);
         assert!(matches!(net::receive::<Data>(&mut ws).await?, Data::Complete));
         assert_eq!(std::fs::read(&path)?, b"subsequent local edit");
+        let (recovered, fresh) = admission(&mut ws, Request::ResumeTransfer {id:accepted.job_id.clone(),context:context.clone()}).await?;
+        assert!(!fresh);assert_eq!(recovered.job_id,accepted.job_id);
+        assert!(matches!(net::receive::<Data>(&mut ws).await?,Data::TransferOffer {skipped:true,..}));
+        assert!(matches!(net::receive::<Data>(&mut ws).await?,Data::File {sha256:hash,..} if hash==sha256(bytes)));
+        assert!(matches!(net::receive::<Data>(&mut ws).await?,Data::Complete));
+        assert_eq!(std::fs::read(&path)?,b"subsequent local edit");
+
         assert_eq!(std::fs::read(lab.target.join(".xrun/attachments").join(format!("{}.blob", completed.attachments[0].metadata.id)))?, bytes);
         let changed_type = Request::Pull {context:context.clone(), path:path.to_string_lossy().into(), cwd:None};
         net::send(&mut ws, &Data::Request {request:changed_type}).await?;

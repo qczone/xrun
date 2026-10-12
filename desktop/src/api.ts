@@ -95,6 +95,7 @@ export interface JobCommon {
   state:
     | "accepted"
     | "running"
+    | "interrupted"
     | "succeeded"
     | "failed"
     | "canceled"
@@ -214,6 +215,29 @@ export interface JobOutput {
   has_more: boolean;
 }
 
+export interface TransferReceipt {
+  request_id: string;
+  target_device_id: string;
+  kind: "push" | "pull";
+  label: string;
+  expires_at_ms: number;
+}
+export interface FileTransfer {
+  path: string | null;
+  remote_path: string;
+  size: number;
+  sha256: string;
+  skipped: boolean;
+  resumed_from: number;
+  job: FileJob;
+}
+export interface UploadOptions {
+  path: string;
+  cwd: string | null;
+  mkdir: boolean;
+  no_overwrite: boolean;
+  expect: string | null;
+}
 export interface Attachment {
   mime: string | null;
   id: string;
@@ -386,6 +410,28 @@ export const api = {
   desktopNavigation: () =>
     invoke<DesktopNavigation | null>("desktop_navigation"),
   status: () => invoke<Status>("status"),
+  chooseTransferFile: (upload: boolean, name: string) =>
+    invoke<string | null>("choose_transfer_file", { upload, name }),
+  fileReceipts: (device: string) =>
+    invoke<TransferReceipt[]>("remote_file_receipts", { device }),
+  fileUpload: (device: string, local: string, options: UploadOptions) =>
+    invoke<FileTransfer>("remote_file_upload", { device, local, options }),
+  fileDownload: (
+    device: string,
+    remote: string,
+    local: string,
+    cwd: string | null,
+  ) =>
+    invoke<FileTransfer>("remote_file_download", {
+      device,
+      remote,
+      local,
+      cwd,
+    }),
+  fileResume: (device: string, request_id: string) =>
+    invoke<FileTransfer>("remote_file_resume", { device, request_id }),
+  fileCancel: (device: string, request_id: string) =>
+    invoke<void>("remote_file_cancel", { device, request_id }),
   settings: () => invoke<Settings>("settings"),
   saveMembershipLease: (minutes: number) =>
     invoke<void>("save_membership_lease", { minutes }),

@@ -7,7 +7,7 @@ pub(crate) const JOB_COLUMNS: &str = concat!(
     "leftover_possible,last_log_seq,log_bytes,output_complete,output_loss_reason,",
     "(SELECT value FROM meta WHERE key='db_id')"
 );
-pub(crate) const JOB_SCHEMA_VERSION: i64 = 3;
+pub(crate) const JOB_SCHEMA_VERSION: i64 = 4;
 const JOB_SCHEMA: &str = include_str!("schema.sql");
 
 pub(crate) fn prepare_upgrade(path: &Path) -> Result<()> {
@@ -250,7 +250,7 @@ impl Database {
         Ok(self
             .db
             .prepare(&format!(
-                "SELECT {JOB_COLUMNS} FROM jobs WHERE state IN ('accepted','running')"
+                "SELECT {JOB_COLUMNS} FROM jobs WHERE state IN ('accepted','running','interrupted')"
             ))?
             .query_map([], |row| read_job(row, 0))?
             .collect::<rusqlite::Result<_>>()?)
@@ -258,7 +258,7 @@ impl Database {
     pub(super) fn unfinished_ids(&self) -> Result<Vec<String>> {
         Ok(self
             .db
-            .prepare("SELECT job_id FROM jobs WHERE state IN ('accepted','running')")?
+            .prepare("SELECT job_id FROM jobs WHERE state IN ('accepted','running','interrupted')")?
             .query_map([], |row| row.get(0))?
             .collect::<rusqlite::Result<_>>()?)
     }
@@ -267,7 +267,7 @@ impl Database {
             .db
             .query_row(
                 "SELECT COUNT(*) FROM jobs WHERE kind IN ('exec','stream_exec')
-            AND state IN ('accepted','running')",
+            AND state IN ('accepted','running','interrupted')",
                 [],
                 |row| row.get::<_, i64>(0),
             )?
@@ -282,7 +282,7 @@ impl Database {
         offset: usize,
     ) -> Result<Vec<Job>> {
         let active = if running {
-            "AND state IN ('accepted','running')"
+            "AND state IN ('accepted','running','interrupted')"
         } else {
             ""
         };
@@ -300,7 +300,7 @@ impl Database {
         offset: usize,
     ) -> Result<(Vec<Job>, Option<usize>)> {
         let active = if running {
-            "AND state IN ('accepted','running')"
+            "AND state IN ('accepted','running','interrupted')"
         } else {
             ""
         };
@@ -386,13 +386,28 @@ impl Database {
     }
     pub(super) fn mark_running(&mut self, id: &str) -> Result<Job> {
         self.update(id, |job| {
-            if job.state != JobState::Accepted
+            if !matches!(job.state, JobState::Accepted | JobState::Interrupted)
                 || (job.details.command().is_some() && job.process.is_none())
             {
                 bail!(ErrorCode::InvalidRequest.error("job is not ready to start"));
             }
             job.state = JobState::Running;
-            job.started_at_ms = Some(now_ms());
+            job.started_at_ms.get_or_insert(now_ms());
+            job.error_code = None;
+            job.error_message = None;
+            Ok(())
+        })
+    }
+    pub(super) fn interrupt_transfer(&mut self, id: &str) -> Result<Job> {
+        self.update(id, |job| {
+            if !matches!(job.kind(), JobKind::Push | JobKind::Pull) || job.state.terminal() {
+                bail!(
+                    ErrorCode::InvalidRequest.error("only unfinished transfers may be suspended")
+                );
+            }
+            job.state = JobState::Interrupted;
+            job.error_code = Some("TRANSFER_INTERRUPTED".into());
+            job.error_message = Some("explicitly resume this transfer within 24 hours".into());
             Ok(())
         })
     }
@@ -595,8 +610,8 @@ mod tests {
                     'exec','{}','succeeded',1,1 FROM history;",
             )?;
             for sql in [
-                "SELECT job_id FROM jobs WHERE state IN ('accepted','running')",
-                "SELECT COUNT(*) FROM jobs WHERE state IN ('accepted','running')",
+                "SELECT job_id FROM jobs WHERE state IN ('accepted','running','interrupted')",
+                "SELECT COUNT(*) FROM jobs WHERE state IN ('accepted','running','interrupted')",
             ] {
                 let mut statement = database.db.prepare(&format!("EXPLAIN QUERY PLAN {sql}"))?;
                 let plan = statement

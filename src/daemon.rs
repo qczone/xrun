@@ -9,6 +9,7 @@ mod program;
 mod requests;
 mod session;
 mod streams;
+mod transfers;
 
 use crate::error::ErrorCode;
 use crate::{
@@ -229,6 +230,9 @@ impl OperationJob {
         Ok(())
     }
     fn fail(&mut self, error: &anyhow::Error) -> Result<()> {
+        if self.finished {
+            return Ok(());
+        }
         let mut outcome = crate::store::JobOutcome::failed(error);
         if crate::error::code(error).is_none_or(|code| {
             matches!(
@@ -240,6 +244,11 @@ impl OperationJob {
             outcome.leftover_possible = self.leftover_possible;
         }
         self.store.finish_sync(&self.job_id, outcome)?;
+        self.finished = true;
+        Ok(())
+    }
+    fn suspend(&mut self) -> Result<()> {
+        self.store.interrupt_transfer(&self.job_id)?;
         self.finished = true;
         Ok(())
     }
@@ -364,7 +373,12 @@ pub async fn run() -> Result<()> {
     let members = network::cache()?;
     let store = Arc::new(JobStore::open(&dir.join("daemon.db"), false)?);
     store.prune()?;
+    transfers::expire_at(&dir, &store)?;
     for mut job in store.unfinished()? {
+        if transfers::recover_at(&dir, &job)? {
+            store.interrupt_transfer(&job.job_id)?;
+            continue;
+        }
         job.leftover_possible = true;
         if let Some(p) = &job.process {
             if !p.boot_id.is_empty()
@@ -469,7 +483,11 @@ async fn finish_tasks(rt: Arc<Runtime>) -> Result<()> {
     })
     .await?;
     if let Ok(ids) = rt.store.unfinished_ids().await {
-        rt.canceled.lock().unwrap().extend(ids);
+        for id in ids {
+            if !transfers::cancel_pending(&rt, &id)? {
+                rt.canceled.lock().unwrap().insert(id);
+            }
+        }
     }
     while let Some(result) = jobs.join_next().await {
         result?;

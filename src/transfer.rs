@@ -1,4 +1,5 @@
 use crate::config::sync_parent;
+pub(crate) mod checkpoint;
 use crate::error::{ErrorCode, file_io};
 #[cfg(any(target_os = "macos", windows, test))]
 use crate::protocol::MAX_SCREENSHOT;
@@ -178,16 +179,20 @@ fn check_canceled(canceled: &AtomicBool) -> Result<()> {
 }
 
 static LOCKS: OnceLock<Mutex<HashMap<PathBuf, Weak<AsyncMutex<()>>>>> = OnceLock::new();
+#[cfg(test)]
 type PushCallback = Box<dyn FnOnce(&Path, bool, Option<&anyhow::Error>) -> Result<()> + Send>;
+#[cfg(test)]
 struct PushCompletion {
     path: PathBuf,
     callback: Option<PushCallback>,
 }
+#[cfg(test)]
 impl PushCompletion {
     fn complete(&mut self, published: bool, error: Option<&anyhow::Error>) -> Result<()> {
         self.callback.take().expect("push completion runs once")(&self.path, published, error)
     }
 }
+#[cfg(test)]
 impl Drop for PushCompletion {
     fn drop(&mut self) {
         if let Some(callback) = self.callback.take() {
@@ -200,6 +205,7 @@ impl Drop for PushCompletion {
         }
     }
 }
+#[cfg(test)]
 pub(crate) async fn push(
     path: PathBuf,
     mut contents: tempfile::NamedTempFile,
@@ -229,19 +235,7 @@ pub(crate) async fn push(
         }
     };
     completion.path = path.clone();
-    let lock = {
-        let mut locks = LOCKS.get_or_init(Default::default).lock().unwrap();
-        locks.retain(|_, v| v.strong_count() > 0);
-        match locks.get(&path).and_then(Weak::upgrade) {
-            Some(lock) => lock,
-            None => {
-                let lock = Arc::new(AsyncMutex::new(()));
-                locks.insert(path.clone(), Arc::downgrade(&lock));
-                lock
-            }
-        }
-    };
-    let guard = lock.lock_owned().await;
+    let guard = path_lock(&path).await;
     let cancel = CancelOnDrop::default();
     let canceled = cancel.0.clone();
     let work = path.clone();
@@ -268,6 +262,85 @@ pub(crate) async fn push(
     })
     .await??;
     Ok(path)
+}
+pub(crate) struct PreparedPath {
+    pub path: PathBuf,
+    guard: tokio::sync::OwnedMutexGuard<()>,
+}
+async fn path_lock(path: &Path) -> tokio::sync::OwnedMutexGuard<()> {
+    let lock = {
+        let mut locks = LOCKS.get_or_init(Default::default).lock().unwrap();
+        locks.retain(|_, v| v.strong_count() > 0);
+        match locks.get(path).and_then(Weak::upgrade) {
+            Some(lock) => lock,
+            None => {
+                let lock = Arc::new(AsyncMutex::new(()));
+                locks.insert(path.to_owned(), Arc::downgrade(&lock));
+                lock
+            }
+        }
+    };
+    lock.lock_owned().await
+}
+pub(crate) async fn prepare_destination(path: &Path, mkdir: bool) -> Result<PreparedPath> {
+    let path = destination(path, mkdir)?;
+    let guard = path_lock(&path).await;
+    Ok(PreparedPath { path, guard })
+}
+pub(crate) fn matches_destination(
+    path: &PreparedPath,
+    size: u64,
+    hash: &str,
+    no_overwrite: bool,
+    expect: Option<&str>,
+) -> Result<bool> {
+    check_expect(&path.path, expect)?;
+    if no_overwrite && path.path.exists() {
+        bail!(ErrorCode::AlreadyExists.error("destination already exists"));
+    }
+    match open_file(&path.path) {
+        Ok(file) => {
+            let (length, digest) = copy_hashed(file, &mut std::io::sink(), None)?;
+            Ok(length == size && digest == hash)
+        }
+        Err(error) if crate::error::is(&error, ErrorCode::FileNotFound) || !path.path.exists() => {
+            Ok(false)
+        }
+        Err(error) => Err(error),
+    }
+}
+pub(crate) async fn push_prepared(
+    prepared: PreparedPath,
+    mut contents: tempfile::NamedTempFile,
+    no_overwrite: bool,
+    expect: Option<String>,
+    finished: impl FnOnce(&Path, bool, Option<&anyhow::Error>) -> Result<()> + Send + 'static,
+) -> Result<PathBuf> {
+    let cancel = CancelOnDrop::default();
+    let canceled = cancel.0.clone();
+    tokio::task::spawn_blocking(move || {
+        let PreparedPath {
+            path,
+            guard: _guard,
+        } = prepared;
+        let mut published = false;
+        let result = (|| {
+            contents.as_file_mut().seek(SeekFrom::Start(0))?;
+            save(
+                &path,
+                contents.as_file_mut(),
+                no_overwrite,
+                expect.as_deref(),
+                &canceled,
+                &mut published,
+            )
+        })();
+        let completion = finished(&path, published, result.as_ref().err());
+        result?;
+        completion?;
+        Ok(path)
+    })
+    .await?
 }
 fn check_expect(path: &Path, expect: Option<&str>) -> Result<()> {
     if let Some(hash) = expect {

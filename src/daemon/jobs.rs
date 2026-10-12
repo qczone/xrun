@@ -67,7 +67,7 @@ pub(super) async fn serve(
             {
                 let job = rt.owned_job(source, &id).await?;
                 let _gate = rt.gate.lock().unwrap();
-                if !job.state.terminal() {
+                if !job.state.terminal() && !super::transfers::cancel_pending(&rt, &id)? {
                     let mut canceled = rt.canceled.lock().unwrap();
                     if rt.store.get(&id)?.is_some_and(|job| !job.state.terminal()) {
                         canceled.insert(id.clone());

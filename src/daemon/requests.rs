@@ -13,6 +13,9 @@ pub(super) async fn serve(
     request: Request,
 ) -> Result<()> {
     rt.check_session(source, generation)?;
+    if let Request::ResumeTransfer { id, context } = request {
+        return super::transfers::resume(rt, source, generation, ws, &id, context).await;
+    }
     ws.get_mut().compression = rt
         .access
         .borrow()
@@ -104,7 +107,13 @@ pub(super) async fn serve(
     if let Err(error) = &result
         && let Some(operation) = operation.as_mut()
     {
-        operation.fail(error)?;
+        if super::transfers::disconnected(error)
+            && super::transfers::recover_at(&crate::config::device_dir()?, &job).unwrap_or(false)
+        {
+            operation.suspend()?;
+        } else {
+            operation.fail(error)?;
+        }
     }
     if runtime
         .store

@@ -1,6 +1,7 @@
 //! User operations shared by CLI and desktop adapters.
 //! This workspace API describes current-version behavior; errors retain machine codes.
 #![deny(missing_docs)]
+pub mod files;
 mod membership;
 pub mod network;
 pub mod relay;

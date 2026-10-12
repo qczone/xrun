@@ -45,6 +45,24 @@ pub mod net {
         Io, SocketIo, Ws, close, receive, receive_bytes, send, send_bytes, send_chunk, send_file,
         send_logs, websocket_at,
     };
+    /// Send a synthetic immutable upload, consuming the target's durable cursor.
+    pub async fn send_transfer_bytes(ws: &mut Ws, bytes: &[u8]) -> anyhow::Result<()> {
+        let (temp, size, hash) = crate::transfer::snapshot_input(std::io::Cursor::new(bytes))?;
+        let crate::protocol::Data::TransferOffer {
+            offset,
+            skipped,
+            sha256,
+            ..
+        } = receive(ws).await?
+        else {
+            anyhow::bail!("transfer offer")
+        };
+        anyhow::ensure!(sha256 == hash);
+        if !skipped {
+            crate::net::send_remaining(ws, temp.as_file(), size, offset, |_| Ok(())).await?;
+        }
+        Ok(())
+    }
 }
 /// Pair isolated peers and exchange signed updates without weakening protocol tests.
 pub mod network {

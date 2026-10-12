@@ -243,6 +243,10 @@ async fn changed_upload_is_rejected_without_overwriting_the_destination() -> Res
         net::receive::<Data>(&mut ws).await?,
         Data::Accepted { fresh: true, .. }
     ));
+    assert!(matches!(
+        net::receive::<Data>(&mut ws).await?,
+        Data::TransferOffer { .. }
+    ));
     net::send_file(&mut ws, &file).await?;
     assert!(
         matches!(net::receive::<Data>(&mut ws).await?, Data::Error { code, .. } if code == "CHECKSUM_MISMATCH")

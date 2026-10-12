@@ -27,7 +27,7 @@ pub fn activity(before: Option<&str>, filter: &str) -> Result<ActivityPage> {
 pub(super) fn activity_at(path: &Path, before: Option<&str>, filter: &str) -> Result<ActivityPage> {
     let selected = match filter {
         "all" => "1",
-        "running" => "state IN ('accepted','running')",
+        "running" => "state IN ('accepted','running','interrupted')",
         "failed" => "state IN ('failed','canceled','timed_out','lost')",
         _ => bail!(ErrorCode::InvalidFilter.error("expected all, running or failed")),
     };

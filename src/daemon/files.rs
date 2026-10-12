@@ -18,105 +18,11 @@ pub(super) async fn serve(
     operation: &mut Option<OperationJob>,
     permit: OwnedSemaphorePermit,
 ) -> Result<()> {
+    if matches!(request, Request::Push { .. } | Request::Pull { .. }) {
+        return super::transfers::serve(rt, source, generation, ws, request, operation, permit)
+            .await;
+    }
     match request {
-        Request::Push {
-            path,
-            cwd,
-            size,
-            sha256,
-            mkdir,
-            no_overwrite,
-            expect,
-            ..
-        } => {
-            let contents = net::receive_file(ws, size, &sha256).await?;
-            rt.check_session(source, generation)?;
-            let path = crate::transfer::remote_path(&path, &operation_cwd(&rt, cwd)?)?;
-            if let Some(job) = operation.as_mut() {
-                job.retain_file(contents.path(), path.to_string_lossy().into_owned())
-                    .await;
-            }
-            let mut owned_job = operation.take();
-            let hash = sha256.clone();
-            let runtime = rt.clone();
-            let path = crate::transfer::push(
-                path,
-                contents,
-                mkdir,
-                no_overwrite,
-                expect,
-                move |path, published, error| {
-                    let _permit = permit;
-                    if let Some(mut job) = owned_job.take() {
-                        let canceled = runtime.canceled.lock().unwrap().remove(&job.job_id);
-                        if published {
-                            job.finish(
-                                JobState::Succeeded,
-                                JobResult::File(FileResult {
-                                    path: path.to_string_lossy().into(),
-                                    size,
-                                    sha256: hash,
-                                    attachment_error: None,
-                                }),
-                            )?;
-                        } else if canceled {
-                            job.cancel()?;
-                        } else if let Some(error) = error {
-                            job.fail(error)?;
-                        }
-                    }
-                    Ok(())
-                },
-            )
-            .await?;
-            net::send(
-                ws,
-                &Data::File {
-                    path: path.to_string_lossy().into(),
-                    size,
-                    sha256,
-                    width: None,
-                    height: None,
-                    captured_at: None,
-                    format: None,
-                    mime: None,
-                },
-            )
-            .await?;
-        }
-        Request::Pull { path, cwd, .. } => {
-            let path = crate::transfer::remote_path(&path, &operation_cwd(&rt, cwd)?)?;
-            let (contents, size, hash, _permit) =
-                crate::transfer::snapshot(path.clone(), permit).await?;
-            net::send(
-                ws,
-                &Data::File {
-                    path: path.to_string_lossy().into(),
-                    size,
-                    sha256: hash.clone(),
-                    width: None,
-                    height: None,
-                    captured_at: None,
-                    format: None,
-                    mime: None,
-                },
-            )
-            .await?;
-            net::send_file(ws, contents.as_file()).await?;
-            if let Some(job) = operation.as_mut() {
-                job.retain_file(contents.path(), path.to_string_lossy().into_owned())
-                    .await;
-                job.finish(
-                    JobState::Succeeded,
-                    JobResult::File(FileResult {
-                        path: path.to_string_lossy().into(),
-                        size,
-                        sha256: hash,
-                        attachment_error: None,
-                    }),
-                )?;
-            }
-        }
         Request::Screenshot { options, .. } => {
             let (capture, _permit) =
                 crate::screenshot::capture_with_permit(permit, options).await?;
@@ -166,7 +72,7 @@ async fn send_capture(
     }
     Ok(())
 }
-fn operation_cwd(rt: &Runtime, cwd: Option<String>) -> Result<PathBuf> {
+pub(super) fn operation_cwd(rt: &Runtime, cwd: Option<String>) -> Result<PathBuf> {
     let path = cwd.map(PathBuf::from).unwrap_or(rt.cwd()?);
     if !path.is_absolute() {
         bail!(ErrorCode::InvalidCwd.error("-C must be absolute"));

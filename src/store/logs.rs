@@ -88,7 +88,7 @@ impl Database {
         if own + incoming <= MAX_JOB_LOG_BYTES && total + incoming > MAX_TOTAL_LOG_BYTES {
             let candidates: Vec<String> = {
                 let mut statement = transaction.prepare(
-                    "SELECT job_id FROM jobs WHERE log_bytes>0 AND state NOT IN ('accepted','running') ORDER BY finished_at_ms",
+                    "SELECT job_id FROM jobs WHERE log_bytes>0 AND state NOT IN ('accepted','running','interrupted') ORDER BY finished_at_ms",
                 )?;
                 statement
                     .query_map([], |row| row.get(0))?
@@ -135,7 +135,7 @@ impl Database {
         // Activity summaries outlive their attachment bytes and command output.
         let expired: Vec<String> = {
             let mut statement = transaction.prepare(
-                "SELECT job_id FROM jobs WHERE log_bytes>0 AND state NOT IN ('accepted','running') AND finished_at_ms<?1",
+                "SELECT job_id FROM jobs WHERE log_bytes>0 AND state NOT IN ('accepted','running','interrupted') AND finished_at_ms<?1",
             )?;
             statement
                 .query_map([now_ms() - FINISHED_LOG_RETENTION_MS], |row| row.get(0))?
@@ -172,7 +172,7 @@ struct LogState {
 impl LogState {
     fn load(db: &Connection, id: &str) -> Result<Self> {
         db.query_row(
-            "SELECT state NOT IN ('accepted','running'),last_log_seq,output_complete,output_loss_reason
+            "SELECT state NOT IN ('accepted','running','interrupted'),last_log_seq,output_complete,output_loss_reason
              FROM jobs WHERE job_id=?1",
             [id],
             |row| {

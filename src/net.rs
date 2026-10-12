@@ -1,4 +1,6 @@
+mod chunks;
 mod connection;
+pub(crate) use chunks::{prefix_hash, receive_remaining, send_remaining};
 mod encoding;
 mod logs;
 use crate::error::ErrorCode;
@@ -210,27 +212,6 @@ pub async fn receive_bytes(ws: &mut Ws, size: u64, hash: &str, max: u64) -> Resu
     let mut bytes = Vec::new();
     receive_body(ws, &mut bytes, size, hash).await?;
     Ok(bytes)
-}
-pub(crate) async fn receive_file(
-    ws: &mut Ws,
-    size: u64,
-    hash: &str,
-) -> Result<tempfile::NamedTempFile> {
-    receive_file_with_prefix(ws, size, hash, "xrun-upload-").await
-}
-pub(crate) async fn receive_file_with_prefix(
-    ws: &mut Ws,
-    size: u64,
-    hash: &str,
-    prefix: &str,
-) -> Result<tempfile::NamedTempFile> {
-    let temp = tempfile::Builder::new().prefix(prefix).tempfile()?;
-    let mut file = tokio::fs::File::from_std(temp.reopen()?);
-    receive_body(ws, &mut file, size, hash).await?;
-    file.flush().await?;
-    use std::io::{Seek, SeekFrom};
-    temp.as_file().seek(SeekFrom::Start(0))?;
-    Ok(temp)
 }
 pub async fn send_file(ws: &mut Ws, file: &std::fs::File) -> Result<()> {
     let mut file = tokio::fs::File::from_std(file.try_clone()?);

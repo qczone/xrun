@@ -108,6 +108,12 @@ impl Session {
         Ok(())
     }
     pub(crate) async fn accept_operation(&mut self) -> Result<Job> {
+        self.accept_inner(false).await
+    }
+    pub(crate) async fn accept_transfer(&mut self, recovery: bool) -> Result<Job> {
+        self.accept_inner(recovery).await
+    }
+    async fn accept_inner(&mut self, recovery: bool) -> Result<Job> {
         match net::receive(&mut self.ws).await? {
             Data::Accepted { job, fresh } => {
                 if let Some(record) = self.submission.as_mut() {
@@ -131,7 +137,7 @@ impl Session {
                         .expect("submission store")
                         .save(record)?;
                 }
-                if !fresh {
+                if !fresh && (!recovery || !matches!(job.kind(), JobKind::Push | JobKind::Pull)) {
                     bail!(ErrorCode::Unconfirmed.error(format!(
                         "request already accepted as {}; query its result instead of replaying the data stream",
                         job.job_id

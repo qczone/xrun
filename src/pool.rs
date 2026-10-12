@@ -346,7 +346,8 @@ async fn handle(
                         );
                     }
                     requested = true;
-                    batch_body = matches!(request, Request::Push { .. } | Request::Exec { .. });
+                    // Resumable uploads wait for window ACKs before End. Flush their frames now.
+                    batch_body = matches!(request, Request::Exec { .. });
                     cacheable = !matches!(
                         request,
                         Request::Forward { .. } | Request::StreamExec { .. }

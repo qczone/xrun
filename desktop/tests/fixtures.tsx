@@ -139,6 +139,8 @@ export async function fixture(
         case "connection_defaults":
           return "mac1";
         case "cloudflare_relays":
+        case "remote_file_receipts":
+          return [];
         case "remote_recent":
           return [];
         case "window_visible":

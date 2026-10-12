@@ -1,5 +1,25 @@
 /** English is the default and defines the complete set of message keys. */
 export const en = {
+  "files.open": "Transfer files",
+  "files.title": "Files · {name}",
+  "files.direction": "Direction",
+  "files.upload": "Upload",
+  "files.download": "Download",
+  "files.remote": "Remote path",
+  "files.mkdir": "Create folders",
+  "files.replace": "Allow replacement",
+  "files.transferring": "Transferring…",
+  "files.chooseUpload": "Choose and upload",
+  "files.chooseDownload": "Download and save",
+  "files.failed": "Transfer unfinished",
+  "files.skipped": "Contents match; payload skipped",
+  "files.saved": "Transfer complete",
+  "files.pending": "Pending transfers",
+  "files.resumeHint": "Resume the same transfer within 24 hours.",
+  "files.resume": "Resume",
+  "files.cancel": "Cancel",
+
+  "job.interrupted": "Resume needed",
   "settings.compressionFailed": "Bandwidth settings could not be saved",
   "settings.compression": "Bandwidth",
   "settings.compressionHint":

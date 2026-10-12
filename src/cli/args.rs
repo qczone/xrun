@@ -521,6 +521,8 @@ pub(super) enum Remote {
         #[arg(short = 'C')]
         cwd: Option<String>,
     },
+    /// Explicitly continue the saved file intent after interruption
+    Resume { id: String },
     /// Capture the main display as PNG, JPEG or WebP
     #[command(
         after_help = concat!(

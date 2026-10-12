@@ -1,6 +1,26 @@
 import type { en } from "./en";
 
 export const zh = {
+  "files.open": "传输文件",
+  "files.title": "文件 · {name}",
+  "files.direction": "传输方向",
+  "files.upload": "上传",
+  "files.download": "下载",
+  "files.remote": "远端路径",
+  "files.mkdir": "创建目录",
+  "files.replace": "允许覆盖",
+  "files.transferring": "正在传输…",
+  "files.chooseUpload": "选择并上传",
+  "files.chooseDownload": "下载并保存",
+  "files.failed": "文件传输未完成",
+  "files.skipped": "内容相同，已跳过",
+  "files.saved": "传输完成",
+  "files.pending": "待续传",
+  "files.resumeHint": "24 小时内可继续原传输，不新建任务。",
+  "files.resume": "继续",
+  "files.cancel": "放弃",
+
+  "job.interrupted": "待续传",
   "settings.compressionFailed": "省流设置未能保存",
   "settings.compression": "省流量",
   "settings.compressionHint": "独立压缩文件块和日志，保持内容不变。",
