@@ -38,7 +38,7 @@ async fn submission_rejection_and_uncertainty_keep_distinct_exit_codes() -> Resu
                 let (mut ws, cert) = secure::server(outer, &lab.target_identity).await?;
                 let (_, _, _, purpose) = secure::exchange_server(&mut ws, &cache, network, &cert.context("certificate")?).await?;
 
-                assert!(matches!(purpose, secure::Purpose::Execute));
+                let mut ws=secure::operation_socket(ws,&cache,network,purpose,&lab.target_identity).await?;
                 net::send(&mut ws, &Data::Ready {
                     version: VERSION.into(), protocol: xrun::protocol::ProtocolRange::CURRENT, selected_protocol: xrun::protocol::PROTOCOL, device_id: lab.target_identity.device_id.clone(),
                     db_id: "test-db".into(), default_cwd: lab.target.to_string_lossy().into(),
@@ -179,7 +179,14 @@ async fn foreground_uses_one_session_and_recovers_without_resubmitting() -> Resu
                     )
                     .await?;
 
-                    assert!(matches!(purpose, secure::Purpose::Execute));
+                    let mut ws = secure::operation_socket(
+                        ws,
+                        &cache,
+                        network,
+                        purpose,
+                        &lab.target_identity,
+                    )
+                    .await?;
                     net::send(
                         &mut ws,
                         &Data::Ready {

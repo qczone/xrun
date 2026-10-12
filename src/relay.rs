@@ -4,6 +4,7 @@ mod control;
 mod pairing;
 mod pairing_limits;
 mod sessions;
+mod standby;
 mod traffic;
 use crate::error::ErrorCode;
 use crate::{
@@ -227,6 +228,7 @@ async fn member(
 struct Connections {
     controls: HashMap<(String, String), ControlConnection>,
     sessions: HashMap<String, Session>,
+    standby: HashMap<(String, String), standby::Standby>,
     pairings: HashMap<String, pairing::Room>,
 }
 struct App {
@@ -262,6 +264,10 @@ pub async fn run(config: ServerConfig) -> Result<()> {
         .route("/networks/{network}/traffic", get(traffic::traffic_route))
         .route("/networks/{network}/control", get(control_route))
         .route("/networks/{network}/connect/{target}", get(source_route))
+        .route(
+            "/networks/{network}/standby/{target}/{generation}",
+            get(standby::route),
+        )
         .route(
             "/networks/{network}/attach/{target}/{generation}/{sid}",
             get(attach_route),

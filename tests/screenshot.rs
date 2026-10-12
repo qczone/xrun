@@ -71,7 +71,9 @@ async fn screenshot_download_checks_metadata_integrity_errors_and_local_destinat
                 )
                 .await?;
 
-                assert!(matches!(purpose, secure::Purpose::Execute));
+                let mut ws =
+                    secure::operation_socket(ws, &cache, network, purpose, &lab.target_identity)
+                        .await?;
                 net::send(
                     &mut ws,
                     &Data::Ready {

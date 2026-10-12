@@ -36,6 +36,13 @@ export interface TrafficState extends ConnectionBase {
   deadline: number;
   authorityGeneration: number;
 }
+export interface StandbyState extends ConnectionBase {
+  role: "standby";
+  target: string;
+  generation: string;
+  authorityGeneration: number;
+  deadline: number;
+}
 export interface SessionBinding {
   target: string;
   generation: string;
@@ -73,6 +80,7 @@ export type Attachment =
   | ChallengeState
   | ControlState
   | TrafficState
+  | StandbyState
   | PendingState
   | TunnelState
   | ClosedState;
@@ -168,6 +176,31 @@ export function attachment(value: unknown): Attachment | undefined {
       : { pairing: value.pairing as string }),
   };
   switch (value.role) {
+    case "standby":
+      if (
+        !object(value, [
+          ...BASE_KEYS,
+          "target",
+          "generation",
+          "authorityGeneration",
+          "deadline",
+        ]) ||
+        typeof value.target !== "string" ||
+        !DEVICE.test(value.target) ||
+        typeof value.generation !== "string" ||
+        !SESSION_TOKEN.test(value.generation) ||
+        !deadline(value.deadline) ||
+        !deadline(value.authorityGeneration)
+      )
+        return;
+      return {
+        ...base,
+        role: "standby",
+        target: value.target,
+        generation: value.generation,
+        authorityGeneration: value.authorityGeneration,
+        deadline: value.deadline,
+      };
     case "traffic":
       if (
         !object(value, [
@@ -200,6 +233,7 @@ export function attachment(value: unknown): Attachment | undefined {
         "path",
         "nonce",
         "target",
+        "generation",
         "deadline",
       ];
       if (
@@ -219,8 +253,10 @@ export function attachment(value: unknown): Attachment | undefined {
       )
         return;
       if (
-        parsed.action === "connect"
-          ? parsed.target !== value.target
+        parsed.action === "connect" || parsed.action === "standby"
+          ? parsed.target !== value.target ||
+            (parsed.action === "standby" &&
+              parsed.generation !== value.generation)
           : value.target !== undefined
       )
         return;

@@ -109,6 +109,54 @@ pub mod secure {
     pub use crate::secure::{
         Purpose, client, exchange_client, exchange_server, pairing_client, server,
     };
+    /// Adapt a one-operation fake peer to current multiplexed and direct purposes.
+    /// The fixture deliberately closes its whole channel after that stream.
+    pub async fn operation_socket(
+        mut ws: crate::net::Ws,
+        cache: &crate::membership::RosterCache,
+        network: &str,
+        purpose: crate::secure::Purpose,
+        id: &crate::config::Identity,
+    ) -> anyhow::Result<crate::net::Ws> {
+        if matches!(purpose, crate::secure::Purpose::Execute) {
+            return Ok(ws);
+        }
+        anyhow::ensure!(matches!(purpose, crate::secure::Purpose::Channel));
+        crate::net::send(
+            &mut ws,
+            &crate::protocol::Data::ChannelReady {
+                device_id: id.device_id.clone(),
+                protocol: crate::protocol::PROTOCOL,
+            },
+        )
+        .await?;
+        let (channel, mut incoming) = crate::multiplex::start(ws, yamux::Mode::Server);
+        let mut ws = incoming
+            .recv()
+            .await
+            .ok_or_else(|| anyhow::anyhow!("fixture channel closed"))?;
+        tokio::spawn(async move {
+            while channel.active() > 0 && channel.alive() {
+                tokio::time::sleep(std::time::Duration::from_millis(1)).await;
+            }
+            channel.close();
+        });
+        let crate::protocol::Data::SessionProbe { roster_version } =
+            crate::net::receive(&mut ws).await?
+        else {
+            anyhow::bail!("fixture membership probe");
+        };
+        let current = cache.require_fresh(network, crate::protocol::now_ms())?;
+        crate::net::send(
+            &mut ws,
+            &crate::protocol::Data::Membership {
+                roster: (roster_version != current.roster.roster.version).then_some(current.roster),
+                lease: current.lease,
+            },
+        )
+        .await?;
+        Ok(ws)
+    }
 }
 /// Start HTTP admission fixtures for transport limits and malformed requests.
 pub mod server {

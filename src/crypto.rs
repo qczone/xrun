@@ -1,3 +1,4 @@
+mod tls_cache;
 use crate::error::ErrorCode;
 use crate::{
     config::{Identity, ServerConfig, atomic_private_write, restrict_dir},
@@ -188,6 +189,9 @@ pub fn renew_device_request(pem: &str) -> Result<Vec<u8>> {
         .to_vec())
 }
 pub(crate) fn client_tls_config(id: &Identity) -> Result<Arc<rustls::ClientConfig>> {
+    tls_cache::client_tls_config(id)
+}
+fn build_client_tls_config(id: &Identity) -> Result<Arc<rustls::ClientConfig>> {
     let mut roots = rustls::RootCertStore::empty();
     roots.add(cert_der(&id.ca_pem)?)?;
     Ok(Arc::new(
@@ -208,6 +212,9 @@ pub fn anonymous_tls_config(ca: &str) -> Result<Arc<rustls::ClientConfig>> {
 /// An empty relay CA selects public WebPKI roots. Peer TLS always uses the
 /// separate network root, regardless of how the outer relay is hosted.
 pub fn relay_tls_config(ca: &str) -> Result<Arc<rustls::ClientConfig>> {
+    tls_cache::relay_tls_config(ca)
+}
+fn build_relay_tls_config(ca: &str) -> Result<Arc<rustls::ClientConfig>> {
     if !ca.is_empty() {
         return anonymous_tls_config(ca);
     }
@@ -348,6 +355,9 @@ fn discovery_config(
     (Arc::new(config), ca)
 }
 pub(crate) fn peer_server_config(id: &Identity) -> Result<Arc<rustls::ServerConfig>> {
+    tls_cache::peer_server_config(id)
+}
+fn build_peer_server_config(id: &Identity) -> Result<Arc<rustls::ServerConfig>> {
     let mut roots = rustls::RootCertStore::empty();
     roots.add(cert_der(&id.ca_pem)?)?;
     let verifier = rustls::server::WebPkiClientVerifier::builder(Arc::new(roots))

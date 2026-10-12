@@ -89,7 +89,7 @@ export class XrunRelay extends DurableObject<Env> {
         this.close(socket, 1008, "Restored network is not admitted");
         continue;
       }
-      if (!session(state)) continue;
+      if (!session(state) && state.role !== "standby") continue;
       const control = this.connections.control(state.target);
       if (!control || control.state.generation !== state.generation) {
         this.close(socket, 1008, "Restored control binding missing");
@@ -136,6 +136,12 @@ export class XrunRelay extends DurableObject<Env> {
           if (pending.has(state.device))
             this.retryAuthorityAt = Date.now() + 5000;
         }
+      } else if (
+        state.role === "standby" &&
+        (state.authorityGeneration !== roster.authority_generation ||
+          !active(state.target))
+      ) {
+        this.close(socket, 1008, "Membership changed");
       } else if (
         session(state) &&
         (state.authorityGeneration !== roster.authority_generation ||
@@ -459,6 +465,35 @@ export class XrunRelay extends DurableObject<Env> {
         pending_authority: proof.manager ? this.admission.pending() : [],
       });
       this.close(ws);
+    } else if (state.action === "standby") {
+      const control = this.connections.control(state.target);
+      if (
+        !proof ||
+        proof.device !== state.target ||
+        control?.state.generation !== state.generation
+      )
+        throw new Error("Standby control binding mismatch");
+      const callbacks = [...this.connections.all()].filter(
+        ({ state }) => state.role === "standby",
+      );
+      if (
+        callbacks.length >= 32 ||
+        callbacks.some(
+          ({ state: other }) =>
+            other.role === "standby" && other.target === state.target,
+        )
+      )
+        throw new Error("Standby callback capacity reached");
+      this.connections.save(ws, {
+        ...base(state),
+        role: "standby",
+        target: state.target,
+        generation: state.generation,
+        authorityGeneration: proof.authorityGeneration,
+        deadline: Date.now() + IDLE,
+      });
+      this.send(ws, { type: "standby_ready" });
+      await this.schedule();
     } else if (state.action === "traffic") {
       if (!proof) throw new Error("Member proof required");
       this.connections.save(ws, {
@@ -573,6 +608,48 @@ export class XrunRelay extends DurableObject<Env> {
       management,
       deadline: Date.now() + CONNECT_TIMEOUT_MS,
     });
+    const warm =
+      proof && !state.pairing
+        ? [...this.connections.all()].find(
+            ({ state: entry }) =>
+              entry.role === "standby" &&
+              entry.target === state.target &&
+              entry.generation === target.state.generation,
+          )
+        : undefined;
+    if (warm) {
+      const pending = this.connections.get(ws)?.state;
+      if (pending?.role !== "pending")
+        throw new Error("Missing source reservation");
+      const deadline = Date.now() + IDLE;
+      this.connections.save(ws, {
+        ...pending,
+        role: "source",
+        peer: warm.state.id,
+        outstanding: 0,
+        cachedSince: null,
+        traffic: [],
+        deadline,
+      });
+      this.connections.save(warm.socket, {
+        ...base(warm.state),
+        role: "target",
+        target: pending.target,
+        generation: pending.generation,
+        sid,
+        authorityGeneration: pending.authorityGeneration,
+        peer: pending.id,
+        outstanding: 0,
+        traffic: [],
+        deadline,
+      });
+      for (const socket of [ws, warm.socket]) {
+        const state = this.connections.get(socket)?.state;
+        if (state && tunnel(state)) this.traffic.begin(state);
+        this.send(socket, { type: "connected", flow_control: true });
+      }
+      return;
+    }
     this.send(
       target.socket,
       state.pairing
@@ -764,10 +841,8 @@ export class XrunRelay extends DurableObject<Env> {
         this.reject(ws, "MESSAGE_TOO_LARGE", "Pairing tunnel exceeds budget");
         return;
       }
-      if (state.role === "source" && state.cachedSince !== null)
-        throw new Error(
-          "Reactivate a cached session before sending ciphertext",
-        );
+      // Idle is a reclaimable hint. Encrypted multiplexing control frames may
+      // arrive after the last application stream has ended.
       if (
         !message.byteLength ||
         message.byteLength > FRAME ||

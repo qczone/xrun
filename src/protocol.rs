@@ -38,7 +38,7 @@ pub(crate) const RELAY_IDLE_TIMEOUT: std::time::Duration = std::time::Duration::
 pub(crate) const AUTH_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
 pub(crate) const CONNECT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
 pub(crate) const CLOSE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(1);
-pub(crate) const REQUEST_IDLE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(90);
+pub(crate) const REQUEST_IDLE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(300);
 #[derive(Debug, Clone, Serialize, Deserialize)]
 /// Member identity plus optional peer metadata; online reports a relay control binding.
 pub struct Device {
@@ -385,6 +385,13 @@ pub enum Data {
         db_id: String,
         /// Default working directory announced by the endpoint.
         default_cwd: String,
+    },
+    /// The authenticated pair accepts independent bounded operation streams.
+    ChannelReady {
+        /// Immutable target identity.
+        device_id: String,
+        /// Only current peers may enter this channel.
+        protocol: u32,
     },
     /// Authenticated operation within an end-to-end peer session.
     Request {

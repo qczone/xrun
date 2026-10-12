@@ -1,5 +1,4 @@
-//! Sequential sessions cached by the local daemon. Active requests exclusively
-//! own their socket; the cache never multiplexes or retries submitted work.
+//! Bounded device-pair channels; each local operation owns an independent encrypted stream.
 use crate::error::ErrorCode;
 use crate::{
     config::Identity,
@@ -21,20 +20,18 @@ use std::{
 use tokio::{sync::Semaphore, task::JoinSet, time::Instant};
 use tokio_tungstenite::tungstenite::Message;
 
-// Measured 10/30/60-second bursts to three targets. Keep below the endpoint
-// request idle timeout; this client's idle cache uses at most three of
-// Cloudflare's eight session slots.
-const IDLE: Duration = Duration::from_secs(75);
+const IDLE: Duration = Duration::from_secs(300);
 const MAX_IDLE: usize = 3;
+#[derive(Clone)]
 struct Cached {
-    ws: Ws,
+    channel: crate::multiplex::Channel,
     binding: String,
-    since: Instant,
     expires: i64,
 }
 #[derive(Default)]
 struct Pool {
     idle: Mutex<HashMap<String, Cached>>,
+    opening: tokio::sync::Mutex<()>,
 }
 fn binding(id: &Identity) -> Result<String> {
     let roster = network::current(id)?;
@@ -69,115 +66,156 @@ impl Pool {
             .lock()
             .unwrap()
             .values()
-            .map(|c| {
-                let remaining = c.expires.saturating_sub(now_ms() / 1000).max(0) as u64;
-                (c.since + IDLE).min(Instant::now() + Duration::from_secs(remaining))
+            .map(|cached| {
+                let cert = Duration::from_secs(
+                    cached.expires.saturating_sub(now_ms() / 1000).max(0) as u64,
+                );
+                let idle = if cached.channel.active() == 0 {
+                    IDLE.saturating_sub(cached.channel.idle_for())
+                } else {
+                    cert
+                };
+                Instant::now() + cert.min(idle).max(Duration::from_millis(100))
             })
             .min()
     }
     fn prune(&self) {
-        self.idle
-            .lock()
-            .unwrap()
-            .retain(|_, c| c.since.elapsed() < IDLE && c.expires > now_ms() / 1000);
+        self.idle.lock().unwrap().retain(|_, cached| {
+            let valid = cached.channel.alive()
+                && cached.expires > now_ms() / 1000
+                && (cached.channel.active() > 0 || cached.channel.idle_for() < IDLE);
+            if !valid {
+                cached.channel.close();
+            }
+            valid
+        });
+    }
+    fn cached(&self, target: &str, stamp: &str) -> Option<Cached> {
+        self.prune();
+        let mut entries = self.idle.lock().unwrap();
+        if entries
+            .get(target)
+            .is_some_and(|cached| cached.binding != stamp)
+            && let Some(cached) = entries.remove(target)
+        {
+            cached.channel.close();
+        }
+        entries.get(target).cloned()
+    }
+    async fn get(&self, id: &Identity, target: &str, stamp: &str) -> Result<(Cached, bool)> {
+        if let Some(cached) = self.cached(target, stamp) {
+            return Ok((cached, true));
+        }
+        let _opening = self.opening.lock().await;
+        if let Some(cached) = self.cached(target, stamp) {
+            return Ok((cached, true));
+        }
+        let (mut ws, _, expires) = network::channel(id, target).await?;
+        match net::receive(&mut ws).await? {
+            Data::ChannelReady {
+                device_id,
+                protocol,
+            } if device_id == target => ProtocolRange::require(protocol)?,
+            Data::Error { code, message } => {
+                bail!(crate::error::CodedError::from_wire(code, message))
+            }
+            _ => bail!(
+                ErrorCode::InvalidMessage
+                    .error("target did not accept an encrypted operation channel")
+            ),
+        }
+        let (channel, _inbound) = crate::multiplex::start(ws, yamux::Mode::Client);
+        let cached = Cached {
+            channel,
+            binding: stamp.into(),
+            expires,
+        };
+        self.insert(target, cached.clone());
+        tracing::debug!(target, "opened operation session");
+        Ok((cached, false))
+    }
+    fn insert(&self, target: &str, cached: Cached) {
+        let mut entries = self.idle.lock().unwrap();
+        let idle = entries
+            .iter()
+            .filter(|(_, c)| c.channel.active() == 0)
+            .count();
+        if idle >= MAX_IDLE
+            && let Some(oldest) = entries
+                .iter()
+                .filter(|(_, c)| c.channel.active() == 0)
+                .max_by_key(|(_, c)| c.channel.idle_for())
+                .map(|(key, _)| key.clone())
+            && let Some(old) = entries.remove(&oldest)
+        {
+            old.channel.close();
+        }
+        entries.insert(target.into(), cached);
     }
     async fn take(&self, id: &Identity, target: &str) -> Result<(Ws, Data, String, i64)> {
         let stamp = binding(id)?;
-        let roster = network::current(id)?;
-        if roster.member(target)?.revoked {
+        if network::current(id)?.member(target)?.revoked {
             bail!(ErrorCode::DeviceRevoked.error("target has been revoked"));
         }
-        let cached = {
-            let mut idle = self.idle.lock().unwrap();
-            idle.retain(|device, cached| {
-                let valid = cached.since.elapsed() < IDLE
-                    && cached.expires > now_ms() / 1000
-                    && cached.binding == stamp;
-                if !valid {
-                    tracing::debug!(
-                        target = device,
-                        idle_expired = cached.since.elapsed() >= IDLE,
-                        certificate_expired = cached.expires <= now_ms() / 1000,
-                        membership_changed = cached.binding != stamp,
-                        "discarding cached operation session"
-                    );
-                }
-                valid
-            });
-            idle.remove(target)
-        };
-        if let Some(mut cached) = cached {
-            let probe = tokio::time::timeout(Duration::from_secs(5), async {
-                if !net::cache_state(&mut cached.ws, false).await? {
-                    bail!(
-                        ErrorCode::SessionUnavailable
-                            .error("relay does not support cached session admission")
-                    );
-                }
+        for attempt in 0..2 {
+            let (cached, reused) = self.get(id, target, &stamp).await?;
+            let ready_stream = async {
+                let mut ws = cached.channel.open().await?;
                 net::send(
-                    &mut cached.ws,
+                    &mut ws,
                     &Data::SessionProbe {
-                        roster_version: roster.roster.version,
+                        roster_version: network::current(id)?.roster.version,
                     },
                 )
                 .await?;
-                let mut value = net::receive::<Data>(&mut cached.ws).await?;
-                if let Data::Membership {
-                    roster: update,
-                    lease,
-                } = value
-                {
-                    let roster = update.unwrap_or(network::current(id)?);
-                    network::observe_authority(
-                        id,
-                        &crate::membership::AuthorityState { roster, lease },
-                    )?;
-                    value = net::receive::<Data>(&mut cached.ws).await?;
-                }
+                let (roster, lease) = match net::receive(&mut ws).await? {
+                    Data::Membership { roster, lease } => (roster, lease),
+                    Data::Error { code, message } => {
+                        bail!(crate::error::CodedError::from_wire(code, message))
+                    }
+                    _ => bail!(
+                        ErrorCode::InvalidMessage
+                            .error("operation stream omitted current membership")
+                    ),
+                };
+                network::observe_authority(
+                    id,
+                    &crate::membership::AuthorityState {
+                        roster: roster.unwrap_or(network::current(id)?),
+                        lease,
+                    },
+                )?;
+                let value = net::receive::<Data>(&mut ws).await?;
                 ready(&value, target)?;
-                Ok::<_, anyhow::Error>(value)
-            })
-            .await;
-            match probe {
-                Ok(Ok(value)) if cached.expires > now_ms() / 1000 => {
-                    tracing::debug!(target, "reusing operation session");
-                    return Ok((cached.ws, value, stamp, cached.expires));
+                Ok::<_, anyhow::Error>((ws, value))
+            };
+            match tokio::time::timeout(Duration::from_secs(10), ready_stream).await {
+                Ok(Ok((ws, value))) => {
+                    if reused {
+                        tracing::debug!(target, "reusing operation session");
+                    }
+                    return Ok((ws, value, stamp, cached.expires));
                 }
-                result => {
-                    tracing::debug!(target, ?result, "cached operation session probe failed");
+                Ok(Err(error))
+                    if attempt == 0
+                        && (crate::error::is(&error, ErrorCode::ConnectionClosed)
+                            || crate::error::is(&error, ErrorCode::SessionExpired)
+                            || error
+                                .downcast_ref::<tokio_tungstenite::tungstenite::Error>()
+                                .is_some()) =>
+                {
+                    // This stream has not sent a business request. Only admission is retried.
+                    cached.channel.close();
+                    self.idle.lock().unwrap().remove(target);
+                }
+                Ok(Err(error)) => return Err(error),
+                Err(error) => {
+                    cached.channel.close();
+                    return Err(error.into());
                 }
             }
-            // The probe contains no operation. A stale/broken connection can
-            // safely be replaced; requests are never replayed here.
         }
-        let (mut ws, _, expires) = match network::session_with_expiry(id, target).await {
-            Ok(session) => session,
-            Err(e) if crate::error::is(&e, ErrorCode::SessionLimit) => {
-                self.idle.lock().unwrap().clear();
-                return Err(e);
-            }
-            Err(e) => return Err(e),
-        };
-        let value = net::receive::<Data>(&mut ws).await?;
-        ready(&value, target)?;
-        tracing::debug!(target, "opened operation session");
-        Ok((ws, value, binding(id)?, expires))
-    }
-    fn put(&self, target: String, cached: Cached) {
-        let mut idle = self.idle.lock().unwrap();
-        idle.retain(|_, c| {
-            c.since.elapsed() < IDLE && c.expires > now_ms() / 1000 && c.binding == cached.binding
-        });
-        if idle.len() >= MAX_IDLE
-            && !idle.contains_key(&target)
-            && let Some(oldest) = idle
-                .iter()
-                .min_by_key(|(_, c)| c.since)
-                .map(|(key, _)| key.clone())
-        {
-            idle.remove(&oldest);
-        }
-        idle.insert(target, cached);
+        unreachable!()
     }
 }
 pub(crate) async fn run(
@@ -382,26 +420,10 @@ async fn handle(
     };
     let (cacheable, ()) = tokio::try_join!(upload, download)?;
     // Both pumps are finished and the CLI consumed Complete before Release.
+    let _ = (cacheable, stamp, expires);
     let mut remote = remote_tx.reunite(remote_rx)?;
-    let idle = if cacheable && binding(&Identity::load()?).is_ok_and(|current| current == stamp) {
-        matches!(
-            tokio::time::timeout(Duration::from_secs(5), net::cache_state(&mut remote, true)).await,
-            Ok(Ok(true))
-        )
-    } else {
-        false
-    };
-    if idle {
-        pool.put(
-            target,
-            Cached {
-                ws: remote,
-                binding: stamp,
-                since: Instant::now(),
-                expires,
-            },
-        );
-    }
+    let _ = remote.close(None).await;
+    drop(remote);
     local_tx
         .send(Message::Text(
             serde_json::to_string(&LocalResponse::Released)?.into(),
@@ -413,46 +435,31 @@ async fn handle(
 #[cfg(test)]
 mod tests {
     use super::*;
-    async fn entry(since: Instant, expires: i64) -> Cached {
-        let (io, _peer) = tokio::io::duplex(1024);
-        let ws = tokio_tungstenite::WebSocketStream::from_raw_socket(
-            net::SocketIo::new(Box::new(io) as net::Io),
-            tokio_tungstenite::tungstenite::protocol::Role::Client,
-            None,
-        )
-        .await;
-        Cached {
-            ws,
-            binding: "identity".into(),
-            since,
-            expires,
-        }
-    }
     #[tokio::test]
-    async fn cache_caps_idle_sockets_and_expires_certificates_and_idle_entries() {
+    async fn idle_pair_cache_is_bounded_and_expired_identity_channels_close() {
         let pool = Pool::default();
-        let expires = now_ms() / 1000 + 300;
+        let mut peers = vec![];
         for index in 0..=MAX_IDLE {
-            pool.put(
-                format!("device{index}"),
-                entry(
-                    Instant::now() - Duration::from_secs((MAX_IDLE - index + 1) as u64),
-                    expires,
-                )
-                .await,
+            let (client, server, _incoming) = crate::multiplex::tests::pair().await;
+            peers.push(server);
+            pool.insert(
+                &format!("target{index}"),
+                Cached {
+                    channel: client,
+                    binding: "fixture".into(),
+                    expires: now_ms() / 1000 + 3600,
+                },
             );
         }
         assert_eq!(pool.idle.lock().unwrap().len(), MAX_IDLE);
-        assert!(!pool.idle.lock().unwrap().contains_key("device0"));
-        {
-            let mut idle = pool.idle.lock().unwrap();
-            idle.get_mut("device1").unwrap().expires = now_ms() / 1000;
-            for index in 2..=MAX_IDLE {
-                idle.get_mut(&format!("device{index}")).unwrap().since = Instant::now() - IDLE;
-            }
+        assert!(!pool.idle.lock().unwrap().contains_key("target0"));
+        for entry in pool.idle.lock().unwrap().values_mut() {
+            entry.expires = now_ms() / 1000;
         }
         pool.prune();
         assert!(pool.idle.lock().unwrap().is_empty());
-        assert!(pool.next_expiry().is_none());
+        for peer in peers {
+            peer.close();
+        }
     }
 }

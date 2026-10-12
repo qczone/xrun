@@ -15,7 +15,8 @@ export interface Connection<State extends Attachment = Attachment> {
 
 const NEXT_ROLES: Record<Attachment["role"], readonly Attachment["role"][]> = {
   auth: ["verifying", "closed"],
-  verifying: ["control", "traffic", "pending", "closed"],
+  verifying: ["control", "traffic", "pending", "standby", "closed"],
+  standby: ["target", "closed"],
   traffic: ["closed"],
   control: ["closed"],
   pending: ["source", "closed"],
@@ -242,7 +243,7 @@ export class Connections {
     if (state.role === "pending") this.pending.set(state.sid, connection);
     if (state.role === "pending" || state.role === "source")
       this.sources.add(socket);
-    if (session(state)) {
+    if (session(state) || state.role === "standby") {
       const key = `${state.target}/${state.generation}`;
       const sockets = this.bindings.get(key) || new Set<WebSocket>();
       sockets.add(socket);
@@ -257,7 +258,7 @@ export class Connections {
     this.sources.delete(socket);
     if (state.role === "control") this.controls.delete(state.device);
     if (state.role === "pending") this.pending.delete(state.sid);
-    if (session(state)) {
+    if (session(state) || state.role === "standby") {
       const key = `${state.target}/${state.generation}`;
       const sockets = this.bindings.get(key);
       sockets?.delete(socket);

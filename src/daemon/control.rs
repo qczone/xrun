@@ -118,6 +118,18 @@ async fn control_once(
         u64::from(lease_minutes) * 20,
     ));
     leases.tick().await;
+    let standby = tokio::spawn(super::session::standby_loop(
+        rt.clone(),
+        address.clone(),
+        generation.clone(),
+    ));
+    struct StopStandby(tokio::task::JoinHandle<Result<()>>);
+    impl Drop for StopStandby {
+        fn drop(&mut self) {
+            self.0.abort();
+        }
+    }
+    let _standby = StopStandby(standby);
     let mut last = tokio::time::Instant::now();
     loop {
         tokio::select! {

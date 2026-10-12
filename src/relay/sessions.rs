@@ -143,17 +143,27 @@ pub(super) async fn source(
         }
         let target_control = control.tx.clone();
         connections.reserve_session(network, target, source, device.as_deref())?;
-        target_control
-            .try_send(match pairing {
-                Some(room) => RelayMessage::PairingIncoming {
-                    session_id: sid.clone(),
-                    invitation_id: room.id.clone(),
-                },
-                None => RelayMessage::Incoming {
-                    session_id: sid.clone(),
-                },
-            })
-            .context(ErrorCode::DeviceBusy.error("control queue is full"))?;
+        let warm = if !anonymous && pairing.is_none() {
+            connections.standby.remove(&(network.into(), target.into()))
+        } else {
+            None
+        };
+        let used_warm = warm.is_some_and(|warm| {
+            warm.generation == generation && warm.start.send(sid.clone()).is_ok()
+        });
+        if !used_warm {
+            target_control
+                .try_send(match pairing {
+                    Some(room) => RelayMessage::PairingIncoming {
+                        session_id: sid.clone(),
+                        invitation_id: room.id.clone(),
+                    },
+                    None => RelayMessage::Incoming {
+                        session_id: sid.clone(),
+                    },
+                })
+                .context(ErrorCode::DeviceBusy.error("control queue is full"))?;
+        }
         connections.sessions.insert(
             sid.clone(),
             Session {
@@ -336,7 +346,6 @@ where
     W: futures_util::Sink<Message, Error = axum::Error> + Unpin,
     S: futures_util::Sink<Message, Error = axum::Error> + Unpin,
 {
-    let mut idle = false;
     loop {
         let message = reader
             .next()
@@ -355,23 +364,20 @@ where
                     )?;
                     session.cached_at = next.then(Instant::now);
                 }
-                idle = next;
                 forward(
                     source,
                     Message::Text(
-                        serde_json::to_string(&RelayMessage::CacheState { idle })?.into(),
+                        serde_json::to_string(&RelayMessage::CacheState { idle: next })?.into(),
                     ),
                 )
                 .await?;
                 continue;
             }
-            Message::Binary(bytes) if !idle && bytes.len() <= FILE_CHUNK => {}
+            // Idle is an eviction hint; encrypted stream shutdown/window updates may still arrive.
+            Message::Binary(bytes) if bytes.len() <= FILE_CHUNK => {}
             Message::Ping(_) | Message::Pong(_) => {}
             Message::Close(_) => return Ok(()),
-            _ => bail!(
-                ErrorCode::InvalidMessage
-                    .error("reactivate a cached tunnel before sending ciphertext")
-            ),
+            _ => bail!(ErrorCode::InvalidMessage.error("invalid tunnel frame")),
         }
         let bytes = if let Message::Binary(bytes) = &message {
             bytes.len()

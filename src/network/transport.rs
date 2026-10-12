@@ -264,3 +264,22 @@ pub(crate) async fn session_with_expiry(id: &Identity, target: &str) -> Result<(
     }
     peer_session(id, target, &roster, secure::Purpose::Execute).await
 }
+
+pub(crate) async fn channel(id: &Identity, target: &str) -> Result<(Ws, String, i64)> {
+    let roster = current(id)?;
+    peer_session(id, target, &roster, secure::Purpose::Channel).await
+}
+
+pub(crate) async fn standby(id: &Identity, address: &str, generation: &str) -> Result<Ws> {
+    let roster = current(id)?;
+    let path = format!(
+        "/networks/{}/standby/{}/{generation}",
+        roster.roster.network_id, id.device_id
+    );
+    let mut ws = open_at(&roster, address, &path).await?;
+    authenticate(&mut ws, Some(id), &roster.roster.network_id, &path, None).await?;
+    if !matches!(receive(&mut ws).await?, RelayMessage::StandbyReady) {
+        bail!(ErrorCode::InvalidMessage.error("standby registration rejected"));
+    }
+    Ok(ws)
+}

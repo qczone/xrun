@@ -13,6 +13,7 @@ pub mod error;
 mod forwarding;
 mod history;
 mod membership;
+mod multiplex;
 mod net;
 mod network;
 mod pairing;

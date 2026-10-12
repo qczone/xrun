@@ -1,5 +1,5 @@
 //! Socket IO keeps the outer relay version and its cache control together.
-use super::{Io, Ws};
+use super::Io;
 use crate::error::ErrorCode;
 use anyhow::{Context, Result};
 use std::{
@@ -81,7 +81,7 @@ impl CacheControl {
         let (sender, receiver) = mpsc::channel(1);
         (Self(sender), receiver)
     }
-    async fn update(&self, idle: bool) -> Result<()> {
+    pub(crate) async fn update(&self, idle: bool) -> Result<()> {
         let (reply, response) = oneshot::channel();
         self.0
             .send(CacheRequest { idle, reply })
@@ -91,15 +91,4 @@ impl CacheControl {
             .await
             .context(ErrorCode::ConnectionClosed.error("relay did not acknowledge cache state"))?
     }
-}
-
-pub(crate) async fn cache_state(ws: &mut Ws, idle: bool) -> Result<bool> {
-    let Some(relay) = &ws.get_ref().relay else {
-        return Ok(false);
-    };
-    let Some(control) = &relay.cache else {
-        return Ok(false);
-    };
-    control.update(idle).await?;
-    Ok(true)
 }

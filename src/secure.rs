@@ -265,6 +265,12 @@ fn tunnel(outer: Ws, flow_control: bool) -> Tunnel {
         relay,
     }
 }
+pub(crate) fn stream_transport(mut ws: Ws) -> Io {
+    // Relay cache control belongs to the existing outer encrypted tunnel.
+    // The nested byte adapter does not send relay messages to the peer.
+    ws.get_mut().relay = None;
+    Box::new(tunnel(ws, false))
+}
 fn ws_config() -> WebSocketConfig {
     WebSocketConfig::default()
         .max_message_size(Some(MAX_MESSAGE))
@@ -536,6 +542,7 @@ pub async fn exchange_server(
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "purpose", rename_all = "snake_case")]
 pub enum Purpose {
+    Channel,
     Execute,
     State,
 }

@@ -193,6 +193,9 @@ async fn public_relay_executes_transfers_streams_and_rejects_route_takeover() ->
         assert!(matches!(xrun::testing::net::receive(&mut anonymous).await?, RelayMessage::Error { code, .. } if code == "UNAUTHENTICATED"));
         cloud_online(&lab.source, "target1").await?;
         println!("certificate interoperability and route takeover rejection: passed");
+        // This case measures a known uncompressed ciphertext lower bound.
+        ok(run(&lab.source,&["network","compression","none"]).await);
+        ok(run(&lab.target,&["network","compression","none"]).await);
         // Cross the former file-size cap without changing the relay's bounded windows.
         let content: Vec<u8> = (0..FILE_BYTES).map(|i| (i % 251) as u8).collect();
         let local = lab.root.path().join("upload.bin"); let remote = lab.target.join("artifact.bin"); let download = lab.root.path().join("download.bin");

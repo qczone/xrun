@@ -1128,3 +1128,34 @@ test("management generations replace the owner and reject a restored obsolete ro
   current.close();
   obsolete.close();
 });
+
+test("authenticated standby callbacks pair without a target notification and survive restoration", async () => {
+  const f = await fixture();
+  const leaf = await f.member();
+  const targetPath = `/networks/${f.network}/control`;
+  const target = await authenticated(targetPath, (nonce) =>
+    leaf.proof(targetPath, nonce),
+  );
+  const hello = await target.json();
+  expect(hello.type).toBe("hello_ack");
+  const standbyPath = `/networks/${f.network}/standby/${leaf.device}/${hello.generation}`;
+  const standby = await authenticated(standbyPath, (nonce) =>
+    leaf.proof(standbyPath, nonce),
+  );
+  expect(await standby.json()).toEqual({ type: "standby_ready" });
+  await inspect(f.network, "restore");
+  const connectPath = `/networks/${f.network}/connect/${leaf.device}`;
+  const source = await authenticated(connectPath, (nonce) =>
+    f.manager.proof(connectPath, nonce, true),
+  );
+  expect((await source.json()).type).toBe("connected");
+  expect((await standby.json()).type).toBe("connected");
+  const body = new Uint8Array([1, 2, 3, 4]).buffer;
+  source.send(body);
+  expect(new Uint8Array((await standby.next()) as ArrayBuffer)).toEqual(
+    new Uint8Array(body),
+  );
+  source.close();
+  standby.close();
+  target.close();
+});

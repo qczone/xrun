@@ -183,6 +183,8 @@ impl Proof {
 #[serde(tag = "type", rename_all = "snake_case")]
 /// Relay routing and handshake messages, outside the encrypted peer payload.
 pub enum RelayMessage {
+    /// An authenticated idle callback is registered for this control generation.
+    StandbyReady,
     /// Protocol 2: declare a completed source tunnel reclaimable, or reactivate
     /// it before any encrypted probe/request. The relay echoes acceptance.
     CacheState {

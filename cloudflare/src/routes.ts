@@ -15,6 +15,7 @@ export type ChallengeRoute = RouteBase &
     | { action: "control" }
     | { action: "claim" }
     | { action: "connect"; target: string }
+    | { action: "standby"; target: string; generation: string }
   );
 export type AttachRoute = RouteBase & {
   action: "attach";
@@ -42,6 +43,13 @@ export function relativeRoute(path: string): Route | undefined {
   if (action === "connect" && parts.length === 4 && DEVICE.test(target)) {
     return { network, action, target, path };
   }
+  if (
+    action === "standby" &&
+    parts.length === 5 &&
+    DEVICE.test(target) &&
+    SESSION_TOKEN.test(generation)
+  )
+    return { network, action, target, generation, path };
   const attach =
     action === "attach" &&
     parts.length === 6 &&

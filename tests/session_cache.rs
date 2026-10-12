@@ -70,7 +70,11 @@ async fn cli_reuses_completed_sessions_refreshes_defaults_and_discards_stale_con
     )
     .await;
     assert_eq!(denied.status.code(), Some(125));
-    assert!(String::from_utf8_lossy(&denied.stderr).contains("SOURCE_NOT_ALLOWED"));
+    assert!(
+        String::from_utf8_lossy(&denied.stderr).contains("SOURCE_NOT_ALLOWED"),
+        "{}",
+        String::from_utf8_lossy(&denied.stderr)
+    );
     cfg.deny_from.clear();
     config::write(&path, &cfg)?;
     version(&lab.source).await;
@@ -195,8 +199,8 @@ async fn private_ipc_rejects_bad_tokens_stale_stops_and_incomplete_releases() ->
     let log = manager_log(&lab.source)?;
     assert_eq!(
         log.matches("opened operation session").count(),
-        2,
-        "abandoned session was returned to the cache: {log}"
+        1,
+        "abandoning one operation must preserve the authenticated pair: {log}"
     );
     Ok(())
 }

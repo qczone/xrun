@@ -22,7 +22,7 @@ pub(crate) use peers::{
 pub(crate) use transport::authenticate;
 pub(crate) use transport::authenticate_read_only;
 pub(crate) use transport::latest_authority;
-pub(crate) use transport::{attach, control, receive, session, session_with_expiry};
+pub(crate) use transport::{attach, channel, control, receive, session, standby};
 
 use crate::error::ErrorCode;
 use crate::{

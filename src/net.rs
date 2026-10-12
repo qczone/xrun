@@ -11,7 +11,7 @@ use crate::{
 };
 use anyhow::{Context, Result, bail};
 pub use connection::SocketIo;
-pub(crate) use connection::{CacheControl, CacheRequest, RelayContext, cache_state};
+pub(crate) use connection::{CacheControl, CacheRequest, RelayContext};
 use futures_util::{SinkExt, StreamExt};
 pub use logs::send_logs;
 use serde::{Serialize, de::DeserializeOwned};
