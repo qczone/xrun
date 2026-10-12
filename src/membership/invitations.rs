@@ -39,19 +39,22 @@ impl Manager {
         Ok(())
     }
     pub(crate) fn attempt_code(&self, id: &str) -> Result<()> {
+        self.attempt_code_at(id, now_ms())
+    }
+    fn attempt_code_at(&self, id: &str, now: i64) -> Result<()> {
         let mut db = self.db.lock().unwrap();
         let tx = db.transaction_with_behavior(TransactionBehavior::Immediate)?;
-        let row: Option<(i64, i64, String)> = tx
+        let row: Option<(i64, i64, String, i64)> = tx
             .query_row(
-                "SELECT expires,attempts,status FROM invitations
+                "SELECT expires,attempts,status,next_attempt_ms FROM invitations
             WHERE kind='code' AND invitation_id=?1",
                 [id],
-                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
             )
             .optional()?;
-        let (expires, attempts, status) =
+        let (expires, attempts, status, next_attempt) =
             row.context(ErrorCode::CodeExpired.error("access code is no longer active"))?;
-        if expires <= now_ms() || status == "cancelled" {
+        if expires <= now || status == "cancelled" {
             bail!(ErrorCode::CodeExpired.error("access code expired; generate another invitation"));
         }
         if status == "consumed" {
@@ -64,9 +67,12 @@ impl Manager {
                 )
             );
         }
+        if next_attempt > now {
+            bail!(ErrorCode::PairingBusy.error("pairing backoff is active; wait before retrying"));
+        }
         tx.execute(
-            "UPDATE invitations SET attempts=attempts+1 WHERE invitation_id=?1",
-            [id],
+            "UPDATE invitations SET attempts=attempts+1,next_attempt_ms=?2 WHERE invitation_id=?1",
+            params![id, now + (1_000_i64 << attempts)],
         )?;
         tx.commit()?;
         Ok(())
@@ -119,7 +125,11 @@ mod tests {
                 .filter(|accepted| *accepted)
                 .count()
         });
-        assert_eq!(accepted, 5);
+        assert_eq!(accepted, 1);
+        let later = now_ms() + 60_000;
+        for step in 0..4 {
+            manager.attempt_code_at(&id, later + step * 17_000)?;
+        }
         let attempts: i64 = manager.db.lock().unwrap().query_row(
             "SELECT attempts FROM invitations WHERE invitation_id=?1",
             [&id],

@@ -153,7 +153,7 @@ pub enum RelayMessage {
         /// Random session handoff identifier.
         session_id: String,
     },
-    /// Protocol 4: register an expiring public locator over manager control.
+    /// Protocol 5: register an expiring public locator over manager control.
     PairingRegister {
         /// Random invitation identity, independent of the short secret.
         invitation_id: String,
@@ -162,26 +162,26 @@ pub enum RelayMessage {
         /// Absolute expiration in milliseconds, at most ten minutes ahead.
         expires_at: i64,
     },
-    /// Protocol 4: correlated registration or cancellation acknowledgement.
+    /// Protocol 5: correlated registration or cancellation acknowledgement.
     PairingRegistered {
         /// The invitation whose routing metadata was processed.
         invitation_id: String,
         /// Explicit refusal, without disrupting the manager control connection.
         error: Option<Box<Data>>,
     },
-    /// Protocol 4: revoke one locator owned by the current manager.
+    /// Protocol 5: revoke one locator owned by the current manager.
     PairingCancel {
         /// Random invitation identity.
         invitation_id: String,
     },
-    /// Protocol 4: the following attachment carries PAKE, not inner TLS.
+    /// Protocol 5: the following attachment carries PAKE, not inner TLS.
     PairingIncoming {
         /// Random session handoff identifier.
         session_id: String,
         /// Manager-created invitation identity, independently checked locally.
         invitation_id: String,
     },
-    /// Protocol 4: untrusted rendezvous metadata, authenticated later by PAKE.
+    /// Protocol 5: untrusted rendezvous metadata, authenticated later by PAKE.
     PairingInfo {
         /// Random invitation identity included in the PAKE transcript.
         invitation_id: String,

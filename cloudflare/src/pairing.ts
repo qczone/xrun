@@ -1,5 +1,9 @@
 /** Public locators carry no password; only the authenticated manager allocates them. */
 import { AdmissionError } from "./admission";
+import type {
+  DurableObjectStorage,
+  SqlStorageValue,
+} from "@cloudflare/workers-types";
 export const CODE_ALPHABET = "23456789ABCDEFGHJKLMNPQRSTUVWXYZ";
 export function pairingLocator(path: string): string | undefined {
   const match = /^\/\.well-known\/xrun\/pair\/([A-Z2-9]{2})$/.exec(path);
@@ -17,6 +21,35 @@ export class Pairings {
     storage.sql.exec(
       "CREATE TABLE IF NOT EXISTS pairing_rooms (invitation_id TEXT PRIMARY KEY,locator TEXT UNIQUE NOT NULL,expires_at INTEGER NOT NULL) STRICT",
     );
+    storage.sql.exec(
+      "CREATE TABLE IF NOT EXISTS pairing_peers (peer TEXT PRIMARY KEY,expires INTEGER NOT NULL,hits INTEGER NOT NULL) STRICT",
+    );
+  }
+  /** Called only with the Worker-provided CF peer address, never a caller header. */
+  throttlePeer(peer: string, now = Date.now()): void {
+    this.storage.transactionSync(() => {
+      this.storage.sql.exec("DELETE FROM pairing_peers WHERE expires<=?", now);
+      const old = this.storage.sql
+        .exec<{ expires: number; hits: number }>(
+          "SELECT expires,hits FROM pairing_peers WHERE peer=?",
+          peer,
+        )
+        .toArray()[0];
+      const count = this.storage.sql
+        .exec<{ count: number }>("SELECT COUNT(*) AS count FROM pairing_peers")
+        .one().count;
+      if ((old?.hits ?? 0) >= 32 || (!old && count >= 4096))
+        throw new AdmissionError(
+          "PAIRING_BUSY",
+          "Public pairing rate exceeded; retry in a minute",
+        );
+      this.storage.sql.exec(
+        "INSERT INTO pairing_peers VALUES(?,?,?) ON CONFLICT(peer) DO UPDATE SET hits=excluded.hits",
+        peer,
+        old?.expires ?? now + 60_000,
+        (old?.hits ?? 0) + 1,
+      );
+    });
   }
   find(locator: string): PairingRoom | undefined {
     return this.storage.sql

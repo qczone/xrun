@@ -230,12 +230,15 @@ async fn serve_inner(
         bail!(ErrorCode::InvalidSession.error("pairing context differs from invitation"));
     }
     let manager = super::manager(id)?;
-    manager.attempt_code(invitation)?;
     let csr = STANDARD.decode(&hello.csr)?;
     let key = crypto::csr_key(&csr)?;
     let identities = channel::identities(&entry.id, &hello.origin, &entry.locator, &key);
     let remote = STANDARD.decode(&hello.message)?;
     channel::validate_message(&remote, b'A')?;
+    // Malformed CSRs/points never consume the password budget. Charge durably
+    // before any response or confirmation can test a guessed password, even
+    // when the joiner disconnects instead of sending its confirmation.
+    manager.attempt_code(invitation)?;
     let (state, message) = Spake2::<Ed25519Group>::start_b(
         &Password::new(entry.secret.as_bytes()),
         &PakeIdentity::new(&identities.0),

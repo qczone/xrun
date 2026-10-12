@@ -446,6 +446,10 @@ mod tests {
         let idle = tokio::spawn(async move {
             let dir = tempfile::tempdir().unwrap();
             let app = App {
+                pairing_limits: super::super::pairing_limits::PairingLimits::open(
+                    &dir.path().join("pairing.sqlite"),
+                )
+                .unwrap(),
                 admission: admission::Admission::open(dir.path()).unwrap(),
                 connections: Mutex::new(Connections::default()),
                 traffic: Arc::new(traffic::Traffic::memory()),

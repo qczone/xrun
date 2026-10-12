@@ -2,6 +2,7 @@
 mod admission;
 mod control;
 mod pairing;
+mod pairing_limits;
 mod sessions;
 mod traffic;
 use crate::error::ErrorCode;
@@ -184,6 +185,7 @@ struct Connections {
 struct App {
     connections: Mutex<Connections>,
     traffic: Arc<traffic::Traffic>,
+    pairing_limits: pairing_limits::PairingLimits,
     admission: admission::Admission,
 }
 
@@ -198,6 +200,9 @@ pub async fn run(config: ServerConfig) -> Result<()> {
     let keys = crypto::load_or_create_server(&config)?;
     let path = route(&config)?;
     let app = Arc::new(App {
+        pairing_limits: pairing_limits::PairingLimits::open(
+            &config.data_dir.join("pairing.sqlite"),
+        )?,
         admission: admission::Admission::open(&config.data_dir)?,
         connections: Mutex::new(Connections::default()),
         traffic: Arc::new(traffic::Traffic::open(

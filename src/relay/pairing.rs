@@ -99,6 +99,7 @@ pub(super) async fn route(
             .error("invalid pairing locator")
             .into());
     }
+    app.pairing_limits.check(peer.ip())?;
     let room = app
         .connections
         .lock()

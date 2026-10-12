@@ -217,6 +217,19 @@ export class XrunRelay extends DurableObject<Env> {
     if (this.connections.size >= CONNECTION_LIMIT)
       return error("CONNECTION_LIMIT", "Too many connections", 429);
     const ip = request.headers.get("X-Xrun-Peer") || "unknown";
+    if (locator) {
+      try {
+        this.pairings.throttlePeer(ip);
+      } catch (reason) {
+        if (reason instanceof AdmissionError)
+          return error(reason.code, reason.message, 429);
+        return error(
+          "STORAGE_ERROR",
+          "Pairing throttle storage unavailable",
+          503,
+        );
+      }
+    }
     if (
       parsed.action !== "attach" &&
       this.connections.authenticating(ip) >= AUTHENTICATING_PER_IP
