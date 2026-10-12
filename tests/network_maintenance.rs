@@ -129,6 +129,10 @@ async fn pairing_response_does_not_wait_for_unrelated_slow_peers() -> Result<()>
     let roster = manager.roster()?;
     RosterCache::open(&lab.source.join(".xrun/roster.db"))?
         .observe(&roster.roster.network_id, &roster)?;
+    // Manually issued fixture members still require the manager's signed
+    // publication at the relay before their control connections are admitted.
+    let published = json(cli(&lab.source, &["status", "--json"]).await);
+    assert!(published["server_error"].is_null());
     let mut controls = tokio::task::JoinSet::new();
     for id in peers {
         let path = format!("/networks/{}/control", roster.roster.network_id);
