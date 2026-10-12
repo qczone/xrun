@@ -79,7 +79,7 @@ pub(super) enum Local {
         /// Prepare identity and task storage without installing a service
         #[arg(long)]
         no_daemon: bool,
-        /// Grant mutual access to the joining device
+        /// Let the manager access the joining device
         #[arg(long)]
         allow: bool,
     },
@@ -113,7 +113,7 @@ pub(super) enum Local {
     #[command(
         after_help = concat!(
         "Examples: xrun invite; xrun invite --allow; xrun invite --link\n",
-        "Only the manager can invite. --allow grants mutual access between the manager and the joining device.\n",
+        "Only the manager can invite. --allow grants the manager access to the joining device only.\n",
         "Full documentation: xrun doc access"
     )
     )]
@@ -121,7 +121,7 @@ pub(super) enum Local {
         /// Print a self-contained invitation instead of a short access code
         #[arg(long)]
         link: bool,
-        /// Grant mutual access between the manager and joining device
+        /// Let the manager access the joining device
         #[arg(long)]
         allow: bool,
     },

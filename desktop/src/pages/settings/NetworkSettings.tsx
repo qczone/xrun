@@ -70,14 +70,20 @@ export function NetworkSettings({
         <div className="setting-row">
           <div>
             <strong>{t("devices.allowAll")}</strong>
-            <small>{t("devices.allowAllHint")}</small>
+            <small>
+              {t(
+                network?.is_manager
+                  ? "devices.managerProtected"
+                  : "devices.allowAllHint",
+              )}
+            </small>
           </div>
           <label className="switch">
             <input
               type="checkbox"
               aria-label={t("devices.allowAll")}
-              disabled={busy || !local?.joined}
-              checked={!!local?.allow_all}
+              disabled={busy || !!network?.is_manager || !local?.joined}
+              checked={!network?.is_manager && !!local?.allow_all}
               onChange={async (event) => {
                 const allow = event.target.checked;
                 if (

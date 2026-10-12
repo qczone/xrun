@@ -92,12 +92,12 @@ async fn connection_grants_only_the_verified_manager_and_respects_declined_conse
     );
     let mut manager = logged(&manager_home, &["daemon"], "manager")?.spawn()?;
     online(&manager_home, "mac-pro").await?;
-    for (name, grant, mutual) in [("member1", true, false), ("member2", false, true)] {
+    for (name, grant, requested) in [("member1", true, false), ("member2", false, true)] {
         let home = root.path().join(name);
         let invite = json(
             cli(
                 &manager_home,
-                if mutual {
+                if requested {
                     &["invite", "--allow", "--json"]
                 } else {
                     &["invite", "--json"]
@@ -124,12 +124,21 @@ async fn connection_grants_only_the_verified_manager_and_respects_declined_conse
         assert_eq!(policy.deny_from.contains(&manager_id.into()), !grant);
         let manager_policy: DaemonConfig = config::read(&manager_home.join(".xrun/daemon.toml"))?;
         let member_id = member["device_id"].as_str().context("member ID")?;
-        assert_eq!(
-            manager_policy.allow_from.contains(&member_id.into()),
-            mutual
-        );
+        assert_eq!(manager_policy.allow_from.contains(&member_id.into()), false);
         let mut daemon = logged(&home, &["daemon"], name)?.spawn()?;
         online(&manager_home, name).await?;
+        // A manual all-members policy and stale individual grants must not
+        // expose the manager's root key through incoming business operations.
+        let mut stale = manager_policy;
+        stale.allow_all = true;
+        stale.allow_from.push(member_id.into());
+        config::write(&manager_home.join(".xrun/daemon.toml"), &stale)?;
+        let denied = cli(&home, &["mac-pro", "--", "unused"]).await;
+        assert_eq!(denied.status.code(), Some(125));
+        assert!(String::from_utf8_lossy(&denied.stderr).contains("MANAGER_PROTECTED"));
+        let denied = cli(&manager_home, &["allow-from", "--all"]).await;
+        assert_eq!(denied.status.code(), Some(125));
+        assert!(String::from_utf8_lossy(&denied.stderr).contains("MANAGER_PROTECTED"));
         let result = cli(
             &manager_home,
             &[

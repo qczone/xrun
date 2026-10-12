@@ -331,6 +331,7 @@ impl Lab {
                 invite["link"].as_str().context("invitation")?,
                 "--name",
                 "target1",
+                "--allow-manager",
                 "--no-daemon",
             ],
         )

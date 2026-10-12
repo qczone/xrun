@@ -199,11 +199,13 @@ export function Devices({ active, paused, status, members, feedback }: Props) {
           <p className="permission-hint">
             <Icon name="shield" />
             {t(
-              status?.local.remote_access_paused
-                ? "devices.pausedHint"
-                : status?.local.allow_all
-                  ? "devices.allowAllSummary"
-                  : "devices.permissionSummary",
+              manager
+                ? "devices.managerProtected"
+                : status?.local.remote_access_paused
+                  ? "devices.pausedHint"
+                  : status?.local.allow_all
+                    ? "devices.allowAllSummary"
+                    : "devices.permissionSummary",
             )}
           </p>
           {revocation && (

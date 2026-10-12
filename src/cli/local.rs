@@ -62,6 +62,9 @@ pub(super) async fn run(cli: LocalCli) -> Result<i32> {
             } else {
                 crate::client::join(&link, name).await?
             };
+            if !allow_manager && !json {
+                consent_to_manager().await?;
+            }
             daemon::init()?;
             if !no_daemon {
                 service::install("daemon").await?

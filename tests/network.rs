@@ -172,7 +172,7 @@ async fn registration_permissions_migration_and_manager_offline_execution() -> R
             )
             .await;
             assert_eq!(output.status.code(), Some(125));
-            assert!(String::from_utf8_lossy(&output.stderr).contains("SOURCE_NOT_ALLOWED"));
+            assert!(String::from_utf8_lossy(&output.stderr).contains(if target == "source1" { "MANAGER_PROTECTED" } else { "SOURCE_NOT_ALLOWED" }));
         }
         let denied = cli(&ordinary, &["invite"]).await;
         assert!(String::from_utf8_lossy(&denied.stderr).contains("NOT_MANAGER"));
@@ -208,6 +208,7 @@ async fn registration_permissions_migration_and_manager_offline_execution() -> R
                 allow["link"].as_str().unwrap(),
                 "--name",
                 "migrated1",
+                "--allow-manager",
                 "--no-daemon",
             ],
         )

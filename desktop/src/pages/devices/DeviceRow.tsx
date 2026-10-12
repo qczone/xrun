@@ -28,16 +28,21 @@ export function DeviceRow({
   const denied = !!status?.deny_from.includes(device.device_id);
   const individual = !!status?.allow_from.includes(device.device_id);
   const allowed =
-    !device.revoked && !denied && (!!status?.local.allow_all || individual);
-  const source = device.revoked
-    ? t("devices.membershipRevoked")
-    : denied
-      ? t("devices.individualDeny")
-      : individual
-        ? t("devices.individualAllow")
-        : status?.local.allow_all
-          ? t("devices.fromAll")
-          : t("devices.notAllowed");
+    !manager &&
+    !device.revoked &&
+    !denied &&
+    (!!status?.local.allow_all || individual);
+  const source = manager
+    ? t("devices.managerProtected")
+    : device.revoked
+      ? t("devices.membershipRevoked")
+      : denied
+        ? t("devices.individualDeny")
+        : individual
+          ? t("devices.individualAllow")
+          : status?.local.allow_all
+            ? t("devices.fromAll")
+            : t("devices.notAllowed");
   return (
     <div className="device-row" key={device.device_id}>
       <div className="device-identity">
@@ -79,7 +84,9 @@ export function DeviceRow({
         <label className="switch">
           <input
             type="checkbox"
-            disabled={busy || device.revoked || !status?.local.joined}
+            disabled={
+              busy || manager || device.revoked || !status?.local.joined
+            }
             aria-label={t("devices.allowNamed", { name: device.name })}
             checked={allowed}
             onChange={async (event) => {

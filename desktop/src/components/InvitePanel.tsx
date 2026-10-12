@@ -86,7 +86,7 @@ export function InvitePanel({ active, status }: Props) {
             setInvitation(null);
           }}
         />
-        {t("invite.mutualAccess")}
+        {t("invite.managerAccess")}
       </label>
       <p className="field-help">
         {status?.local.allow_all
@@ -150,7 +150,7 @@ export function InvitePanel({ active, status }: Props) {
           )}
           <p className="field-help">
             {invitation.allow
-              ? t("invite.mutualGranted")
+              ? t("invite.managerGranted")
               : t("invite.registrationOnly")}{" "}
             {t("invite.useBefore", { time: clockTime(invitation.expiresAt) })}
           </p>

@@ -225,20 +225,20 @@ export const en = {
   "setup.retryCreate": "Retry creating network",
   "setup.joining": "Joining…",
   "setup.creating": "Creating…",
-  "invite.confirmTitle": "Invite a device with mutual access?",
+  "invite.confirmTitle": "Invite and request access?",
   "invite.confirmMessage":
-    "The new device can access this device as your user, and vice versa. Share the link only with devices you trust.",
+    "The joining owner can allow this manager to access their device. Managers reject incoming operations.",
   "invite.confirm": "Create invitation with access",
   "invite.failed":
     "Could not create an invitation. Check your connection and retry.",
   "invite.description":
     "Links are single use and valid for 10 minutes. This device’s background service must be online when the new " +
     "device joins.",
-  "invite.mutualAccess": "Allow mutual access with the new device",
+  "invite.managerAccess": "Request access to the new device",
   "invite.registrationHint":
     "Invitations register members without granting access by default. Existing access-for-all policies still apply.",
   "invite.allowAllHint":
-    "Access for all members is enabled here. New members can access this device, except individually denied devices.",
+    "Managers handle membership only and reject incoming operations.",
   "invite.generate": "Create access code",
   "invite.generating": "Creating…",
   "invite.connectFirst":
@@ -247,7 +247,8 @@ export const en = {
   "invite.generatedLink": "Invitation link",
   "invite.registrationOnly":
     "Registers a member. Access follows each device’s policy.",
-  "invite.mutualGranted": "Both devices grant each other access on joining.",
+  "invite.managerGranted":
+    "Joining with consent grants this manager access to the new device.",
   "invite.useBefore": "Use before {time}.",
   "invite.copy": "Copy link",
   "invite.copying": "Copying…",
@@ -272,6 +273,7 @@ export const en = {
     "Could not refresh devices. Showing the last known list.",
   "devices.pausedHint":
     "Remote access is paused. These permissions apply again when you resume access.",
+  "devices.managerProtected": "Managers reject incoming operations.",
   "devices.direction": "Other devices → This device",
   "devices.permissionHint":
     "Allowed devices can run commands, transfer files and take screenshots here. Accessing them needs their permission.",

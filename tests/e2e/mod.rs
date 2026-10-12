@@ -185,6 +185,7 @@ impl Suite {
                     &invite,
                     "--name",
                     "runner1",
+                    "--allow-manager",
                     "--no-daemon",
                     "--json",
                 ],
@@ -259,7 +260,13 @@ impl Suite {
         for (caller, device) in [(&source, "observer"), (&observer, "admin")] {
             let denied = cli(caller, &[device, "--", "unused"]).await;
             assert_eq!(denied.status.code(), Some(125));
-            assert!(String::from_utf8_lossy(&denied.stderr).contains("SOURCE_NOT_ALLOWED"));
+            assert!(
+                String::from_utf8_lossy(&denied.stderr).contains(if device == "admin" {
+                    "MANAGER_PROTECTED"
+                } else {
+                    "SOURCE_NOT_ALLOWED"
+                })
+            );
         }
         // Compile a tiny portable child so argument quoting, stdin and process lifetime
         // exercise the actual platform process layer without requiring a project toolchain.

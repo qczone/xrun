@@ -277,9 +277,7 @@ test("only managers generate invitations, default registration has no grant and 
   status.network!.is_manager = true;
   await poll();
   fireEvent.click(screen.getByRole("button", { name: "邀请设备" }));
-  const option = screen.getByLabelText(
-    "允许新设备与本机互相访问",
-  ) as HTMLInputElement;
+  const option = screen.getByLabelText("申请访问新设备") as HTMLInputElement;
   expect(option.checked).toBe(false);
   fireEvent.click(screen.getByRole("button", { name: "生成接入码" }));
   await screen.findByLabelText("生成的邀请链接");
@@ -311,7 +309,7 @@ test("mutual invitation grants require confirmation and expired links are cleare
   await poll();
   await page("设备");
   fireEvent.click(screen.getByRole("button", { name: "邀请设备" }));
-  fireEvent.click(screen.getByLabelText("允许新设备与本机互相访问"));
+  fireEvent.click(screen.getByLabelText("申请访问新设备"));
   fireEvent.click(screen.getByRole("button", { name: "生成接入码" }));
   await waitFor(() =>
     expect(

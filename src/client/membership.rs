@@ -29,11 +29,21 @@ pub struct JoinInfo {
     /// Signed relay endpoints used by the saved identity.
     pub relay_addresses: Vec<String>,
 }
-/// Register with a one-use invitation and save identity and any signed mutual grant.
+/// Register with a one-use invitation and save its one-way grant to the manager.
 /// Success does not start or initialize the daemon; failures retain a pending key for
 /// safe retry. An already joined identity must remain in the same network.
 pub async fn join(link: &str, name: Option<String>) -> Result<JoinInfo> {
+    let dir = config::device_dir()?;
+    let existing = if dir.join("identity.toml").exists() {
+        Identity::load()?.network.is_some()
+    } else {
+        false
+    };
     let id = super::join_identity(link, name).await?;
+    if !existing {
+        config::update_permission(&crate::network::current(&id)?.roster.manager_id, false)?;
+        crate::control::refresh_access().await?;
+    }
     joined(id)
 }
 fn joined(id: Identity) -> Result<JoinInfo> {
@@ -70,7 +80,7 @@ pub fn connection_kind(link: &str) -> Result<ConnectionKind> {
 
 /// Create or join a network with an explicit local rule for its verified manager.
 /// The manager receives no reciprocal grant; false denies its access even when an
-/// invitation contains an optional mutual grant. Services are started
+/// invitation contains an optional grant to the manager. Services are started
 /// by the CLI or desktop adapter after this operation saves registration and policy.
 pub async fn connect(link: &str, name: Option<String>, allow_manager: bool) -> Result<JoinInfo> {
     match connection_kind(link)? {
@@ -86,7 +96,7 @@ pub async fn connect(link: &str, name: Option<String>, allow_manager: bool) -> R
             let id = super::join_identity(link.trim(), name).await?;
             // Trust the manager in the verified identity and roster, not an
             // unverified device ID taken from the pasted link. An unchecked
-            // desktop consent must also override an invitation's mutual grant.
+            // desktop consent must also override an invitation's optional grant.
             let roster = crate::network::current(&id)?;
             config::update_permission(&roster.roster.manager_id, allow_manager)?;
             crate::control::refresh_access().await?;
@@ -107,7 +117,7 @@ pub async fn create_network(link: &str, name: Option<String>) -> Result<JoinInfo
 pub struct Invitation {
     /// Secret bearer link; show or copy only after a successful request.
     pub link: String,
-    /// Whether accepting the link grants mutual access with the inviter.
+    /// Whether accepting the link grants the manager access to the joining device.
     pub allow: bool,
     /// Remaining validity in seconds at creation.
     pub expires_in: u64,
@@ -123,8 +133,8 @@ pub struct Invitation {
 }
 
 /// Generate an invitation after publishing the manager's current signed roster.
-/// Requires the manager identity. `allow` grants mutual execution, file and screenshot
-/// access only to the device that consumes this invitation; defaults belong to the UI.
+/// Requires the manager identity. `allow` lets the manager execute, transfer files and
+/// capture screenshots on the joining device; it never grants access to the manager.
 pub async fn invite(allow: bool) -> Result<Invitation> {
     invite_code(allow, None).await
 }
@@ -177,6 +187,10 @@ pub async fn revoke(device: &str) -> Result<Revocation> {
 /// and denials, then wait for a running daemon to reload it. Denials take priority.
 /// Reload errors do not roll back the already saved configuration.
 pub async fn set_all_permissions(allow: bool) -> Result<()> {
+    if allow {
+        let id = Identity::load()?;
+        crate::network::current(&id)?.require_business_target(&id.device_id)?;
+    }
     config::update_all_permissions(allow)?;
     crate::control::refresh_access().await
 }
@@ -193,6 +207,9 @@ pub async fn pause_access(paused: bool) -> Result<()> {
 /// verified roster. Reload errors leave the configuration saved. No job is canceled.
 pub async fn set_permission(value: &str, allow: bool) -> Result<Permission> {
     let id = Identity::load()?;
+    if allow {
+        crate::network::current(&id)?.require_business_target(&id.device_id)?;
+    }
     let device_id = if let Some(key) = value.strip_prefix("dev_") {
         if key.len() != 32 || !key.bytes().all(|b| b.is_ascii_hexdigit()) {
             bail!(

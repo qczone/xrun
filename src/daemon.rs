@@ -285,15 +285,17 @@ impl Runtime {
     }
     fn allow(&self, source: &str) -> Result<()> {
         self.membership(source)?;
+        self.authorization()?
+            .roster
+            .require_business_target(&self.id.device_id)?;
         self.config()?.check_access(source)
     }
     fn check_session(&self, source: &str, generation: u64) -> Result<()> {
         if self.stopping.load(Ordering::SeqCst) {
             bail!(ErrorCode::DaemonStopping.error("daemon shutting down"));
         }
-        self.membership(source)?;
+        self.allow(source)?;
         let cfg = self.config()?;
-        cfg.check_access(source)?;
         if cfg.pause_generation != generation {
             bail!(ErrorCode::SessionClosed.error("remote access was paused; open a new session"))
         }
@@ -337,6 +339,11 @@ pub async fn run() -> Result<()> {
     let mut id = Identity::load()?;
     if network::authority(&id)?.manager_id == id.device_id {
         network::manager(&id)?.invalidate_codes()?;
+        config::update_daemon_config(&dir, |cfg| {
+            cfg.allow_all = false;
+            cfg.allow_from.clear();
+            Ok(())
+        })?;
     }
     tokio::select! { result=&mut local=>{return result}, _=net::renew_identity(&mut id)=>{}, result=control.shutdown()=>{result?;return Ok(())} }
     if !dir.join("daemon.initialized").exists() {

@@ -198,25 +198,24 @@ export const zh = {
   "setup.retryCreate": "重试创建网络",
   "setup.joining": "正在加入…",
   "setup.creating": "正在创建…",
-  "invite.confirmTitle": "邀请新设备并互相授权？",
+  "invite.confirmTitle": "邀请并申请访问新设备？",
   "invite.confirmMessage":
-    "新设备将能以你的用户权限访问本机，本机也能访问新设备。请只向你信任的设备分享链接。",
-  "invite.confirm": "生成互相授权邀请",
+    "新设备确认后，允许本机访问它；管理设备不接受远程操作。",
+  "invite.confirm": "生成带授权的邀请",
   "invite.failed": "邀请链接未能生成，请检查本机连接后重试。",
   "invite.description":
     "接入码单次使用，10 分钟内有效；加入时本机后台服务需要在线。",
-  "invite.mutualAccess": "允许新设备与本机互相访问",
+  "invite.managerAccess": "申请访问新设备",
   "invite.registrationHint":
     "默认仅注册成员，不附带访问授权；各设备已开启的全体授权仍会生效。",
-  "invite.allowAllHint":
-    "本机已开启全体授权，新成员加入后即可访问本机；单独拒绝仍生效。",
+  "invite.allowAllHint": "管理设备只处理成员管理，不接受远程操作。",
   "invite.generate": "生成接入码",
   "invite.generating": "正在生成…",
   "invite.connectFirst": "先启动后台服务并连接中转，再生成邀请。",
   "invite.expired": "邀请码已过期，请重新生成。",
   "invite.generatedLink": "生成的邀请链接",
   "invite.registrationOnly": "仅注册成员，访问权限按各设备的授权策略生效。",
-  "invite.mutualGranted": "加入后双方互相授权。",
+  "invite.managerGranted": "加入确认后，允许管理设备访问新设备。",
   "invite.useBefore": "请在 {time} 前使用。",
   "invite.copy": "复制链接",
   "invite.copying": "正在复制…",
@@ -233,11 +232,12 @@ export const zh = {
   "devices.title": "设备",
   "devices.memberDescription":
     "管理其他设备对本机的访问权限；邀请和撤销由管理设备负责。",
-  "devices.managerDescription": "管理网络成员，以及其他设备对本机的访问权限。",
+  "devices.managerDescription": "管理网络成员；本机不接受远程操作。",
   "devices.listFailed": "设备列表暂时不可用，请检查连接后重试。",
   "devices.refreshFailed": "设备列表未能刷新，已保留上次读取的结果。",
   "devices.pausedHint":
     "远程访问已暂停，以下授权暂不生效；恢复后沿用这些设置。",
+  "devices.managerProtected": "管理设备不接受远程操作。",
   "devices.direction": "其他设备 → 本机",
   "devices.permissionHint":
     "允许的设备可以执行命令、传输文件和截图。访问其他设备仍需要对方授权。",

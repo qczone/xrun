@@ -114,6 +114,15 @@ fn valid_id(id: &str) -> bool {
     })
 }
 impl SignedRoster {
+    /// A root-key holder handles membership only, never incoming user operations.
+    pub fn require_business_target(&self, device: &str) -> Result<()> {
+        if self.roster.manager_id == device {
+            bail!(ErrorCode::ManagerProtected.error(
+                "manager devices reject remote commands, files, screenshots and forwarding; migrate management first"
+            ));
+        }
+        Ok(())
+    }
     pub(super) fn signed(roster: Roster, ca_pem: &str, key: &str) -> Result<Self> {
         let signature = sign(
             key,

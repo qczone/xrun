@@ -385,17 +385,6 @@ pub(crate) async fn serve_pair(id: &Identity, ws: &mut Ws) -> Result<()> {
         &STANDARD.decode(request.csr_base64)?,
     )?;
     observe(id, &pair.roster)?;
-    if pair.receipt.receipt.allow && pair.member.device_id != id.device_id {
-        pair.receipt.verify(&pair.roster, &pair.member.device_id)?;
-        config::update_daemon_config(&config::device_dir()?, |cfg| {
-            if !cfg.deny_from.contains(&pair.member.device_id)
-                && !cfg.allow_from.contains(&pair.member.device_id)
-            {
-                cfg.allow_from.push(pair.member.device_id.clone());
-            }
-            Ok(())
-        })?;
-    }
     let roster = pair.roster.clone();
     net::send(
         ws,
@@ -407,7 +396,7 @@ pub(crate) async fn serve_pair(id: &Identity, ws: &mut Ws) -> Result<()> {
         },
     )
     .await?;
-    // The durable pairing and grants above define success. Unrelated offline or
+    // The durable pairing defines success. Unrelated offline or
     // slow peers must not delay delivery of the certificate to its new owner.
     // This remains scoped to the manager's session; daemon shutdown cancels it.
     if let Err(error) = synchronize(&roster).await {
