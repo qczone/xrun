@@ -24,7 +24,7 @@ pub fn command(home: &Path, args: &[&str]) -> Command {
         .kill_on_drop(true);
     cmd
 }
-fn process_log_path(home: &Path, name: &str) -> std::path::PathBuf {
+pub fn process_log_path(home: &Path, name: &str) -> std::path::PathBuf {
     let base = std::env::var_os("XRUN_TEST_LOG_DIR")
         .map(std::path::PathBuf::from)
         .unwrap_or_else(|| home.join("test-logs"));

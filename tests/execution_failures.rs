@@ -412,9 +412,23 @@ async fn authorization_changes_during_acceptance_never_claim_the_request_was_rej
                 )
                 .await
             });
-            // The authenticated, warm session reaches the acceptance write,
-            // which stays blocked until this test releases its transaction.
-            tokio::time::sleep(Duration::from_secs(1)).await;
+            // Wait for the target's actual persistence boundary, rather than
+            // guessing when a new multiplexed stream completes its handshake.
+            let log = process_log_path(&lab.target, "target");
+            tokio::time::timeout(Duration::from_secs(10), async {
+                loop {
+                    let text = std::fs::read_to_string(&log)?;
+                    if text.lines().any(|line| {
+                        line.contains(&request)
+                            && line.contains("persisting reliable execution admission")
+                    }) {
+                        return Ok::<_, anyhow::Error>(());
+                    }
+                    tokio::time::sleep(Duration::from_millis(20)).await;
+                }
+            })
+            .await
+            .context("target reached the blocked admission transaction")??;
             let mut cfg: config::DaemonConfig = config::read(&cfg_path)?;
             if pause {
                 cfg.remote_access_paused = true;

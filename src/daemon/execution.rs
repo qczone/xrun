@@ -131,6 +131,7 @@ pub(super) fn submit(
     );
     job.job_id = id;
     validate_job_size(&job)?;
+    tracing::debug!(request_id = %request.request_id, "persisting reliable execution admission");
     rt.store.insert(&job)?;
     let background = rt.clone();
     let saved = job.clone();
