@@ -159,16 +159,36 @@ export type FileJob = JobCommon &
   );
 export type ScreenshotJob = JobCommon & {
   kind: "screenshot";
-  params: Record<string, never>;
+  params: { options: ScreenshotOptions };
   result: {
     captured_at: string;
     width: number;
     height: number;
+    format: ScreenshotFormat;
+    mime: string;
     size: number;
     sha256: string;
     attachment_error: string | null;
   } | null;
 };
+export type ScreenshotFormat = "png" | "jpeg" | "webp";
+export interface ScreenshotOptions {
+  max_width: number | null;
+  format: ScreenshotFormat;
+  quality: number | null;
+}
+export interface ScreenshotDownload {
+  path: string;
+  job: Job;
+  format: ScreenshotFormat;
+  mime: string;
+  width: number;
+  height: number;
+  size: number;
+  sha256: string;
+  captured_at: string;
+  preview: string | null;
+}
 export type ForwardJob = JobCommon & {
   kind: "forward";
   params: { port: number };
@@ -194,6 +214,7 @@ export interface JobOutput {
 }
 
 export interface Attachment {
+  mime: string | null;
   id: string;
   name: string;
   size: number;
@@ -340,6 +361,14 @@ export const api = {
   logoutCloudflare: () => invoke<void>("logout_cloudflare"),
   remoteSubmit: (device: string, command: RemoteCommand) =>
     invoke<CommandJob>("remote_submit", { device, command }),
+  chooseScreenshotDestination: (format: ScreenshotFormat) =>
+    invoke<string | null>("choose_screenshot_destination", { format }),
+  remoteScreenshot: (
+    device: string,
+    path: string,
+    options: ScreenshotOptions,
+  ) =>
+    invoke<ScreenshotDownload>("remote_screenshot", { device, path, options }),
   remoteRecent: (device: string) =>
     invoke<RemoteReceipt[]>("remote_recent", { device }),
   remoteQuery: (device: string, requestId: string) =>

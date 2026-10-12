@@ -78,6 +78,8 @@ pub(super) async fn serve(
                     width: None,
                     height: None,
                     captured_at: None,
+                    format: None,
+                    mime: None,
                 },
             )
             .await?;
@@ -95,6 +97,8 @@ pub(super) async fn serve(
                     width: None,
                     height: None,
                     captured_at: None,
+                    format: None,
+                    mime: None,
                 },
             )
             .await?;
@@ -113,8 +117,9 @@ pub(super) async fn serve(
                 )?;
             }
         }
-        Request::Screenshot { .. } => {
-            let (capture, _permit) = crate::screenshot::capture_with_permit(permit).await?;
+        Request::Screenshot { options, .. } => {
+            let (capture, _permit) =
+                crate::screenshot::capture_with_permit(permit, options).await?;
             send_capture(ws, capture, operation).await?;
         }
         _ => bail!(ErrorCode::InvalidRequest.error("operation dispatched to the wrong handler")),
@@ -130,6 +135,8 @@ async fn send_capture(
         captured_at: capture.at.clone(),
         width: capture.width,
         height: capture.height,
+        format: capture.format,
+        mime: capture.format.mime().into(),
         size: capture.bytes.len() as u64,
         sha256: sha256(&capture.bytes),
         attachment_error: None,
@@ -143,13 +150,18 @@ async fn send_capture(
             width: Some(result.width),
             height: Some(result.height),
             captured_at: Some(result.captured_at.clone()),
+            format: Some(capture.format),
+            mime: Some(capture.format.mime().into()),
         },
     )
     .await?;
     net::send_bytes(ws, &capture.bytes).await?;
     if let Some(job) = operation.as_mut() {
-        job.retain_bytes(capture.bytes, format!("screenshot-{}.png", now_ms()))
-            .await;
+        job.retain_bytes(
+            capture.bytes,
+            format!("screenshot-{}.{}", now_ms(), capture.format.extension()),
+        )
+        .await;
         job.finish(JobState::Succeeded, JobResult::Screenshot(result))?;
     }
     Ok(())
@@ -173,7 +185,9 @@ mod tests {
             "target",
             &JobContext::new(&store.db_id),
             "hash".into(),
-            JobDetails::Screenshot(ScreenshotParams {}),
+            JobDetails::Screenshot(ScreenshotParams {
+                options: Default::default(),
+            }),
         );
         store.insert(&job)?;
         store.mark_running(&job.job_id).await?;
@@ -214,6 +228,7 @@ mod tests {
                 width: 1,
                 height: 1,
                 at: "2026-10-06T00:00:00Z".into(),
+                format: ScreenshotFormat::Png,
             };
             if disconnected {
                 drop(client);
@@ -232,6 +247,7 @@ mod tests {
                     width,
                     height,
                     captured_at,
+                    ..
                 } = net::receive(&mut client).await?
                 else {
                     bail!("file metadata expected")
@@ -297,6 +313,7 @@ mod tests {
                 width: 1,
                 height: 1,
                 at: "fixture".into(),
+                format: ScreenshotFormat::Png,
             },
             &mut operation,
         )

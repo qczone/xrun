@@ -1,10 +1,46 @@
 //! Authorized remote commands; no shell is executed on the desktop host.
 use super::{app::Desktop, error::CommandError};
 use tauri::State;
+use tauri_plugin_dialog::DialogExt;
 use xrun::{
     client::remote::{self, CommandRequest, Output, Receipt},
-    protocol::Job,
+    protocol::{Job, ScreenshotFormat, ScreenshotOptions},
 };
+
+#[tauri::command]
+pub(super) async fn choose_screenshot_destination<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    format: ScreenshotFormat,
+) -> Result<Option<String>, CommandError> {
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    app.dialog()
+        .file()
+        .set_file_name(format!("screenshot.{}", format.extension()))
+        .add_filter("Image", &[format.extension()])
+        .save_file(move |path| {
+            let _ = tx.send(path);
+        });
+    rx.await
+        .map_err(CommandError::from_error)?
+        .map(|path| {
+            path.into_path()
+                .map(|path| path.to_string_lossy().into_owned())
+                .map_err(CommandError::from_error)
+        })
+        .transpose()
+}
+#[tauri::command]
+pub(super) async fn remote_screenshot(
+    state: State<'_, Desktop>,
+    device: String,
+    path: String,
+    options: ScreenshotOptions,
+) -> Result<remote::ScreenshotDownload, CommandError> {
+    let _guard = state.action.lock().await;
+    remote::screenshot(&device, std::path::Path::new(&path), options)
+        .await
+        .map_err(CommandError::from_error)
+}
 
 #[tauri::command]
 pub(super) async fn remote_submit(

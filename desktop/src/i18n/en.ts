@@ -1,5 +1,21 @@
 /** English is the default and defines the complete set of message keys. */
 export const en = {
+  "capture.open": "Screenshot",
+  "capture.title": "Screenshot · {name}",
+  "capture.preset": "Image size",
+  "capture.original": "Original PNG",
+  "capture.compact": "Save data",
+  "capture.custom": "Custom",
+  "capture.format": "Format",
+  "capture.width": "Maximum width",
+  "capture.quality": "Quality",
+  "capture.hint":
+    "Requires screen capture permission on the target. The image is saved locally and retained on the target.",
+  "capture.save": "Capture and save",
+  "capture.capturing": "Capturing…",
+  "capture.saved": "Screenshot saved",
+  "capture.failed": "Screenshot failed",
+  "capture.preview": "Downloaded screenshot",
   "freshness.title": "Membership freshness",
   "freshness.hint":
     "When the manager stays offline beyond this period, new operations wait for renewal.",

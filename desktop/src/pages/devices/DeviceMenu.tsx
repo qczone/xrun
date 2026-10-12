@@ -15,6 +15,7 @@ interface Props {
   close: () => void;
   revoke: () => void;
   runCommand: () => void;
+  captureScreen: () => void;
 }
 export function DeviceMenu({
   device,
@@ -25,6 +26,7 @@ export function DeviceMenu({
   close,
   revoke,
   runCommand,
+  captureScreen,
 }: Props) {
   const { busy } = useOperations();
   const menu = useRef<HTMLDetailsElement>(null);
@@ -133,6 +135,16 @@ export function DeviceMenu({
         >
           <Icon name="terminal" />
           {t("remote.open")}
+        </button>
+        <button
+          disabled={busy || device.revoked || !device.online || !!device.admin}
+          onClick={() => {
+            close();
+            captureScreen();
+          }}
+        >
+          <Icon name="monitor" />
+          {t("capture.open")}
         </button>
         {manager && !device.revoked && device.device_id !== managerId && (
           <button

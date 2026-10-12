@@ -159,6 +159,7 @@ fn admit(rt: &Runtime, source: &str, generation: u64, request: &Request) -> Resu
                 bail!(ErrorCode::InvalidRequest.error("expect conflicts with no-overwrite"));
             }
         }
+        Request::Screenshot { options, .. } => options.validate()?,
         Request::StreamExec { execution, .. } => super::program::validate_stream(execution)?,
         Request::Forward { port: 0, .. } => {
             bail!(ErrorCode::InvalidPort.error("remote port must be 1..65535"))

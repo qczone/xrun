@@ -1,4 +1,5 @@
 //! Source-scoped remote commands for desktop adapters, with durable submission IDs.
+mod capture;
 mod command;
 use crate::{
     config::{self, Identity},
@@ -9,6 +10,7 @@ use crate::{
     store::SubmissionStore,
 };
 use anyhow::{Context, Result, bail};
+pub use capture::{ScreenshotDownload, screenshot};
 pub use command::{CommandRequest, submit};
 use serde::Serialize;
 use std::time::Duration;

@@ -1,5 +1,5 @@
 use crate::error::ErrorCode;
-use crate::protocol::MAX_SCREENSHOT;
+use crate::protocol::{MAX_SCREENSHOT, ScreenshotFormat, ScreenshotOptions};
 use anyhow::{Context, Result, bail};
 use tokio::sync::OwnedSemaphorePermit;
 pub struct Capture {
@@ -7,15 +7,22 @@ pub struct Capture {
     pub width: u32,
     pub height: u32,
     pub at: String,
+    pub format: ScreenshotFormat,
 }
 pub async fn capture() -> Result<Capture> {
     decode(platform(None).await?.0)
 }
 pub(crate) async fn capture_with_permit(
     permit: OwnedSemaphorePermit,
+    options: ScreenshotOptions,
 ) -> Result<(Capture, OwnedSemaphorePermit)> {
+    options.validate()?;
     let (bytes, permit) = platform(Some(permit)).await?;
-    Ok((decode(bytes)?, permit.expect("capture retains admission")))
+    tokio::task::spawn_blocking(move || {
+        let permit = permit.expect("capture retains admission");
+        Ok((encode(decode(bytes)?, &options)?, permit))
+    })
+    .await?
 }
 
 // Keep the output path and admission alive until the external writer has exited.
@@ -62,14 +69,190 @@ fn decode(bytes: Vec<u8>) -> Result<Capture> {
         .context(ErrorCode::ScreenshotFailed.error("invalid PNG"))?;
     let width = reader.info().width;
     let height = reader.info().height;
+    dimensions(width, height)?;
     Ok(Capture {
         bytes,
         width,
         height,
+        format: ScreenshotFormat::Png,
         at: time::OffsetDateTime::now_utc()
             .format(&time::format_description::well_known::Rfc3339)?,
     })
 }
+const MAX_PIXELS: u64 = 32_000_000;
+fn dimensions(width: u32, height: u32) -> Result<()> {
+    if width == 0 || height == 0 || u64::from(width) * u64::from(height) > MAX_PIXELS {
+        bail!(
+            ErrorCode::ScreenshotFailed
+                .error("screenshot dimensions exceed the 32 megapixel resource budget")
+        );
+    }
+    Ok(())
+}
+fn limits() -> image::Limits {
+    let mut limits = image::Limits::default();
+    limits.max_alloc = Some(MAX_PIXELS * 4);
+    limits
+}
+fn encode(capture: Capture, options: &ScreenshotOptions) -> Result<Capture> {
+    options.validate()?;
+    dimensions(capture.width, capture.height)?;
+    let width = options
+        .max_width
+        .map_or(capture.width, |width| width.min(capture.width));
+    if width == capture.width && options.format == ScreenshotFormat::Png {
+        return Ok(capture);
+    }
+    let mut reader = image::ImageReader::with_format(
+        std::io::Cursor::new(&capture.bytes),
+        image::ImageFormat::Png,
+    );
+    reader.limits(limits());
+    let mut pixels = reader
+        .decode()
+        .context(ErrorCode::ScreenshotFailed.error("cannot decode captured PNG"))?;
+    if width < capture.width {
+        let height =
+            (u64::from(capture.height) * u64::from(width) / u64::from(capture.width)).max(1) as u32;
+        pixels = pixels.resize_exact(width, height, image::imageops::FilterType::Triangle);
+    }
+    let (width, height) = (pixels.width(), pixels.height());
+    let quality = options.quality.unwrap_or(80);
+    let bytes = match options.format {
+        ScreenshotFormat::Png => {
+            let mut out = std::io::Cursor::new(Vec::new());
+            pixels.write_to(&mut out, image::ImageFormat::Png)?;
+            out.into_inner()
+        }
+        ScreenshotFormat::Jpeg => {
+            let pixels = pixels.into_rgb8();
+            let mut out = Vec::new();
+            image::codecs::jpeg::JpegEncoder::new_with_quality(&mut out, quality).encode(
+                pixels.as_raw(),
+                width,
+                height,
+                image::ExtendedColorType::Rgb8,
+            )?;
+            out
+        }
+        ScreenshotFormat::Webp => {
+            let pixels = pixels.into_rgba8();
+            webp::Encoder::from_rgba(pixels.as_raw(), width, height)
+                .encode_simple(false, f32::from(quality))
+                .map_err(|error| {
+                    ErrorCode::ScreenshotFailed.error(format!("WebP encoding failed: {error:?}"))
+                })?
+                .to_vec()
+        }
+    };
+    if bytes.len() as u64 > MAX_SCREENSHOT {
+        bail!(ErrorCode::FileTooLarge.error("encoded screenshot exceeds 64 MiB"));
+    }
+    Ok(Capture {
+        bytes,
+        width,
+        height,
+        at: capture.at,
+        format: options.format,
+    })
+}
+pub(crate) fn validate_received(
+    bytes: &[u8],
+    format: ScreenshotFormat,
+    width: u32,
+    height: u32,
+) -> Result<()> {
+    dimensions(width, height)?;
+    let actual = image::guess_format(bytes)
+        .context(ErrorCode::InvalidMessage.error("invalid screenshot encoding"))?;
+    let expected = match format {
+        ScreenshotFormat::Png => image::ImageFormat::Png,
+        ScreenshotFormat::Jpeg => image::ImageFormat::Jpeg,
+        ScreenshotFormat::Webp => image::ImageFormat::WebP,
+    };
+    if actual != expected {
+        bail!(ErrorCode::InvalidMessage.error("screenshot format differs from its metadata"));
+    }
+    let mut reader = image::ImageReader::with_format(std::io::Cursor::new(bytes), actual);
+    reader.limits(limits());
+    if reader.into_dimensions()? != (width, height) {
+        bail!(ErrorCode::InvalidMessage.error("screenshot dimensions differ from its metadata"));
+    }
+    Ok(())
+}
+#[cfg(test)]
+mod encoding_tests {
+    use super::*;
+    fn fixture() -> Result<Vec<u8>> {
+        let pixels = image::RgbImage::from_fn(640, 360, |x, y| {
+            image::Rgb([(x % 251) as u8, (y % 251) as u8, ((x * y) % 251) as u8])
+        });
+        let mut out = std::io::Cursor::new(Vec::new());
+        image::DynamicImage::ImageRgb8(pixels).write_to(&mut out, image::ImageFormat::Png)?;
+        Ok(out.into_inner())
+    }
+    #[test]
+    fn original_png_is_preserved_and_all_formats_resize_with_actual_metadata() -> Result<()> {
+        let original = fixture()?;
+        let preserved = encode(decode(original.clone())?, &ScreenshotOptions::default())?;
+        assert_eq!(preserved.bytes, original);
+        for format in [
+            ScreenshotFormat::Png,
+            ScreenshotFormat::Jpeg,
+            ScreenshotFormat::Webp,
+        ] {
+            let output = encode(
+                decode(original.clone())?,
+                &ScreenshotOptions {
+                    max_width: Some(320),
+                    format,
+                    quality: (format != ScreenshotFormat::Png).then_some(70),
+                },
+            )?;
+            assert_eq!((output.width, output.height), (320, 180));
+            assert_eq!(output.format, format);
+            validate_received(&output.bytes, format, 320, 180)?;
+            assert!(output.bytes.len() < original.len());
+            assert!(validate_received(&output.bytes, format, 640, 360).is_err());
+        }
+        let output = encode(
+            decode(original)?,
+            &ScreenshotOptions {
+                max_width: Some(1280),
+                format: ScreenshotFormat::Jpeg,
+                quality: Some(90),
+            },
+        )?;
+        assert_eq!((output.width, output.height), (640, 360));
+        Ok(())
+    }
+    #[test]
+    fn dimensions_quality_and_encoding_are_checked_before_allocation_or_publication() -> Result<()>
+    {
+        assert!(dimensions(u32::MAX, u32::MAX).is_err());
+        assert!(dimensions(0, 360).is_err());
+        for options in [
+            ScreenshotOptions {
+                max_width: Some(0),
+                ..Default::default()
+            },
+            ScreenshotOptions {
+                format: ScreenshotFormat::Jpeg,
+                quality: Some(0),
+                max_width: None,
+            },
+            ScreenshotOptions {
+                quality: Some(80),
+                ..Default::default()
+            },
+        ] {
+            assert!(options.validate().is_err());
+        }
+        assert!(validate_received(&fixture()?, ScreenshotFormat::Webp, 640, 360).is_err());
+        Ok(())
+    }
+}
+
 #[cfg(target_os = "macos")]
 async fn platform(
     permit: Option<OwnedSemaphorePermit>,
@@ -154,6 +337,7 @@ $desktop = [DesktopCheck]::OpenInputDesktop(0, $false, 1)
 if ($desktop -eq [IntPtr]::Zero) { exit 77 }
 [void][DesktopCheck]::CloseDesktop($desktop)
 $bounds = [Windows.Forms.Screen]::PrimaryScreen.Bounds
+if ([long]$bounds.Width * $bounds.Height -gt 32000000) { exit 78 }
 $bitmap = New-Object Drawing.Bitmap $bounds.Width, $bounds.Height
 $graphics = [Drawing.Graphics]::FromImage($bitmap)
 try {
@@ -187,6 +371,11 @@ async fn windows_capture(
     let status = capture.wait().await?;
     if status.code() == Some(77) {
         bail!(ErrorCode::ScreenLocked.error("interactive desktop is inaccessible"))
+    }
+    if status.code() == Some(78) {
+        bail!(
+            ErrorCode::ScreenshotFailed.error("display exceeds the 32 megapixel resource budget")
+        );
     }
     if !status.success() {
         bail!(ErrorCode::ScreenshotFailed.error("PowerShell could not capture or save the display"))

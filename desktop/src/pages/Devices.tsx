@@ -14,6 +14,7 @@ import { InvitationDialog } from "./devices/InvitationDialog";
 import { RevocationResult } from "./devices/RevocationResult";
 import { useMembership } from "./devices/useMembership";
 import { RemoteCommandDialog } from "./devices/RemoteCommandDialog";
+import { ScreenshotDialog } from "./devices/ScreenshotDialog";
 
 interface Props {
   active: boolean;
@@ -33,6 +34,7 @@ export function Devices({ active, paused, status, members, feedback }: Props) {
   const manager = !!network?.is_manager;
   const [inviteOpen, setInviteOpen] = useState(false);
   const [commandDevice, setCommandDevice] = useState<Device | null>(null);
+  const [captureDevice, setCaptureDevice] = useState<Device | null>(null);
   const [openDeviceId, setOpenDeviceId] = useState<string | null>(null);
   const [deviceFilter, setDeviceFilter] = useState<"all" | "online">("all");
   const [search, setSearch] = useState("");
@@ -44,6 +46,7 @@ export function Devices({ active, paused, status, members, feedback }: Props) {
   useEffect(() => {
     setInviteOpen(false);
     setCommandDevice(null);
+    setCaptureDevice(null);
     setOpenDeviceId(null);
     setDeviceFilter("all");
     setSearch("");
@@ -52,6 +55,7 @@ export function Devices({ active, paused, status, members, feedback }: Props) {
     if (!active) {
       setOpenDeviceId(null);
       setCommandDevice(null);
+      setCaptureDevice(null);
     }
     if (!active || !manager) setInviteOpen(false);
   }, [active, manager]);
@@ -84,6 +88,10 @@ export function Devices({ active, paused, status, members, feedback }: Props) {
       runCommand={(device) => {
         clearError();
         setCommandDevice(device);
+      }}
+      captureScreen={(device) => {
+        clearError();
+        setCaptureDevice(device);
       }}
     />
   );
@@ -258,6 +266,16 @@ export function Devices({ active, paused, status, members, feedback }: Props) {
           active={active && !paused}
           close={() => setCommandDevice(null)}
           feedback={feedback}
+        />
+      )}
+      {captureDevice && (
+        <ScreenshotDialog
+          device={
+            devices.find(
+              (device) => device.device_id === captureDevice.device_id,
+            ) || captureDevice
+          }
+          close={() => setCaptureDevice(null)}
         />
       )}
     </>

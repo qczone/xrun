@@ -224,7 +224,9 @@ mod tests {
                 2,
                 200,
                 JobState::Succeeded,
-                JobDetails::Screenshot(ScreenshotParams {}),
+                JobDetails::Screenshot(ScreenshotParams {
+                    options: Default::default(),
+                }),
             ),
             (
                 3,

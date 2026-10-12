@@ -11,6 +11,7 @@ import {
 import type { Attachment } from "../src/api";
 
 const retained: Attachment = {
+  mime: "image/png",
   id: "capture-one",
   name: "screenshot.png",
   size: 68,

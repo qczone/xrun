@@ -7,7 +7,7 @@ pub(crate) const JOB_COLUMNS: &str = concat!(
     "leftover_possible,last_log_seq,log_bytes,output_complete,output_loss_reason,",
     "(SELECT value FROM meta WHERE key='db_id')"
 );
-pub(crate) const JOB_SCHEMA_VERSION: i64 = 2;
+pub(crate) const JOB_SCHEMA_VERSION: i64 = 3;
 const JOB_SCHEMA: &str = include_str!("schema.sql");
 
 pub(crate) fn prepare_upgrade(path: &Path) -> Result<()> {
@@ -444,14 +444,15 @@ impl Database {
             bail!(ErrorCode::InvalidRequest.error("this job does not produce retained files"));
         }
         transaction.execute(
-            "INSERT INTO job_attachments VALUES(?1,?2,?3,?4,?5,?6,'available',NULL)",
+            "INSERT INTO job_attachments VALUES(?1,?2,?3,?4,?5,?6,'available',NULL,?7)",
             params![
                 metadata.id,
                 id,
                 metadata.name,
                 i64::try_from(metadata.size)?,
                 metadata.sha256,
-                metadata.created_at_ms
+                metadata.created_at_ms,
+                metadata.mime,
             ],
         )?;
         transaction.execute(

@@ -48,7 +48,8 @@ CREATE TABLE job_attachments(
     sha256 TEXT NOT NULL,
     created_at_ms INTEGER NOT NULL,
     status TEXT NOT NULL CHECK(status IN ('available','expired','missing')),
-    deleted_at_ms INTEGER
+    deleted_at_ms INTEGER,
+    mime TEXT
 );
 CREATE INDEX job_attachments_job ON job_attachments(job_id,created_at_ms,attachment_id);
 CREATE INDEX job_attachments_cleanup ON job_attachments(status,created_at_ms);

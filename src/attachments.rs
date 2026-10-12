@@ -17,6 +17,18 @@ const PREVIEW_LIMIT: u64 = 8 * 1024 * 1024;
 const TEXT_LIMIT: u64 = 1024 * 1024;
 const CLEANUP_INTERVAL_MS: i64 = 10 * 60 * 1000;
 
+fn image_mime(bytes: &[u8]) -> Option<&'static str> {
+    if bytes.starts_with(b"\x89PNG\r\n\x1a\n") {
+        Some("image/png")
+    } else if bytes.starts_with(&[0xff, 0xd8, 0xff]) {
+        Some("image/jpeg")
+    } else if bytes.starts_with(b"RIFF") && bytes.get(8..12) == Some(b"WEBP") {
+        Some("image/webp")
+    } else {
+        None
+    }
+}
+
 /// Immutable description saved with the activity summary.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AttachmentMetadata {
@@ -28,6 +40,8 @@ pub struct AttachmentMetadata {
     pub size: u64,
     /// SHA-256 of the exact snapshot bytes.
     pub sha256: String,
+    /// Actual image MIME detected from immutable bytes, or none for other files.
+    pub mime: Option<String>,
     /// Snapshot creation time in Unix milliseconds.
     pub created_at_ms: i64,
 }
@@ -48,7 +62,7 @@ pub struct Attachment {
 pub struct AttachmentPreview {
     /// Current availability and snapshot details.
     pub attachment: Attachment,
-    /// PNG or JPEG data URL, never executable document markup.
+    /// PNG, JPEG or WebP data URL, never executable document markup.
     pub image: Option<String>,
     /// Complete UTF-8 text for files of at most one MiB, rendered as plain text.
     pub text: Option<String>,
@@ -106,12 +120,16 @@ impl Cache {
         let mut hash = Sha256::new();
         let mut size = 0_u64;
         let mut buffer = [0; 64 * 1024];
+        let mut prefix = Vec::new();
         loop {
             let count = input.read(&mut buffer)?;
             if count == 0 {
                 break;
             }
             size += count as u64;
+            if prefix.is_empty() {
+                prefix.extend_from_slice(&buffer[..count.min(16)]);
+            }
             temp.write_all(&buffer[..count])?;
             hash.update(&buffer[..count]);
         }
@@ -138,6 +156,7 @@ impl Cache {
             },
             size,
             sha256: hex::encode(hash.finalize()),
+            mime: image_mime(&prefix).map(str::to_owned),
             created_at_ms,
         })
     }
@@ -197,15 +216,19 @@ impl Cache {
         if bytes.len() as u64 != preview.attachment.metadata.size {
             bail!(ErrorCode::StorageError.error("attachment size changed"));
         }
-        let mime = if bytes.starts_with(b"\x89PNG\r\n\x1a\n") {
-            Some("image/png")
-        } else if bytes.starts_with(&[0xff, 0xd8, 0xff]) {
-            Some("image/jpeg")
-        } else {
-            None
-        };
+        let mime = image_mime(&bytes);
         if let Some(mime) = mime {
-            preview.image = Some(format!("data:{mime};base64,{}", STANDARD.encode(&bytes)));
+            // An uploaded image is not necessarily a capture. Check its header
+            // before handing a potentially enormous image to the webview.
+            if let Ok((width, height)) = image::ImageReader::new(std::io::Cursor::new(&bytes))
+                .with_guessed_format()?
+                .into_dimensions()
+                && width > 0
+                && height > 0
+                && u64::from(width) * u64::from(height) <= 32_000_000
+            {
+                preview.image = Some(format!("data:{mime};base64,{}", STANDARD.encode(&bytes)));
+            }
         } else if bytes.len() as u64 <= TEXT_LIMIT
             && let Ok(text) = std::str::from_utf8(&bytes)
             && !text
@@ -264,7 +287,7 @@ impl Cache {
         db.busy_timeout(std::time::Duration::from_millis(500))?;
         self.check_directory()?;
         let metadata = db.prepare(
-            "SELECT attachment_id,name,size_bytes,sha256,created_at_ms FROM job_attachments WHERE status='available'"
+            "SELECT attachment_id,name,size_bytes,sha256,created_at_ms,mime FROM job_attachments WHERE status='available'"
         )?.query_map([], |row| read_metadata(row,0))?.collect::<rusqlite::Result<Vec<_>>>()?;
         for metadata in metadata {
             if self.describe(metadata.clone(), 0, now_ms())?.status == "missing" {
@@ -345,6 +368,7 @@ pub(crate) fn read_metadata(
         })?,
         sha256: row.get(start + 3)?,
         created_at_ms: row.get(start + 4)?,
+        mime: row.get(start + 5)?,
     })
 }
 pub(crate) fn for_job(
@@ -355,11 +379,11 @@ pub(crate) fn for_job(
     let days = cache.retention_days()?;
     let now = now_ms();
     db.prepare(
-        "SELECT attachment_id,name,size_bytes,sha256,created_at_ms,status FROM job_attachments
+        "SELECT attachment_id,name,size_bytes,sha256,created_at_ms,mime,status FROM job_attachments
          WHERE job_id=?1 ORDER BY created_at_ms,attachment_id",
     )?
     .query_map([id], |row| {
-        Ok((read_metadata(row, 0)?, row.get::<_, String>(5)?))
+        Ok((read_metadata(row, 0)?, row.get::<_, String>(6)?))
     })?
     .map(|row| {
         let (metadata, status) = row?;
@@ -376,6 +400,27 @@ pub(crate) fn for_job(
 mod tests {
     use super::*;
     use crate::{protocol::*, store::JobStore};
+
+    #[test]
+    fn webp_preview_uses_detected_mime_and_checks_decoded_dimensions() -> Result<()> {
+        let dir = tempfile::tempdir()?;
+        let cache = Cache::new(dir.path());
+        let bytes = webp::Encoder::from_rgb(&[255, 0, 0], 1, 1)
+            .encode_simple(false, 80.0)
+            .map_err(|error| anyhow::anyhow!("{error:?}"))?;
+        let metadata = cache.save(std::io::Cursor::new(&*bytes), "screen.webp")?;
+        assert_eq!(metadata.mime.as_deref(), Some("image/webp"));
+        assert!(
+            cache
+                .preview(metadata)?
+                .image
+                .unwrap()
+                .starts_with("data:image/webp;base64,")
+        );
+        let malformed = cache.save(std::io::Cursor::new(b"RIFFxxxxWEBP"), "bad.webp")?;
+        assert!(cache.preview(malformed)?.image.is_none());
+        Ok(())
+    }
 
     #[test]
     fn large_files_are_retained_and_exported_with_bounded_previews() -> Result<()> {
@@ -406,7 +451,9 @@ mod tests {
             "target",
             &JobContext::new(&store.db_id),
             "hash".into(),
-            JobDetails::Screenshot(ScreenshotParams {}),
+            JobDetails::Screenshot(ScreenshotParams {
+                options: Default::default(),
+            }),
         );
         store.insert(&job)?;
         let cache = store.attachments();

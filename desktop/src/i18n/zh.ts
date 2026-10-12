@@ -1,6 +1,21 @@
 import type { en } from "./en";
 
 export const zh = {
+  "capture.open": "截图",
+  "capture.title": "截图 · {name}",
+  "capture.preset": "画面大小",
+  "capture.original": "原图 PNG",
+  "capture.compact": "省流",
+  "capture.custom": "自定",
+  "capture.format": "格式",
+  "capture.width": "最大宽度",
+  "capture.quality": "画质",
+  "capture.hint": "目标设备需有截图权限。图片保存到本机，目标保留一份附件。",
+  "capture.save": "截图并保存",
+  "capture.capturing": "截图中…",
+  "capture.saved": "截图已保存",
+  "capture.failed": "截图失败",
+  "capture.preview": "下载的截图",
   "freshness.title": "成员有效期",
   "freshness.hint": "管理设备离线超过这段时间，新操作需等待续期。",
   "freshness.minutes": "{minutes} 分钟",

@@ -474,6 +474,8 @@ pub(super) fn register<R: tauri::Runtime>(builder: tauri::Builder<R>) -> tauri::
             super::connection::deploy_cloudflare,
             super::connection::cloudflare_relays,
             super::remote::remote_submit,
+            super::remote::remote_screenshot,
+            super::remote::choose_screenshot_destination,
             super::remote::remote_recent,
             super::remote::remote_query,
             super::remote::remote_output,

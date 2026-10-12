@@ -391,8 +391,10 @@ export function activityJob(
       return {
         ...base,
         kind,
-        params: {},
+        params: { options: { format: "png", max_width: null, quality: null } },
         result: {
+          format: "png",
+          mime: "image/png",
           captured_at: new Date().toISOString(),
           width: 1,
           height: 1,

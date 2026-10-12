@@ -1,6 +1,8 @@
 //! Negotiated wire messages and shared limits.
 #![deny(missing_docs)]
+mod capture;
 mod job;
+pub use capture::{ScreenshotFormat, ScreenshotOptions};
 mod relay;
 mod traffic;
 mod version;
@@ -322,6 +324,8 @@ pub enum Request {
     Screenshot {
         /// Identity of this capture attempt.
         context: JobContext,
+        /// Format, maximum width and optional lossy quality.
+        options: ScreenshotOptions,
     },
     /// Open a TCP connection to an endpoint-local port.
     Forward {
@@ -417,6 +421,10 @@ pub enum Data {
         height: Option<u32>,
         /// Capture timestamp, when applicable.
         captured_at: Option<String>,
+        /// Actual encoded image format, absent for ordinary files.
+        format: Option<ScreenshotFormat>,
+        /// Actual encoded image MIME, absent for ordinary files.
+        mime: Option<String>,
     },
     /// End of the current binary/log stream.
     End,

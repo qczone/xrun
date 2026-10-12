@@ -35,6 +35,8 @@ async fn screenshot_download_checks_metadata_integrity_errors_and_local_destinat
         let cases = [
             "file",
             "temporary",
+            "jpeg",
+            "webp",
             "checksum",
             "disconnect",
             "permission",
@@ -85,7 +87,39 @@ async fn screenshot_download_checks_metadata_integrity_errors_and_local_destinat
                 let Data::Request { request } = net::receive(&mut ws).await? else {
                     anyhow::bail!("request expected")
                 };
-                assert!(matches!(request, Request::Screenshot { .. }));
+                let Request::Screenshot { ref options, .. } = request else {
+                    bail!("screenshot intent")
+                };
+                let format = match case {
+                    "jpeg" => ScreenshotFormat::Jpeg,
+                    "webp" => ScreenshotFormat::Webp,
+                    _ => ScreenshotFormat::Png,
+                };
+                assert_eq!(options.format, format);
+                if format != ScreenshotFormat::Png {
+                    assert_eq!(options.max_width, Some(2));
+                    assert_eq!(options.quality, Some(73));
+                }
+                let payload = match format {
+                    ScreenshotFormat::Png => png.clone(),
+                    ScreenshotFormat::Jpeg => {
+                        let mut encoded = Vec::new();
+                        image::codecs::jpeg::JpegEncoder::new_with_quality(&mut encoded, 73)
+                            .encode(
+                                &[255, 0, 0, 0, 255, 0],
+                                2,
+                                1,
+                                image::ExtendedColorType::Rgb8,
+                            )?;
+                        encoded
+                    }
+                    ScreenshotFormat::Webp => {
+                        webp::Encoder::from_rgb(&[255, 0, 0, 0, 255, 0], 2, 1)
+                            .encode_simple(false, 73.0)
+                            .map_err(|error| anyhow::anyhow!("{error:?}"))?
+                            .to_vec()
+                    }
+                };
                 let error = match case {
                     "permission" => Some("PERMISSION_DENIED"),
                     "locked" => Some("SCREEN_LOCKED"),
@@ -114,14 +148,16 @@ async fn screenshot_download_checks_metadata_integrity_errors_and_local_destinat
                         &mut ws,
                         &Data::File {
                             path: String::new(),
-                            size: png.len() as u64,
+                            size: payload.len() as u64,
                             sha256: if case == "checksum" {
                                 "0".repeat(64)
                             } else {
-                                sha256(&png)
+                                sha256(&payload)
                             },
                             width: Some(2),
                             height: Some(1),
+                            format: Some(format),
+                            mime: Some(format.mime().into()),
                             captured_at: Some("2026-10-06T00:00:00Z".into()),
                         },
                     )
@@ -133,7 +169,7 @@ async fn screenshot_download_checks_metadata_integrity_errors_and_local_destinat
                         ))
                         .await?;
                     } else {
-                        net::send_bytes(&mut ws, &png).await?;
+                        net::send_bytes(&mut ws, &payload).await?;
                         // A rejected checksum can close the connection before completion.
                         let _ = net::send(&mut ws, &Data::Complete).await;
                     }
@@ -168,6 +204,39 @@ async fn screenshot_download_checks_metadata_integrity_errors_and_local_destinat
             );
             assert_eq!(std::fs::read(&temporary)?, png);
             std::fs::remove_file(temporary)?;
+            for format in ["jpeg", "webp"] {
+                let image = json(
+                    cli(
+                        &lab.source,
+                        &[
+                            "target1",
+                            "screenshot",
+                            "--format",
+                            format,
+                            "--max-width",
+                            "2",
+                            "--quality",
+                            "73",
+                            "--json",
+                        ],
+                    )
+                    .await,
+                );
+                assert_eq!(image["format"], format);
+                assert_eq!(image["mime"], format!("image/{format}"));
+                let file = std::path::PathBuf::from(image["path"].as_str().unwrap());
+                let bytes = std::fs::read(&file)?;
+                assert_eq!(sha256(&bytes), image["sha256"].as_str().unwrap());
+                assert_eq!(image["size"], bytes.len());
+                assert!(file.extension().unwrap() == if format == "jpeg" { "jpg" } else { "webp" });
+                assert_eq!(
+                    image::ImageReader::new(std::io::Cursor::new(bytes))
+                        .with_guessed_format()?
+                        .into_dimensions()?,
+                    (2, 1)
+                );
+                std::fs::remove_file(file)?;
+            }
             for expected in [
                 "CHECKSUM_MISMATCH",
                 "CONNECTION_CLOSED",

@@ -517,7 +517,7 @@ pub(super) enum Remote {
         #[arg(short = 'C')]
         cwd: Option<String>,
     },
-    /// Capture the main display as PNG
+    /// Capture the main display as PNG, JPEG or WebP
     #[command(
         after_help = concat!(
         "Example: xrun win1 screenshot ./screen.png --json\n",
@@ -526,8 +526,14 @@ pub(super) enum Remote {
     )
     )]
     Screenshot {
-        /// Local PNG destination, or omit for a unique temporary file
+        /// Local image destination, or omit for a unique temporary file
         local: Option<PathBuf>,
+        #[arg(long)]
+        max_width: Option<u32>,
+        #[arg(long, value_enum, default_value = "png")]
+        format: ScreenshotFormat,
+        #[arg(long)]
+        quality: Option<u8>,
     },
     /// Forward a local loopback port to a device's loopback port
     #[command(

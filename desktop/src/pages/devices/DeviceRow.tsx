@@ -12,6 +12,7 @@ interface Props {
   close: () => void;
   revoke: (device: Device) => Promise<void>;
   runCommand: (device: Device) => void;
+  captureScreen: (device: Device) => void;
 }
 export function DeviceRow({
   device,
@@ -21,6 +22,7 @@ export function DeviceRow({
   close,
   revoke,
   runCommand,
+  captureScreen,
 }: Props) {
   const { busy, confirm, action, notify } = useOperations();
   const network = status?.network;
@@ -117,6 +119,7 @@ export function DeviceRow({
       </div>
       <DeviceMenu
         runCommand={() => runCommand(device)}
+        captureScreen={() => captureScreen(device)}
         device={device}
         manager={manager}
         managerId={network?.manager_id}

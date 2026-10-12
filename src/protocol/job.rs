@@ -100,7 +100,10 @@ pub struct PullParams {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 /// Current desktop capture parameters.
-pub struct ScreenshotParams {}
+pub struct ScreenshotParams {
+    /// Requested encoding and size limits.
+    pub options: super::ScreenshotOptions,
+}
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 /// Immutable loopback forwarding intent.
@@ -196,9 +199,13 @@ pub struct ScreenshotResult {
     pub width: u32,
     /// Capture height.
     pub height: u32,
-    /// PNG byte count.
+    /// Actual encoded format.
+    pub format: super::ScreenshotFormat,
+    /// Actual encoded MIME type.
+    pub mime: String,
+    /// Encoded byte count.
     pub size: u64,
-    /// PNG content digest.
+    /// Encoded content digest.
     pub sha256: String,
     /// Optional copy-retention diagnostic.
     pub attachment_error: Option<String>,
@@ -315,7 +322,7 @@ impl Request {
             }),
             Self::Push { context, .. }
             | Self::Pull { context, .. }
-            | Self::Screenshot { context }
+            | Self::Screenshot { context, .. }
             | Self::Forward { context, .. }
             | Self::StreamExec { context, .. } => Some(context.clone()),
             _ => None,
@@ -364,7 +371,9 @@ impl Request {
                 path: path.clone(),
                 cwd: cwd.clone(),
             })),
-            Self::Screenshot { .. } => Some(JobDetails::Screenshot(ScreenshotParams {})),
+            Self::Screenshot { options, .. } => Some(JobDetails::Screenshot(ScreenshotParams {
+                options: options.clone(),
+            })),
             Self::Forward { port, .. } => Some(JobDetails::Forward(ForwardParams { port: *port })),
             _ => None,
         }

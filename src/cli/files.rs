@@ -5,7 +5,7 @@ use crate::{
     net,
     protocol::*,
 };
-use anyhow::{Result, bail};
+use anyhow::{Context, Result, bail};
 use std::{
     io::Write,
     path::{Path, PathBuf},
@@ -167,10 +167,22 @@ pub(super) async fn run(id: &Identity, target: &str, command: Remote, json: bool
             );
             Ok(0)
         }
-        Remote::Screenshot { local } => {
+        Remote::Screenshot {
+            local,
+            max_width,
+            format,
+            quality,
+        } => {
+            let options = ScreenshotOptions {
+                max_width,
+                format,
+                quality,
+            };
+            options.validate()?;
             let mut s = session(id, target).await?;
             s.send_request(Request::Screenshot {
                 context: JobContext::new(&s.db_id),
+                options,
             })
             .await?;
             let job = s.accept_operation().await?;
@@ -180,14 +192,40 @@ pub(super) async fn run(id: &Identity, target: &str, command: Remote, json: bool
                 width,
                 height,
                 captured_at,
+                format: actual_format,
+                mime,
                 ..
             } = response(&mut s.ws).await?
             else {
                 bail!(ErrorCode::InvalidMessage.error("expected screenshot header"))
             };
             let bytes = net::receive_bytes(&mut s.ws, size, &sha256, MAX_SCREENSHOT).await?;
+            let actual_format = actual_format
+                .context(ErrorCode::InvalidMessage.error("screenshot format missing"))?;
+            if actual_format != format
+                || max_width.is_some_and(|limit| width.is_none_or(|width| width > limit))
+            {
+                bail!(
+                    ErrorCode::InvalidMessage
+                        .error("screenshot output differs from the requested format or width")
+                );
+            }
+            if mime.as_deref() != Some(actual_format.mime()) {
+                bail!(ErrorCode::InvalidMessage.error("screenshot MIME differs from its format"));
+            }
+            crate::screenshot::validate_received(
+                &bytes,
+                actual_format,
+                width.context("screenshot width missing")?,
+                height.context("screenshot height missing")?,
+            )?;
             s.finish().await;
-            let path = save_download(&bytes, local, "xrun-screen-", ".png")?;
+            let path = save_download(
+                &bytes,
+                local,
+                "xrun-screen-",
+                &format!(".{}", actual_format.extension()),
+            )?;
             print(
                 json,
                 &serde_json::json!({"path":path,
@@ -195,6 +233,7 @@ pub(super) async fn run(id: &Identity, target: &str, command: Remote, json: bool
                         "width":width,
                         "height":height,
                         "captured_at":captured_at,
+                        "format":actual_format, "mime":mime, "size":size, "sha256":sha256,
                         "job":job_ref(&job),
                         "request_id":job.request_id}),
                 || println!("{}", path.display()),
