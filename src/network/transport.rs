@@ -267,7 +267,29 @@ pub(crate) async fn session_with_expiry(id: &Identity, target: &str) -> Result<(
 
 pub(crate) async fn channel(id: &Identity, target: &str) -> Result<(Ws, String, i64)> {
     let roster = current(id)?;
-    peer_session(id, target, &roster, secure::Purpose::Channel).await
+    if let Some(source) = crate::lan::selected().unwrap_or(None) {
+        if crate::lan::candidate(id, target).is_none()
+            && let Ok(state) = super::peers::peer_state(id, target, &roster).await
+        {
+            let _ = crate::lan::remember(id, target, state.lan);
+        }
+        if let Some(candidate) = crate::lan::candidate(id, target)
+            && crate::lan::reachable(&source, &candidate)
+        {
+            match crate::lan::connect(id, target, &candidate).await {
+                Ok((ws, expires)) => {
+                    record_route(target, "direct")?;
+                    return Ok((ws, "direct".into(), expires));
+                }
+                Err(error) => {
+                    tracing::debug!(code=?crate::error::code(&error),"direct admission unavailable; trying relay before any business request");
+                }
+            }
+        }
+    }
+    let result = peer_session(id, target, &roster, secure::Purpose::Channel).await?;
+    record_route(target, "relay")?;
+    Ok(result)
 }
 
 pub(crate) async fn standby(id: &Identity, address: &str, generation: &str) -> Result<Ws> {
@@ -282,4 +304,18 @@ pub(crate) async fn standby(id: &Identity, address: &str, generation: &str) -> R
         bail!(ErrorCode::InvalidMessage.error("standby registration rejected"));
     }
     Ok(ws)
+}
+
+fn record_route(target: &str, kind: &str) -> Result<()> {
+    let path = crate::config::device_dir()?.join("connection-routes.json");
+    let mut routes: std::collections::BTreeMap<String, String> = if path.exists() {
+        serde_json::from_slice(&std::fs::read(&path)?)?
+    } else {
+        Default::default()
+    };
+    if routes.len() >= 256 {
+        routes.clear();
+    }
+    routes.insert(target.into(), kind.into());
+    crate::config::atomic_private_write(&path, &serde_json::to_vec(&routes)?)
 }

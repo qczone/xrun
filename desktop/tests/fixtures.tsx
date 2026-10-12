@@ -81,6 +81,7 @@ export async function fixture(
     execution: { default_cwd: null, max_concurrent_jobs: 4, path: null },
     attachment_retention_days: 30,
     traffic_compression: "auto",
+    lan_address: null,
     membership_lease_minutes: 15,
     home_dir: "/Users/test",
     data_dir: "/Users/test/.xrun",
@@ -184,6 +185,13 @@ export async function fixture(
         }
         case "save_settings":
           settings.execution = args.execution as Settings["execution"];
+          return null;
+        case "private_interfaces":
+          return [
+            { name: "en0", address: "192.168.5.10", netmask: "255.255.255.0" },
+          ];
+        case "save_direct_connection":
+          settings.lan_address = args.address as string | null;
           return null;
         case "save_traffic_compression":
           settings.traffic_compression = args.compression as

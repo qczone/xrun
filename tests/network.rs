@@ -378,6 +378,7 @@ async fn device_operations_connect_directly_while_info_still_queries_live_state(
                     net::send(
                         &mut ws,
                         &PeerState {
+                            lan: None,
                             device: device.clone(),
                             ack: ReceiptAck::create(&lab.target_identity, &cache.load(network)?)?,
                         },

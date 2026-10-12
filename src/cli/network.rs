@@ -39,6 +39,16 @@ fn password(from_stdin: bool, confirm: bool) -> Result<Zeroizing<String>> {
 }
 pub(super) async fn manage(operation: NetworkCommand, json: bool) -> Result<()> {
     let info = match operation {
+        NetworkCommand::Direct { address, off } => {
+            if off || address.is_some() {
+                client::save_direct_connection(address).await?;
+            }
+            let report = serde_json::json!({"lan_address":client::settings()?.lan_address,"interfaces":crate::lan::interfaces()?});
+            print(json, &report, || {
+                println!("{}", serde_json::to_string_pretty(&report).unwrap())
+            });
+            return Ok(());
+        }
         NetworkCommand::Compression { mode } => {
             if let Some(mode) = mode {
                 client::save_traffic_compression(mode).await?;

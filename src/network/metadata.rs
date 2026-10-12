@@ -89,6 +89,7 @@ mod tests {
             execution_user: None,
             default_cwd: None,
             last_seen: Some(1000),
+            connection: None,
         };
         assert!(read(&path, "network1")?.is_empty());
         write(&path, "network1", &device)?;

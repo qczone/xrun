@@ -48,10 +48,16 @@ export interface ExecutionSettings {
   path: string | null;
 }
 
+export interface PrivateInterface {
+  name: string;
+  address: string;
+  netmask: string;
+}
 export interface Settings {
   execution: ExecutionSettings;
   attachment_retention_days: number;
   traffic_compression: "auto" | "none" | "zstd";
+  lan_address: string | null;
   membership_lease_minutes: number;
   home_dir: string;
   data_dir: string;
@@ -68,6 +74,7 @@ export interface Device {
   arch?: string | null;
   daemon_version?: string | null;
   last_seen?: number | null;
+  connection?: "direct" | "relay" | null;
 }
 
 export type TrafficPeriod = "today" | "month" | "all";
@@ -272,6 +279,7 @@ export type ActionRequest =
       command: "save_traffic_compression";
       args: { compression: Settings["traffic_compression"] };
     }
+  | { command: "save_direct_connection"; args: { address: string | null } }
   | { command: "save_settings"; args: { execution: ExecutionSettings } };
 export type Action = (request: ActionRequest) => Promise<boolean>;
 export interface ConfirmOptions {
@@ -432,6 +440,7 @@ export const api = {
     invoke<FileTransfer>("remote_file_resume", { device, request_id }),
   fileCancel: (device: string, request_id: string) =>
     invoke<void>("remote_file_cancel", { device, request_id }),
+  privateInterfaces: () => invoke<PrivateInterface[]>("private_interfaces"),
   settings: () => invoke<Settings>("settings"),
   saveMembershipLease: (minutes: number) =>
     invoke<void>("save_membership_lease", { minutes }),

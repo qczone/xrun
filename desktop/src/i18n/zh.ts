@@ -1,6 +1,15 @@
 import type { en } from "./en";
 
 export const zh = {
+  "settings.direct": "局域网直连",
+  "settings.directHint": "仅监听所选内网地址，同网段优先直连。",
+  "settings.directOff": "关闭",
+  "settings.directFailed": "直连设置未能保存",
+  "operation.save_direct_connection": "正在保存直连设置…",
+  "devices.connection": "上次连接",
+  "devices.direct": "直连",
+  "devices.relay": "中转",
+
   "files.open": "传输文件",
   "files.title": "文件 · {name}",
   "files.direction": "传输方向",

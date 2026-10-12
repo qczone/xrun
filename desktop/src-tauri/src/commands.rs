@@ -33,6 +33,20 @@ fn settings() -> Result<Settings, CommandError> {
 }
 
 #[tauri::command]
+fn private_interfaces() -> Result<Vec<xrun::lan::Interface>, CommandError> {
+    xrun::lan::interfaces().map_err(CommandError::from_error)
+}
+#[tauri::command]
+async fn save_direct_connection<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    state: State<'_, Desktop>,
+    address: Option<std::net::Ipv4Addr>,
+) -> Result<(), CommandError> {
+    let _guard = state.action.lock().await;
+    record(&app, xrun::client::save_direct_connection(address).await)
+}
+
+#[tauri::command]
 async fn save_traffic_compression<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
     state: State<'_, Desktop>,
@@ -458,6 +472,8 @@ pub(super) fn register<R: tauri::Runtime>(builder: tauri::Builder<R>) -> tauri::
             save_activity_attachment,
             save_attachment_retention,
             save_traffic_compression,
+            private_interfaces,
+            save_direct_connection,
             save_membership_lease,
             invite,
             cancel_invitation,

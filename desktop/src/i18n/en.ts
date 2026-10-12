@@ -1,5 +1,15 @@
 /** English is the default and defines the complete set of message keys. */
 export const en = {
+  "settings.direct": "Local network",
+  "settings.directHint":
+    "Listen on the selected private interface and prefer direct peers.",
+  "settings.directOff": "Off",
+  "settings.directFailed": "Direct connection settings could not be saved",
+  "operation.save_direct_connection": "Saving direct connection settings…",
+  "devices.connection": "Last connection",
+  "devices.direct": "Direct",
+  "devices.relay": "Relay",
+
   "files.open": "Transfer files",
   "files.title": "Files · {name}",
   "files.direction": "Direction",

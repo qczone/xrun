@@ -106,6 +106,18 @@ export function DeviceMenu({
         <span className="field-help">{t("common.deviceId")}</span>
         <Identifier value={device.device_id} label={t("common.deviceId")} />
         <dl className="device-facts">
+          {device.connection && (
+            <>
+              <dt>{t("devices.connection")}</dt>
+              <dd>
+                {t(
+                  device.connection === "direct"
+                    ? "devices.direct"
+                    : "devices.relay",
+                )}
+              </dd>
+            </>
+          )}
           <dt>{t("devices.system")}</dt>
           <dd>{device.os ? osName(device.os) : t("devices.infoPending")}</dd>
           {device.arch && (

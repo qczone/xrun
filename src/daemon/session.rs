@@ -25,6 +25,17 @@ pub(super) async fn data_session(
     serve_socket(rt, outer, flow).await
 }
 pub(super) async fn serve_socket(rt: Arc<Runtime>, outer: Ws, flow_control: bool) -> Result<()> {
+    serve_socket_policy(rt, outer, flow_control, true).await
+}
+pub(super) async fn serve_direct(rt: Arc<Runtime>, outer: Ws) -> Result<()> {
+    serve_socket_policy(rt, outer, false, false).await
+}
+async fn serve_socket_policy(
+    rt: Arc<Runtime>,
+    outer: Ws,
+    flow_control: bool,
+    anonymous: bool,
+) -> Result<()> {
     super::access::refresh(rt.clone(), crate::config::device_dir()?, false).await?;
     let id = rt.authorization()?.identity.clone();
     let (mut ws, certificate) = tokio::time::timeout(
@@ -48,6 +59,7 @@ pub(super) async fn serve_socket(rt: Arc<Runtime>, outer: Ws, flow_control: bool
                 let state = network::PeerState {
                     device: network::local_device(&id, rt.cwd()?.to_string_lossy().into())?,
                     ack: ReceiptAck::create(&id, &network::current(&id)?)?,
+                    lan:crate::lan::local(),
                 };
                 net::send(&mut ws, &state).await?;
                 return Ok(());
@@ -125,7 +137,13 @@ pub(super) async fn serve_socket(rt: Arc<Runtime>, outer: Ws, flow_control: bool
     } else {
         // Pairing is the only anonymous inner-TLS operation and is processed
         // by the local manager, never by the relay or an ordinary member.
-        let result = network::serve_pair(&id, &mut ws).await;
+        let result = if anonymous {
+            network::serve_pair(&id, &mut ws).await
+        } else {
+            Err(ErrorCode::Unauthenticated
+                .error("direct connections require a member certificate")
+                .into())
+        };
         close_result(&rt, ws, result).await
     }
 }

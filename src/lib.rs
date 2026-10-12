@@ -12,6 +12,7 @@ mod daemon;
 pub mod error;
 mod forwarding;
 mod history;
+pub mod lan;
 mod membership;
 mod multiplex;
 mod net;

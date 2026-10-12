@@ -88,6 +88,8 @@ pub struct DaemonConfig {
     #[serde(default)]
     pub traffic_compression: crate::protocol::Compression,
     #[serde(default)]
+    pub lan_address: Option<std::net::Ipv4Addr>,
+    #[serde(default)]
     pub env: BTreeMap<String, String>,
 }
 fn concurrency() -> usize {
@@ -112,6 +114,7 @@ impl Default for DaemonConfig {
             attachment_retention_days: attachment_retention(),
             membership_lease_minutes: membership_lease_minutes(),
             traffic_compression: Default::default(),
+            lan_address: None,
             env: BTreeMap::new(),
         }
     }

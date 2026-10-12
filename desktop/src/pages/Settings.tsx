@@ -10,6 +10,7 @@ import {
   api,
   type ExecutionSettings,
   type Settings,
+  type PrivateInterface,
   type Status,
 } from "../api";
 import { Select } from "../components/Select";
@@ -38,6 +39,7 @@ export function SettingsPage({
     notify,
     reportError: onError,
   } = useOperations();
+  const [interfaces, setInterfaces] = useState<PrivateInterface[]>([]);
   const [settings, setSettings] = useState<Settings | null>(null);
   const [cwd, setCwd] = useState("");
   const [concurrency, setConcurrency] = useState("4");
@@ -49,7 +51,11 @@ export function SettingsPage({
   const loadSettings = useCallback(async () => {
     const request = ++loadRequest.current;
     try {
-      const value = await api.settings();
+      const [value, adapters] = await Promise.all([
+        api.settings(),
+        api.privateInterfaces(),
+      ]);
+      setInterfaces(adapters);
       if (request !== loadRequest.current) return;
       setSettings(value);
       setCwd(value.execution.default_cwd || "");
@@ -102,6 +108,38 @@ export function SettingsPage({
         <h2>{t("settings.general")}</h2>
         <section className="panel">
           <LanguageSelect />
+          <div className="setting-row">
+            <span>
+              <strong>{t("settings.direct")}</strong>
+              <small>{t("settings.directHint")}</small>
+            </span>
+            <Select
+              id="direct-interface"
+              aria-label={t("settings.direct")}
+              value={settings?.lan_address || "off"}
+              disabled={busy || !settings}
+              options={[
+                { value: "off", label: t("settings.directOff") },
+                ...interfaces.map((adapter) => ({
+                  value: adapter.address,
+                  label: `${adapter.address} · ${adapter.name}`,
+                })),
+              ]}
+              onChange={async (value) => {
+                const address = value === "off" ? null : value;
+                if (
+                  await action({
+                    command: "save_direct_connection",
+                    args: { address },
+                  })
+                )
+                  setSettings(
+                    (previous) =>
+                      previous && { ...previous, lan_address: address },
+                  );
+              }}
+            />
+          </div>
           <div className="setting-row">
             <span>
               <strong>{t("settings.compression")}</strong>

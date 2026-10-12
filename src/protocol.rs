@@ -67,6 +67,8 @@ pub struct Device {
     pub default_cwd: Option<String>,
     /// Last peer observation in Unix milliseconds, if known.
     pub last_seen: Option<i64>,
+    /// Last successful outgoing transport observed by this local caller.
+    pub connection: Option<String>,
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
 /// Inviter and signed mutual-access grant recorded during registration.

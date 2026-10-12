@@ -200,6 +200,16 @@ pub async fn device_status() -> Result<Status> {
             }
         }
     }
+    if let Some(devices) = devices.as_mut() {
+        let path = config::device_dir()?.join("connection-routes.json");
+        let routes: std::collections::BTreeMap<String, String> = std::fs::read(path)
+            .ok()
+            .and_then(|bytes| serde_json::from_slice(&bytes).ok())
+            .unwrap_or_default();
+        for device in devices {
+            device.connection = routes.get(&device.device_id).cloned();
+        }
+    }
     Ok(Status {
         local,
         devices,

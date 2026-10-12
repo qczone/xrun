@@ -94,6 +94,7 @@ export function useOperationController(
       save_settings: "action.settingsFailed",
       save_attachment_retention: "settings.retentionFailed",
       save_traffic_compression: "settings.compressionFailed",
+      save_direct_connection: "settings.directFailed",
     };
     const success =
       (await operate(

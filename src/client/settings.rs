@@ -27,6 +27,8 @@ pub struct Settings {
     pub membership_lease_minutes: u16,
     /// Local policy for independent file and log chunks.
     pub traffic_compression: crate::protocol::Compression,
+    /// Explicit private IPv4 adapter for optional direct connections.
+    pub lan_address: Option<std::net::Ipv4Addr>,
     /// Home directory used when no working directory is configured.
     pub home_dir: PathBuf,
     /// Private xrun data directory.
@@ -43,6 +45,7 @@ pub fn settings() -> Result<Settings> {
         attachment_retention_days: policy.attachment_retention_days,
         membership_lease_minutes: policy.membership_lease_minutes,
         traffic_compression: policy.traffic_compression,
+        lan_address: policy.lan_address,
         execution: ExecutionSettings {
             default_cwd: policy.default_cwd,
             max_concurrent_jobs: policy.max_concurrent_jobs,
@@ -103,6 +106,24 @@ pub async fn save_membership_lease(minutes: u16) -> Result<()> {
 pub async fn save_traffic_compression(compression: crate::protocol::Compression) -> Result<()> {
     config::update_daemon_config(&config::device_dir()?, |policy| {
         policy.traffic_compression = compression;
+        Ok(())
+    })?;
+    crate::control::refresh_access().await
+}
+
+/// Enable a specifically assigned private interface or disable direct access.
+pub async fn save_direct_connection(address: Option<std::net::Ipv4Addr>) -> Result<()> {
+    if let Some(address) = address
+        && !crate::lan::interfaces()?
+            .iter()
+            .any(|interface| interface.address == address)
+    {
+        anyhow::bail!(
+            crate::error::ErrorCode::InvalidConfig.error("select an assigned private interface")
+        );
+    }
+    config::update_daemon_config(&config::device_dir()?, |policy| {
+        policy.lan_address = address;
         Ok(())
     })?;
     crate::control::refresh_access().await

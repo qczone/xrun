@@ -25,6 +25,7 @@ const METADATA_REFRESH_MS: i64 = 60_000;
 pub struct PeerState {
     pub device: Device,
     pub ack: ReceiptAck,
+    pub lan: Option<crate::lan::Candidate>,
 }
 pub(crate) fn local_device(id: &Identity, cwd: String) -> Result<Device> {
     let roster = current(id)?;
@@ -45,6 +46,7 @@ pub(crate) fn local_device(id: &Identity, cwd: String) -> Result<Device> {
             .ok(),
         default_cwd: Some(cwd),
         last_seen: Some(now_ms()),
+        connection: None,
     })
 }
 pub(super) async fn peer_state(
@@ -82,6 +84,7 @@ pub(super) async fn peer_state(
         }
         state.ack.verify(&current(id)?)?;
         state.device.last_seen = Some(now_ms());
+        crate::lan::remember(id, target, state.lan.clone())?;
         metadata::observe(&via.roster.network_id, &state.device);
         Ok::<_, anyhow::Error>(state)
     })
@@ -169,6 +172,7 @@ fn listed_device(roster: &SignedRoster, member: &Member, info: Option<&Device>) 
         execution_user: info.and_then(|d| d.execution_user.clone()),
         default_cwd: info.and_then(|d| d.default_cwd.clone()),
         last_seen: info.and_then(|d| d.last_seen),
+        connection: None,
     }
 }
 

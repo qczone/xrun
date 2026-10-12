@@ -74,3 +74,18 @@ test("bandwidth policy has independent local controls", async () => {
     calls.find((call) => call.command === "save_traffic_compression")?.args,
   ).toEqual({ compression: "none" });
 });
+
+test("direct networking is opt in and selects one private interface", async () => {
+  const { calls, page, settings } = await fixture();
+  await page("设置");
+  const control = await screen.findByRole("combobox", { name: "局域网直连" });
+  expect(settings.lan_address).toBeNull();
+  fireEvent.keyDown(control, { key: "ArrowDown" });
+  fireEvent.click(
+    await screen.findByRole("option", { name: "192.168.5.10 · en0" }),
+  );
+  await waitFor(() => expect(settings.lan_address).toBe("192.168.5.10"));
+  expect(
+    calls.find((call) => call.command === "save_direct_connection")?.args,
+  ).toEqual({ address: "192.168.5.10" });
+});

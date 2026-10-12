@@ -208,6 +208,12 @@ pub(super) enum Local {
 }
 #[derive(Subcommand)]
 pub(super) enum NetworkCommand {
+    /// Select a private interface for direct connections, or disable them
+    Direct {
+        address: Option<std::net::Ipv4Addr>,
+        #[arg(long, conflicts_with = "address")]
+        off: bool,
+    },
     /// Read or set local bandwidth policy for files and logs
     Compression {
         mode: Option<crate::protocol::Compression>,

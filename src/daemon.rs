@@ -4,6 +4,7 @@ mod control;
 mod execution;
 mod files;
 mod jobs;
+mod lan;
 mod process_identity;
 mod program;
 mod requests;
@@ -453,6 +454,7 @@ pub async fn run() -> Result<()> {
         result=&mut sync=>result,
         result=&mut access_monitor=>result,
         _=shutdown_signal()=>Ok(()),
+        result=lan::run(rt.clone())=>result,
         result=control.shutdown()=>result,
         _=stop.changed()=>Err(rt.storage_failure()),
     };
