@@ -6,6 +6,7 @@ import { t } from "../../i18n";
 import { Icon } from "../../components/Icon";
 import { Identifier } from "../../components/Identifier";
 import { CloudflareRelays } from "../../components/CloudflareRelays";
+import { AuthoritySettings } from "../../components/AuthoritySettings";
 
 export function NetworkSettings({
   status,
@@ -38,6 +39,7 @@ export function NetworkSettings({
         <Icon name="arrow" />
       </summary>
       <div className="settings-disclosure-content">
+        <AuthoritySettings status={status} />
         <CloudflareRelays
           networkId={network?.network_id}
           manager={!!network?.is_manager}

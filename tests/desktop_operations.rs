@@ -124,7 +124,7 @@ async fn connection_grants_only_the_verified_manager_and_respects_declined_conse
         assert_eq!(policy.deny_from.contains(&manager_id.into()), !grant);
         let manager_policy: DaemonConfig = config::read(&manager_home.join(".xrun/daemon.toml"))?;
         let member_id = member["device_id"].as_str().context("member ID")?;
-        assert_eq!(manager_policy.allow_from.contains(&member_id.into()), false);
+        assert!(!manager_policy.allow_from.contains(&member_id.into()));
         let mut daemon = logged(&home, &["daemon"], name)?.spawn()?;
         online(&manager_home, name).await?;
         // A manual all-members policy and stale individual grants must not

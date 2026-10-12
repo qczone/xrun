@@ -120,7 +120,7 @@ pub struct Status {
 pub fn local_status() -> Result<LocalStatus> {
     let dir = config::device_dir()?;
     let policy = config::DaemonConfig::load()?;
-    let id = if dir.join("identity.toml").exists() {
+    let id = if config::network_dir_at(&dir)?.join("identity.toml").exists() {
         Some(Identity::load()?)
     } else {
         None

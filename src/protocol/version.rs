@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 /// The single pre-release wire protocol. Older releases must upgrade all components.
 pub const PROTOCOL: u32 = 5;
 /// Signature format version; changing serialized signed records requires a new format.
-pub const SIGNATURE_FORMAT: u32 = 1;
+pub const SIGNATURE_FORMAT: u32 = 2;
 
 /// Inclusive implemented protocol range, exchanged before any operation.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]

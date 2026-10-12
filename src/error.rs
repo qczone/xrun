@@ -31,6 +31,7 @@ macro_rules! codes {
     };
 }
 codes! {
+    BackupAuthenticationFailed => "BACKUP_AUTHENTICATION_FAILED",
     AccessPaused => "ACCESS_PAUSED",
     AlreadyExists => "ALREADY_EXISTS",
     CaptureError => "CAPTURE_ERROR",

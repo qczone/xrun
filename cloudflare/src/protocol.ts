@@ -1,7 +1,7 @@
 /** Release-independent wire contract. Keep aligned with Rust protocol/version.rs. */
 export const PROTOCOL = { min: 5, max: 5 } as const;
 export const PROTOCOL_HEADER = `${PROTOCOL.min}-${PROTOCOL.max}`;
-export const SIGNATURE_FORMAT = 1;
+export const SIGNATURE_FORMAT = 2;
 export interface ProtocolRange {
   min: number;
   max: number;

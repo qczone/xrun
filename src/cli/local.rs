@@ -15,6 +15,7 @@ use super::support::*;
 pub(super) async fn run(cli: LocalCli) -> Result<i32> {
     let json = cli.json;
     match cli.command {
+        Local::Network { operation } => super::network::manage(operation, json).await?,
         Local::Connect {
             link,
             code,

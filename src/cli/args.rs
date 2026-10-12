@@ -88,6 +88,11 @@ pub(super) enum Local {
         #[command(subcommand)]
         operation: RelayCommand,
     },
+    /// Encrypted backup, restoration and handover of network management
+    Network {
+        #[command(subcommand)]
+        operation: NetworkCommand,
+    },
     /// Join a network using a one-use invitation
     #[command(
         after_help = concat!(
@@ -199,6 +204,29 @@ pub(super) enum Local {
         /// Command path, such as push or relay deploy
         #[arg(value_name = "COMMAND", num_args = 0..)]
         command: Vec<String>,
+    },
+}
+#[derive(Subcommand)]
+pub(super) enum NetworkCommand {
+    /// Encrypt the manager identity and a consistent authority database snapshot
+    Backup {
+        path: std::path::PathBuf,
+        #[arg(long)]
+        password_stdin: bool,
+    },
+    /// Restore a validated encrypted archive (stop the background service first)
+    Restore {
+        path: std::path::PathBuf,
+        #[arg(long)]
+        password_stdin: bool,
+    },
+    /// Prepare a handover archive for an existing trusted member
+    Migrate {
+        device: String,
+        #[arg(long)]
+        out: std::path::PathBuf,
+        #[arg(long)]
+        password_stdin: bool,
     },
 }
 #[derive(Subcommand)]

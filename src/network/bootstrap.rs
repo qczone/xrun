@@ -63,12 +63,12 @@ pub(crate) async fn create(relay_link: &str, name: Option<String>) -> Result<Ide
     })?;
     let _lock = daemon::instance_lock()?;
     let dir = config::device_dir()?;
-    let existing = if dir.join("identity.toml").exists() {
+    let existing = if config::network_dir_at(&dir)?.join("identity.toml").exists() {
         Some(Identity::load()?)
     } else {
         None
     };
-    let manager_dir = dir.join("manager");
+    let manager_dir = config::network_dir_at(&dir)?.join("manager");
     if let Some(owner) = &owner {
         let matches = existing.as_ref().is_some_and(|id| {
             id.network

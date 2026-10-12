@@ -50,10 +50,10 @@ pub struct NetworkIdentity {
 }
 impl Identity {
     pub fn load() -> Result<Self> {
-        read(&device_dir()?.join("identity.toml"))
+        read(&network_dir()?.join("identity.toml"))
     }
     pub fn save(&self) -> Result<()> {
-        write(&device_dir()?.join("identity.toml"), self)
+        write(&network_dir()?.join("identity.toml"), self)
     }
 }
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -142,7 +142,7 @@ impl DaemonConfig {
         Self::load_at(&device_dir()?)
     }
     pub(crate) fn load_at(dir: &Path) -> Result<Self> {
-        let path = dir.join("daemon.toml");
+        let path = network_dir_at(dir)?.join("daemon.toml");
         let value: Self = if path.exists() {
             read(&path)?
         } else {
@@ -151,7 +151,7 @@ impl DaemonConfig {
         value.validate()?;
         Ok(value)
     }
-    fn validate(&self) -> Result<()> {
+    pub(crate) fn validate(&self) -> Result<()> {
         if self.attachment_retention_days > 3650 {
             bail!(ErrorCode::InvalidConfig.error(
                 "attachment_retention_days must be 0..3650 (0 keeps attachments indefinitely)"
@@ -185,7 +185,7 @@ impl DaemonConfig {
     }
     pub fn save(&self) -> Result<()> {
         self.validate()?;
-        write(&device_dir()?.join("daemon.toml"), self)
+        write(&network_dir()?.join("daemon.toml"), self)
     }
 }
 pub fn home_dir() -> Result<PathBuf> {
@@ -199,6 +199,35 @@ pub fn home_dir() -> Result<PathBuf> {
 }
 pub fn device_dir() -> Result<PathBuf> {
     Ok(home_dir()?.join(".xrun"))
+}
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct NetworkActivation {
+    pub generation: String,
+}
+pub(crate) fn network_dir() -> Result<PathBuf> {
+    network_dir_at(&device_dir()?)
+}
+pub(crate) fn network_dir_at(dir: &Path) -> Result<PathBuf> {
+    let pointer = dir.join("network-state.json");
+    if !pointer.exists() {
+        return Ok(dir.to_owned());
+    }
+    let value: NetworkActivation = serde_json::from_slice(&std::fs::read(pointer)?)
+        .map_err(|_| ErrorCode::InvalidConfig.error("invalid network activation record"))?;
+    if value.generation.len() != 32
+        || !value
+            .generation
+            .bytes()
+            .all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
+    {
+        bail!(ErrorCode::InvalidConfig.error("invalid network activation generation"));
+    }
+    let active = dir.join("network-versions").join(value.generation);
+    if !active.is_dir() || active.is_symlink() {
+        bail!(ErrorCode::ManagerStateMissing.error("active network state is missing"));
+    }
+    Ok(active)
 }
 pub fn instance_running(path: &Path) -> Result<bool> {
     let file = match std::fs::OpenOptions::new()
@@ -284,7 +313,7 @@ pub(crate) fn update_daemon_config(
         .truncate(false)
         .open(dir.join("permissions.lock"))?;
     lock.lock()?;
-    let path = dir.join("daemon.toml");
+    let path = network_dir_at(dir)?.join("daemon.toml");
     let mut cfg = if path.exists() {
         read::<DaemonConfig>(&path)?
     } else {

@@ -233,6 +233,9 @@ export type Confirm = (
   options: ConfirmOptions,
 ) => Promise<boolean>;
 export type PendingOperation =
+  | "export_authority"
+  | "restore_authority"
+  | "retire_authority"
   | ActionRequest["command"]
   | "invite"
   | "copy_invitation"
@@ -247,6 +250,13 @@ export type PendingOperation =
 export interface CloudflareAccount {
   id: string;
   name: string;
+}
+export interface AuthorityBackup {
+  network_id: string;
+  manager_id: string;
+  authority_generation: number;
+  roster_version: number;
+  transfer_to: string | null;
 }
 export interface RelayDeployment {
   provider: "cloudflare";
@@ -291,6 +301,13 @@ export interface Revocation {
 }
 
 export const api = {
+  chooseAuthorityArchive: (save: boolean) =>
+    invoke<string | null>("choose_authority_archive", { save }),
+  exportAuthority: (path: string, password: string, device: string | null) =>
+    invoke<AuthorityBackup>("export_authority", { path, password, device }),
+  restoreAuthority: (path: string, password: string) =>
+    invoke<AuthorityBackup>("restore_authority", { path, password }),
+  retireAuthority: () => invoke<void>("retire_authority"),
   connectionDefaults: () => invoke<string>("connection_defaults"),
   cloudflareAccounts: async (
     onAuthorization: () => void,

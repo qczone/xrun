@@ -416,6 +416,10 @@ pub(super) fn register<R: tauri::Runtime>(builder: tauri::Builder<R>) -> tauri::
         .manage(LanguageState::default())
         .manage(Desktop::default())
         .invoke_handler(tauri::generate_handler![
+            super::authority::choose_authority_archive,
+            super::authority::export_authority,
+            super::authority::restore_authority,
+            super::authority::retire_authority,
             window_visible,
             desktop_navigation,
             language_settings,

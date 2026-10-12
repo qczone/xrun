@@ -14,7 +14,7 @@ test("frozen Rust and Cloudflare proof vectors keep signature bytes independent 
   };
   for (const domain of ["relay-proof", "relay-manager"] as const)
     expect(vectors.records[domain].payload_utf8).toBe(
-      `xrun/sig-v1/${domain}\0${JSON.stringify(binding)}`,
+      `xrun/sig-v2/${domain}\0${JSON.stringify(binding)}`,
     );
   expect(
     await verifyProof(proof, binding.network, binding.path, binding.nonce),

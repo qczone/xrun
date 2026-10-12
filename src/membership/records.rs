@@ -20,6 +20,7 @@ pub struct Roster {
     pub network_id: String,
     pub version: u64,
     pub manager_id: String,
+    pub authority_generation: u64,
     pub members: Vec<Member>,
     pub relay_addresses: Vec<String>,
     /// Empty for public HTTPS relays; otherwise pins the private deployment CA.
@@ -32,6 +33,7 @@ pub struct SignedRoster {
     pub ca_pem: String,
     pub signature: String,
 }
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct PairReceipt {
@@ -157,6 +159,7 @@ impl SignedRoster {
             &self.signature,
         )?;
         if roster.version == 0
+            || roster.authority_generation == 0
             || roster.members.is_empty()
             || roster.members.len() > MAX_NETWORK_MEMBERS
             || roster.relay_addresses.is_empty()
@@ -242,8 +245,19 @@ impl SignedRoster {
         if crypto::cert_der(&next.ca_pem)? != crypto::cert_der(&self.ca_pem)? {
             bail!(ErrorCode::InvalidRoster.error("network root certificate cannot change"))
         }
-        if next.roster.manager_id != self.roster.manager_id {
-            bail!(ErrorCode::InvalidRoster.error("manager identity cannot change"))
+        if next.roster.authority_generation < self.roster.authority_generation {
+            bail!(ErrorCode::RosterRollback.error("refusing an older authority generation"));
+        }
+        if (next.roster.manager_id != self.roster.manager_id
+            && next.roster.authority_generation <= self.roster.authority_generation)
+            || (next.roster.authority_generation > self.roster.authority_generation
+                && next.roster.version <= self.roster.version)
+        {
+            bail!(
+                ErrorCode::InvalidRoster.error(
+                    "management changes require a new authority generation and roster version"
+                )
+            );
         }
         if next.roster.version < self.roster.version {
             bail!(ErrorCode::RosterRollback.error("refusing an older roster"))

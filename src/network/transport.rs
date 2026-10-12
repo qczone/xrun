@@ -77,7 +77,7 @@ pub(crate) async fn control(id: &Identity) -> Result<(Ws, String)> {
     let network = &authority(id)?.network_id;
     let path = format!("/networks/{network}/control");
     // The root-key signature lets the relay route pairing to the manager only.
-    let root = if authority(id)?.manager_id == id.device_id {
+    let root = if super::current(id)?.roster.manager_id == id.device_id {
         Some(manager(id)?)
     } else {
         None

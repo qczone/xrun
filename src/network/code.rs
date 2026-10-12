@@ -41,7 +41,7 @@ fn pending(path: &Path, address: &str, code: &str) -> Result<Pending> {
             link: saved.link.clone(),
         });
     }
-    let key_pem = if config::device_dir()?.join("identity.toml").exists() {
+    let key_pem = if config::network_dir()?.join("identity.toml").exists() {
         Identity::load()?.key_pem
     } else if config::device_dir()?.join("pending.toml").exists() {
         let pending: config::PendingIdentity =

@@ -18,8 +18,8 @@ const NETWORK_CA_VALIDITY_DAYS: i64 = 20 * 365;
 /// on BEGIN IMMEDIATE rather than each maintaining a version counter.
 pub struct Manager {
     pub(super) db: Mutex<Connection>,
-    ca_pem: String,
-    key_pem: String,
+    pub(super) ca_pem: String,
+    pub(super) key_pem: zeroize::Zeroizing<String>,
 }
 impl Manager {
     pub fn create(
@@ -70,6 +70,7 @@ impl Manager {
                 network_id: format!("net_{}", crypto::ca_spki_pin(&ca_pem)?),
                 version: 1,
                 manager_id: member.device_id.clone(),
+                authority_generation: 1,
                 members: vec![member.clone()],
                 relay_addresses,
                 relay_ca_pem,
@@ -92,7 +93,7 @@ impl Manager {
             Self {
                 db: Mutex::new(db),
                 ca_pem,
-                key_pem,
+                key_pem: zeroize::Zeroizing::new(key_pem),
             },
             member,
             device_key,
@@ -119,7 +120,7 @@ impl Manager {
         Ok(Self {
             db: Mutex::new(db),
             ca_pem,
-            key_pem,
+            key_pem: zeroize::Zeroizing::new(key_pem),
         })
     }
     pub fn roster(&self) -> Result<SignedRoster> {

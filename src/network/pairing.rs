@@ -34,10 +34,10 @@ impl PairResponse {
 }
 
 pub fn manager(id: &Identity) -> Result<Manager> {
-    if authority(id)?.manager_id != id.device_id {
+    if current(id)?.roster.manager_id != id.device_id {
         bail!(ErrorCode::NotManager.error("only the network manager can change membership"))
     }
-    let manager = Manager::open(&config::device_dir()?.join("manager"))?;
+    let manager = Manager::open(&config::network_dir()?.join("manager"))?;
     let r = manager.roster()?;
     if r.roster.network_id != authority(id)?.network_id || r.roster.manager_id != id.device_id {
         bail!(ErrorCode::ManagerStateMismatch.error("authority does not belong to this identity"))
@@ -143,7 +143,7 @@ pub(super) async fn join_with_key(
 ) -> Result<Identity> {
     let invite = parse_link(link)?;
     let dir = config::device_dir()?;
-    let existing = if dir.join("identity.toml").exists() {
+    let existing = if config::network_dir_at(&dir)?.join("identity.toml").exists() {
         Some(Identity::load()?)
     } else {
         None

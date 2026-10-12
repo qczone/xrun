@@ -50,7 +50,7 @@ pub(crate) fn init() -> Result<()> {
     } else {
         JobStore::open(&dir.join("daemon.db"), false)?;
     }
-    if !dir.join("daemon.toml").exists() {
+    if !config::network_dir_at(&dir)?.join("daemon.toml").exists() {
         let mut cfg = DaemonConfig::default();
         if id.registration.allow_inviter
             && let Some(inviter) = id.registration.inviter_id
@@ -285,6 +285,12 @@ impl Runtime {
     }
     fn allow(&self, source: &str) -> Result<()> {
         self.membership(source)?;
+        if crate::membership::backup::holds_authority(&config::device_dir()?)? {
+            bail!(
+                ErrorCode::ManagerProtected
+                    .error("retire the local authority before allowing remote operations")
+            );
+        }
         self.authorization()?
             .roster
             .require_business_target(&self.id.device_id)?;
@@ -337,7 +343,7 @@ pub async fn run() -> Result<()> {
     let local = crate::pool::run(local_listener, control.clone());
     tokio::pin!(local);
     let mut id = Identity::load()?;
-    if network::authority(&id)?.manager_id == id.device_id {
+    if network::current(&id)?.roster.manager_id == id.device_id {
         network::manager(&id)?.invalidate_codes()?;
         config::update_daemon_config(&dir, |cfg| {
             cfg.allow_all = false;

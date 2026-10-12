@@ -5,12 +5,14 @@
   width: 100%;
   margin-top: 12px;
 }
-.remote-command-dialog {
+.remote-command-dialog,
+.authority-dialog {
   width: min(620px, calc(100vw - 40px));
   max-height: calc(100vh - 60px);
   overflow-y: auto;
 }
-.remote-command-dialog .dialog-heading h2 {
+.remote-command-dialog .dialog-heading h2,
+.authority-dialog .dialog-heading h2 {
   overflow-wrap: anywhere;
 }
 .remote-command-form > label,
@@ -59,7 +61,8 @@
   color: var(--danger);
 }
 @media (max-width: 600px) {
-  .remote-command-dialog {
+  .remote-command-dialog,
+  .authority-dialog {
     padding: 18px;
     width: calc(100vw - 24px);
   }

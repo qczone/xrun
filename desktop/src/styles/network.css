@@ -73,7 +73,8 @@
   padding-left: 12px;
   font-size: 12px;
 }
-.cloudflare-relays h3 {
+.cloudflare-relays h3,
+.authority-settings h3 {
   font-size: 12px;
   margin: 0;
 }

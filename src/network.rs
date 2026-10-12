@@ -55,11 +55,11 @@ pub(crate) fn authority(id: &Identity) -> Result<&NetworkIdentity> {
     Ok(network)
 }
 pub(crate) fn cache() -> Result<RosterCache> {
-    RosterCache::open(&config::device_dir()?.join("roster.db"))
+    RosterCache::open(&config::network_dir()?.join("roster.db"))
 }
 pub(crate) fn current(id: &Identity) -> Result<SignedRoster> {
     let network = authority(id)?;
-    let path = config::device_dir()?.join("roster.db");
+    let path = config::network_dir()?.join("roster.db");
     if !path.exists() {
         bail!(
             ErrorCode::MemberStateMissing
@@ -67,9 +67,6 @@ pub(crate) fn current(id: &Identity) -> Result<SignedRoster> {
         )
     }
     let value = RosterCache::open(&path)?.load(&network.network_id)?;
-    if value.roster.manager_id != network.manager_id {
-        bail!(ErrorCode::IdentityMismatch.error("network manager differs from the identity"))
-    }
     let self_member = value.member(&id.device_id)?;
     if self_member.key_fp != crypto::peer_identity(&crypto::cert_der(&id.cert_pem)?)?.1 {
         bail!(ErrorCode::IdentityMismatch.error("local key differs from its membership"))
@@ -81,9 +78,6 @@ pub(crate) fn current(id: &Identity) -> Result<SignedRoster> {
 }
 pub fn observe(id: &Identity, value: &SignedRoster) -> Result<()> {
     let network = authority(id)?;
-    if value.roster.manager_id != network.manager_id {
-        bail!(ErrorCode::IdentityMismatch.error("signed roster names another manager"))
-    }
     match cache()?.observe(&network.network_id, value) {
         Ok(()) => Ok(()),
         Err(e) if crate::error::is(&e, ErrorCode::RosterRollback) => Ok(()),

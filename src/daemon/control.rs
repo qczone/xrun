@@ -40,7 +40,7 @@ async fn control_once(
         bail!(ErrorCode::IdentityChanged.error("restart daemon after replacing its identity"));
     }
     // Membership authority and synchronization belong to endpoints.
-    if network::authority(&current)?.manager_id == current.device_id {
+    if network::current(&current)?.roster.manager_id == current.device_id {
         network::observe(&current, &network::manager(&current)?.roster()?)?;
     }
     // Catch up once per connection from the manager, or from one random peer

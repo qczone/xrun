@@ -2,6 +2,7 @@
 //! This workspace API describes current-version behavior; errors retain machine codes.
 #![deny(missing_docs)]
 mod membership;
+pub mod network;
 pub mod relay;
 pub mod remote;
 pub mod services;

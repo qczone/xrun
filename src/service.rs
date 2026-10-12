@@ -485,7 +485,7 @@ esac
             || {
                 runtime()?.block_on(async {
                     let home = config::home_dir()?;
-                    let identity = config::device_dir()?.join("identity.toml");
+                    let identity = config::network_dir()?.join("identity.toml");
                     config::atomic_private_write(&identity, b"preserved identity")?;
                     let exe = home.join("tool & <special> \"quoted\" % name\nxrun");
                     install_with_executable("daemon", &exe).await?;

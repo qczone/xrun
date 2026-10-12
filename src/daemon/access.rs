@@ -44,6 +44,11 @@ fn watch_directory(
     })?;
     // Watch the directory, not the old inode replaced by atomic_private_write.
     watcher.watch(dir, RecursiveMode::NonRecursive)?;
+    if let Ok(active) = crate::config::network_dir_at(dir)
+        && active != dir
+    {
+        watcher.watch(&active, RecursiveMode::NonRecursive)?;
+    }
     Ok(watcher)
 }
 
@@ -99,9 +104,10 @@ fn fingerprint(path: &Path) -> Result<Fingerprint> {
 }
 
 fn scan(rt: &Runtime, dir: &Path, force: bool) -> Result<Option<Arc<Authorization>>> {
+    let active = crate::config::network_dir_at(dir)?;
     let files = (
-        fingerprint(&dir.join("daemon.toml"))?,
-        fingerprint(&dir.join("identity.toml"))?,
+        fingerprint(&active.join("daemon.toml"))?,
+        fingerprint(&active.join("identity.toml"))?,
     );
     let roster = rt.members.load(&rt.network_id)?;
     let unchanged = rt

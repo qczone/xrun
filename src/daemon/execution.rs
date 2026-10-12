@@ -603,8 +603,9 @@ mod tests {
             .build()?
             .block_on(async {
                 let dir = config::device_dir()?;
+                let authority = tempfile::tempdir()?;
                 let (manager, _, _, _) = Manager::create(
-                    &dir.join("manager"),
+                    authority.path(),
                     "cancel-test",
                     vec!["https://127.0.0.1:1".into()],
                     String::new(),

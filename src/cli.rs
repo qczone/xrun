@@ -8,6 +8,7 @@ mod help;
 mod jobs;
 mod local;
 mod logs;
+mod network;
 mod relay;
 mod remote;
 mod support;

@@ -1,6 +1,7 @@
 //! Manager authority, verified records and local caches have distinct owners.
 pub(crate) const INVITATION_LIFETIME: std::time::Duration = std::time::Duration::from_secs(10 * 60);
 mod authority;
+pub(crate) mod backup;
 mod cache;
 mod invitations;
 mod records;

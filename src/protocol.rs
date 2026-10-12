@@ -468,6 +468,7 @@ pub fn now_ms() -> i64 {
 }
 /// Command names that cannot be used as device selectors.
 pub const RESERVED: &[&str] = &[
+    "network",
     "connect",
     "up",
     "join",
