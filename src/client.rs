@@ -16,7 +16,7 @@ pub use membership::{
 };
 pub use settings::{
     ExecutionSettings, Settings, save_attachment_retention, save_membership_lease, save_settings,
-    settings,
+    save_traffic_compression, settings,
 };
 pub use status::{
     LocalSnapshot, LocalStatus, NetworkStatus, Status, device_status, local_snapshot, local_status,

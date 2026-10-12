@@ -42,8 +42,8 @@ pub mod membership {
 /// Raw transport for frame replay, ciphertext interception and forged acknowledgments.
 pub mod net {
     pub use crate::net::{
-        Io, SocketIo, Ws, close, receive, receive_bytes, send, send_bytes, send_file, send_logs,
-        websocket_at,
+        Io, SocketIo, Ws, close, receive, receive_bytes, send, send_bytes, send_chunk, send_file,
+        send_logs, websocket_at,
     };
 }
 /// Pair isolated peers and exchange signed updates without weakening protocol tests.

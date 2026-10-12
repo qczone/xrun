@@ -791,6 +791,8 @@ daemon 先落本地日志，再通知订阅者；任务状态更新同样发出�
 
 日志通道先发送一次 Job 快照，后续仅发送变化的可变字段；参数、身份、目录与附件未变化时不重复传输。输出批次为二进制，每条包含 Job 绑定、序号、stdout/stderr 和原始字节，不经过 Base64。单批最多 16 条和 1 MiB，单条最多 64 KiB；端点检查序号、长度与任务绑定，保留拆开的 UTF-8 和任意二进制。CLI JSON 与本机桌面 API 仍使用 Base64 表示原始字节。
 
+文件和日志使用独立 XRB1 块封装（编码、原始长度、SHA-256）；自动模式只在至少节省 1/8 时采用 zstd，PNG/JPEG/WebP/ZIP/GZIP/Zstd/MP4 头直接跳过尝试。每个文件块最多 64 KiB，每个日志批次小于 1 MiB，解压窗口最多 1 MiB，输出必须严格匹配声明长度与原始摘要。没有共享字典或跨块压缩状态。本机 `xrun network compression [auto|none|zstd]` 和桌面“省流量”设置控制发送策略，默认自动；显式 zstd 仍避免扩大线上的负载。它不改变任务意图或落盘内容。
+
 logs 只适用于 exec，其他类型返回 LOG_UNAVAILABLE。默认读取请求时的快照；follow 补读后继续订阅；after 指定序号；tail 由目标端按日志序号倒序读取并截取最后 N 行，只传所需尾部。`logs --tail 0 --follow` 从查询到的当前任务序号开始，不下载历史日志。日志截断提示 LOG_TRUNCATED，已清理提示 LOG_UNAVAILABLE，输出仍可用的日志后返回 1；其他采集失败提示 LOG_INCOMPLETE。目标已撤销时返回 DEVICE_REVOKED，未撤销但离线时返回 DEVICE_OFFLINE，这两种日志查询失败均为退出码 125。磁盘失败要明确报告。
 
 ## 6. 协议

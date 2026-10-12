@@ -63,17 +63,24 @@ pub async fn send_logs(ws: &mut Ws, events: Vec<LogEvent>, job: &Job) -> Result<
         if !matches!(event.stream.as_str(), "stdout" | "stderr") || raw.len() > FILE_CHUNK {
             bail!(ErrorCode::InvalidMessage.error("invalid output record"));
         }
-        if !batch.is_empty() && (batch.len() == 16 || bytes + 13 + raw.len() > MAX_MESSAGE) {
-            ws.send(Message::Binary(encode(&job.job_id, &batch)?.into()))
-                .await?;
+        if !batch.is_empty()
+            && (batch.len() == 16 || bytes + 13 + raw.len() > MAX_MESSAGE - super::encoding::HEADER)
+        {
+            ws.send(Message::Binary(
+                super::encoding::encode(&encode(&job.job_id, &batch)?, ws.get_ref().compression)?
+                    .into(),
+            ))
+            .await?;
             batch.clear();
             bytes = 8 + job.job_id.len();
         }
         bytes += 13 + raw.len();
         batch.push((event.seq, event.stream == "stderr", raw));
     }
-    ws.send(Message::Binary(encode(&job.job_id, &batch)?.into()))
-        .await?;
+    ws.send(Message::Binary(
+        super::encoding::encode(&encode(&job.job_id, &batch)?, ws.get_ref().compression)?.into(),
+    ))
+    .await?;
     Ok(())
 }
 fn encode(id: &str, events: &[(u64, bool, Vec<u8>)]) -> Result<Vec<u8>> {
@@ -91,7 +98,7 @@ fn encode(id: &str, events: &[(u64, bool, Vec<u8>)]) -> Result<Vec<u8>> {
         bytes.extend_from_slice(&(raw.len() as u32).to_be_bytes());
         bytes.extend_from_slice(raw);
     }
-    if bytes.len() > MAX_MESSAGE {
+    if bytes.len() > MAX_MESSAGE - super::encoding::HEADER {
         bail!(ErrorCode::MessageTooLarge.error("output batch exceeds limit"));
     }
     Ok(bytes)
@@ -256,7 +263,10 @@ mod tests {
         let Message::Binary(raw) = receiver.next().await.unwrap()? else {
             bail!("binary output")
         };
-        assert!(raw.ends_with(&[0, 0xff, 0xe4, 0xb8, 0xad]));
+        assert!(
+            super::super::encoding::decode(&raw, MAX_MESSAGE)?
+                .ends_with(&[0, 0xff, 0xe4, 0xb8, 0xad])
+        );
         let Message::Text(delta) = receiver.next().await.unwrap()? else {
             bail!("delta")
         };

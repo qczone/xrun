@@ -1,4 +1,5 @@
 mod connection;
+mod encoding;
 mod logs;
 use crate::error::ErrorCode;
 use crate::{
@@ -176,7 +177,8 @@ pub async fn receive<T: DeserializeOwned>(ws: &mut Ws) -> Result<T> {
                 return Ok(serde_json::from_str(&s)?);
             }
             Message::Binary(bytes) => {
-                let value = logs::receive(ws.get_mut(), &bytes)?;
+                let decoded = encoding::decode(&bytes, MAX_MESSAGE - encoding::HEADER)?;
+                let value = logs::receive(ws.get_mut(), &decoded)?;
                 return Ok(serde_json::from_value(serde_json::to_value(value)?)?);
             }
             Message::Ping(bytes) => ws.send(Message::Pong(bytes)).await?,
@@ -188,9 +190,18 @@ pub async fn receive<T: DeserializeOwned>(ws: &mut Ws) -> Result<T> {
 }
 pub async fn send_bytes(ws: &mut Ws, bytes: &[u8]) -> Result<()> {
     for chunk in bytes.chunks(FILE_CHUNK) {
-        ws.feed(Message::Binary(chunk.to_vec().into())).await?
+        send_chunk(ws, chunk).await?;
     }
     send(ws, &Data::End).await
+}
+/// Send one independently encoded, checksummed file/input chunk.
+pub async fn send_chunk(ws: &mut Ws, bytes: &[u8]) -> Result<()> {
+    if bytes.len() > FILE_CHUNK {
+        bail!(ErrorCode::InvalidBody.error("file chunk exceeds 64 KiB"));
+    }
+    let frame = encoding::encode(bytes, ws.get_ref().compression)?;
+    ws.feed(Message::Binary(frame.into())).await?;
+    Ok(())
 }
 pub async fn receive_bytes(ws: &mut Ws, size: u64, hash: &str, max: u64) -> Result<Vec<u8>> {
     if size > max {
@@ -229,7 +240,7 @@ pub async fn send_file(ws: &mut Ws, file: &std::fs::File) -> Result<()> {
         if n == 0 {
             break;
         }
-        ws.feed(Message::Binary(chunk[..n].to_vec().into())).await?;
+        send_chunk(ws, &chunk[..n]).await?;
     }
     send(ws, &Data::End).await
 }
@@ -248,6 +259,7 @@ async fn receive_body<W: AsyncWrite + Unpin>(
             .context(ErrorCode::ConnectionClosed.error("incomplete body"))??
         {
             Message::Binary(chunk) => {
+                let chunk = encoding::decode(&chunk, FILE_CHUNK)?;
                 if chunk.len() > FILE_CHUNK || chunk.len() as u64 > size - received {
                     bail!(ErrorCode::InvalidBody.error("unexpected chunk size"))
                 }

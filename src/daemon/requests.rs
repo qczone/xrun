@@ -13,6 +13,13 @@ pub(super) async fn serve(
     request: Request,
 ) -> Result<()> {
     rt.check_session(source, generation)?;
+    ws.get_mut().compression = rt
+        .access
+        .borrow()
+        .as_ref()
+        .map_err(|error| anyhow::anyhow!(error.to_string()))?
+        .config
+        .traffic_compression;
     if matches!(
         request,
         Request::Exec { .. }

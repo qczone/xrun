@@ -86,6 +86,8 @@ pub struct DaemonConfig {
     #[serde(default = "membership_lease_minutes")]
     pub membership_lease_minutes: u16,
     #[serde(default)]
+    pub traffic_compression: crate::protocol::Compression,
+    #[serde(default)]
     pub env: BTreeMap<String, String>,
 }
 fn concurrency() -> usize {
@@ -109,6 +111,7 @@ impl Default for DaemonConfig {
             max_concurrent_jobs: 4,
             attachment_retention_days: attachment_retention(),
             membership_lease_minutes: membership_lease_minutes(),
+            traffic_compression: Default::default(),
             env: BTreeMap::new(),
         }
     }

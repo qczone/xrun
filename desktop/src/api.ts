@@ -51,6 +51,7 @@ export interface ExecutionSettings {
 export interface Settings {
   execution: ExecutionSettings;
   attachment_retention_days: number;
+  traffic_compression: "auto" | "none" | "zstd";
   membership_lease_minutes: number;
   home_dir: string;
   data_dir: string;
@@ -243,6 +244,10 @@ export type ActionRequest =
   | { command: "all_permissions"; args: { allow: boolean } }
   | { command: "pause_access"; args: { paused: boolean } }
   | { command: "save_attachment_retention"; args: { days: number } }
+  | {
+      command: "save_traffic_compression";
+      args: { compression: Settings["traffic_compression"] };
+    }
   | { command: "save_settings"; args: { execution: ExecutionSettings } };
 export type Action = (request: ActionRequest) => Promise<boolean>;
 export interface ConfirmOptions {

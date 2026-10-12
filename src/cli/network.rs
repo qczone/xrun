@@ -39,6 +39,23 @@ fn password(from_stdin: bool, confirm: bool) -> Result<Zeroizing<String>> {
 }
 pub(super) async fn manage(operation: NetworkCommand, json: bool) -> Result<()> {
     let info = match operation {
+        NetworkCommand::Compression { mode } => {
+            if let Some(mode) = mode {
+                client::save_traffic_compression(mode).await?;
+            }
+            let mode = client::settings()?.traffic_compression;
+            print(
+                json,
+                &serde_json::json!({"traffic_compression":mode}),
+                || {
+                    println!(
+                        "compression: {}",
+                        serde_json::to_value(mode).unwrap().as_str().unwrap()
+                    )
+                },
+            );
+            return Ok(());
+        }
         NetworkCommand::Lease { minutes } => {
             if let Some(minutes) = minutes {
                 client::save_membership_lease(minutes).await?;

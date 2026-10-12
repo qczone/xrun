@@ -1,6 +1,12 @@
 import type { en } from "./en";
 
 export const zh = {
+  "settings.compressionFailed": "省流设置未能保存",
+  "settings.compression": "省流量",
+  "settings.compressionHint": "独立压缩文件块和日志，保持内容不变。",
+  "settings.compressionAuto": "自动节省流量",
+  "settings.compressionNone": "关闭",
+  "operation.save_traffic_compression": "正在保存省流设置…",
   "capture.open": "截图",
   "capture.title": "截图 · {name}",
   "capture.preset": "画面大小",

@@ -16,6 +16,7 @@ pub struct SocketIo {
     inner: Io,
     pub(crate) relay: Option<RelayContext>,
     pub(crate) logs: super::logs::LogState,
+    pub(crate) compression: crate::protocol::Compression,
 }
 impl SocketIo {
     /// Wrap a local or encrypted stream without assuming a relay protocol.
@@ -24,6 +25,7 @@ impl SocketIo {
             inner,
             relay: None,
             logs: Default::default(),
+            compression: Default::default(),
         }
     }
     pub(crate) fn with_relay(inner: Io, relay: Option<RelayContext>) -> Self {
@@ -31,6 +33,7 @@ impl SocketIo {
             inner,
             relay,
             logs: Default::default(),
+            compression: Default::default(),
         }
     }
 }

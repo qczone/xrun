@@ -1,5 +1,12 @@
 /** English is the default and defines the complete set of message keys. */
 export const en = {
+  "settings.compressionFailed": "Bandwidth settings could not be saved",
+  "settings.compression": "Bandwidth",
+  "settings.compressionHint":
+    "Compress independent file chunks and logs, preserving exact content.",
+  "settings.compressionAuto": "Automatic",
+  "settings.compressionNone": "Off",
+  "operation.save_traffic_compression": "Saving bandwidth settings…",
   "capture.open": "Screenshot",
   "capture.title": "Screenshot · {name}",
   "capture.preset": "Image size",

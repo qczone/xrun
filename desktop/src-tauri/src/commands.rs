@@ -33,6 +33,19 @@ fn settings() -> Result<Settings, CommandError> {
 }
 
 #[tauri::command]
+async fn save_traffic_compression<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    state: State<'_, Desktop>,
+    compression: xrun::protocol::Compression,
+) -> Result<(), CommandError> {
+    let _guard = state.action.lock().await;
+    record(
+        &app,
+        xrun::client::save_traffic_compression(compression).await,
+    )
+}
+
+#[tauri::command]
 async fn save_settings<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
     state: State<'_, Desktop>,
@@ -444,6 +457,7 @@ pub(super) fn register<R: tauri::Runtime>(builder: tauri::Builder<R>) -> tauri::
             activity_attachment,
             save_activity_attachment,
             save_attachment_retention,
+            save_traffic_compression,
             save_membership_lease,
             invite,
             cancel_invitation,

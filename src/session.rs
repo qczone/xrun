@@ -41,6 +41,7 @@ impl Session {
             target_name: crate::network::current(id)?.member(target)?.name.clone(),
             ca_pin: crate::crypto::ca_spki_pin(&id.ca_pem)?,
         });
+        session.ws.get_mut().compression = crate::config::DaemonConfig::load()?.traffic_compression;
         Ok(session)
     }
     async fn ready(mut ws: Ws, target: &str, pooled: bool) -> Result<Self> {

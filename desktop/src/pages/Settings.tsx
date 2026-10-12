@@ -12,6 +12,7 @@ import {
   type Settings,
   type Status,
 } from "../api";
+import { Select } from "../components/Select";
 import { Icon } from "../components/Icon";
 import { ErrorNotice } from "../components/ErrorNotice";
 import { LanguageSelect } from "../components/LanguageSelect";
@@ -101,6 +102,39 @@ export function SettingsPage({
         <h2>{t("settings.general")}</h2>
         <section className="panel">
           <LanguageSelect />
+          <div className="setting-row">
+            <span>
+              <strong>{t("settings.compression")}</strong>
+              <small>{t("settings.compressionHint")}</small>
+            </span>
+            <Select
+              id="traffic-compression"
+              aria-label={t("settings.compression")}
+              value={settings?.traffic_compression || "auto"}
+              disabled={busy || !settings}
+              options={[
+                { value: "auto", label: t("settings.compressionAuto") },
+                { value: "none", label: t("settings.compressionNone") },
+                { value: "zstd", label: "Zstd" },
+              ]}
+              onChange={async (value) => {
+                const compression = value as Settings["traffic_compression"];
+                if (
+                  await action({
+                    command: "save_traffic_compression",
+                    args: { compression },
+                  })
+                )
+                  setSettings(
+                    (previous) =>
+                      previous && {
+                        ...previous,
+                        traffic_compression: compression,
+                      },
+                  );
+              }}
+            />
+          </div>
           <label className="setting-row" htmlFor="autostart">
             <span>
               <strong>{t("settings.showAtLogin")}</strong>

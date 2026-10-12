@@ -93,6 +93,7 @@ export function useOperationController(
       pause_access: "action.pauseFailed",
       save_settings: "action.settingsFailed",
       save_attachment_retention: "settings.retentionFailed",
+      save_traffic_compression: "settings.compressionFailed",
     };
     const success =
       (await operate(

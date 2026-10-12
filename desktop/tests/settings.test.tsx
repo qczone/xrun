@@ -62,3 +62,15 @@ test("membership freshness is editable only by the manager", async () => {
     calls.find((call) => call.command === "save_membership_lease")?.args,
   ).toEqual({ minutes: 60 });
 });
+
+test("bandwidth policy has independent local controls", async () => {
+  const { calls, page, settings } = await fixture();
+  await page("设置");
+  const control = await screen.findByRole("combobox", { name: "省流量" });
+  fireEvent.keyDown(control, { key: "ArrowDown" });
+  fireEvent.click(await screen.findByRole("option", { name: "关闭" }));
+  await waitFor(() => expect(settings.traffic_compression).toBe("none"));
+  expect(
+    calls.find((call) => call.command === "save_traffic_compression")?.args,
+  ).toEqual({ compression: "none" });
+});

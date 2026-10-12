@@ -1,6 +1,8 @@
 //! Negotiated wire messages and shared limits.
 #![deny(missing_docs)]
 mod capture;
+mod encoding;
+pub use encoding::Compression;
 mod job;
 pub use capture::{ScreenshotFormat, ScreenshotOptions};
 mod relay;

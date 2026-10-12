@@ -164,10 +164,8 @@ async fn screenshot_download_checks_metadata_integrity_errors_and_local_destinat
                     .await?;
                     if case == "disconnect" {
                         use futures_util::SinkExt;
-                        ws.send(tokio_tungstenite::tungstenite::Message::Binary(
-                            png[..8].to_vec().into(),
-                        ))
-                        .await?;
+                        net::send_chunk(&mut ws, &png[..8]).await?;
+                        ws.flush().await?;
                     } else {
                         net::send_bytes(&mut ws, &payload).await?;
                         // A rejected checksum can close the connection before completion.

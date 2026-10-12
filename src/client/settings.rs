@@ -25,6 +25,8 @@ pub struct Settings {
     pub attachment_retention_days: u16,
     /// Minutes a manager-signed membership lease permits new operations offline.
     pub membership_lease_minutes: u16,
+    /// Local policy for independent file and log chunks.
+    pub traffic_compression: crate::protocol::Compression,
     /// Home directory used when no working directory is configured.
     pub home_dir: PathBuf,
     /// Private xrun data directory.
@@ -40,6 +42,7 @@ pub fn settings() -> Result<Settings> {
     Ok(Settings {
         attachment_retention_days: policy.attachment_retention_days,
         membership_lease_minutes: policy.membership_lease_minutes,
+        traffic_compression: policy.traffic_compression,
         execution: ExecutionSettings {
             default_cwd: policy.default_cwd,
             max_concurrent_jobs: policy.max_concurrent_jobs,
@@ -92,6 +95,14 @@ pub async fn save_membership_lease(minutes: u16) -> Result<()> {
     crate::network::manager(&id)?;
     config::update_daemon_config(&config::device_dir()?, |policy| {
         policy.membership_lease_minutes = minutes;
+        Ok(())
+    })?;
+    crate::control::refresh_access().await
+}
+/// Set the local bandwidth policy without restarting or replaying accepted operations.
+pub async fn save_traffic_compression(compression: crate::protocol::Compression) -> Result<()> {
+    config::update_daemon_config(&config::device_dir()?, |policy| {
+        policy.traffic_compression = compression;
         Ok(())
     })?;
     crate::control::refresh_access().await
