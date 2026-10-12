@@ -8,6 +8,12 @@
   --border: #e5eae7;
   --accent: #16765d;
   --accent-hover: #06664f;
+  --accent-contrast: #fff;
+  --control-hover: #f1f5f3;
+  --control-pressed: #e8eeeb;
+  --control-border-hover: #c4d0c9;
+  --switch-off: #c9d1ce;
+  --menu-shadow: 0 8px 28px #213c2a20;
   --soft: #eaf4ef;
   --warning: #805813;
   --warning-bg: #fff6e3;
@@ -35,6 +41,12 @@
     --border: #35444c;
     --accent: #6ed6b5;
     --accent-hover: #56c2a0;
+    --accent-contrast: #12251e;
+    --control-hover: #25343a;
+    --control-pressed: #2c3e44;
+    --control-border-hover: #60736b;
+    --switch-off: #485c56;
+    --menu-shadow: 0 8px 28px #0005;
     --soft: #183b32;
     --warning: #f4ce84;
     --warning-bg: #3a3020;

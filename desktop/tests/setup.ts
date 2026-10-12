@@ -12,10 +12,20 @@ for (const name of [
   "document",
   "navigator",
   "HTMLElement",
+  "Element",
+  "SVGElement",
+  "ShadowRoot",
+  "HTMLFormElement",
+  "HTMLSelectElement",
+  "HTMLInputElement",
   "HTMLDialogElement",
+  "DocumentFragment",
+  "NodeFilter",
   "Node",
   "Event",
   "MouseEvent",
+  "CustomEvent",
+  "KeyboardEvent",
   "MutationObserver",
 ] as const) {
   const value = name === "window" ? dom.window : dom.window[name];
@@ -39,6 +49,23 @@ HTMLDialogElement.prototype.close = function (value) {
   this.open = false;
   this.dispatchEvent(new Event("close"));
 };
+// The browser implements these layout/pointer APIs; jsdom has no layout engine.
+HTMLElement.prototype.hasPointerCapture = () => false;
+HTMLElement.prototype.releasePointerCapture = () => {};
+HTMLElement.prototype.scrollIntoView = () => {};
+class ResizeObserverMock {
+  observe() {}
+  unobserve() {}
+  disconnect() {}
+}
+Object.defineProperty(globalThis, "ResizeObserver", {
+  configurable: true,
+  value: ResizeObserverMock,
+});
+Object.defineProperty(window, "ResizeObserver", {
+  configurable: true,
+  value: ResizeObserverMock,
+});
 
 const { cleanup } = await import("@testing-library/react");
 afterEach(() => {

@@ -8,6 +8,7 @@ import {
 import type { Job, Device, Status, ActivityFilter } from "../api";
 import { Icon } from "../components/Icon";
 import { ErrorNotice } from "../components/ErrorNotice";
+import { RefreshButton } from "../components/RefreshButton";
 import { compactIdentifier } from "../format";
 import { formatLocale, t } from "../i18n";
 import { CommandActivityDetail } from "./activity/CommandActivityDetail";
@@ -58,6 +59,7 @@ export function ActivityPage({
     jobs,
     dbId,
     loading,
+    refreshing,
     error,
     refreshVersion,
     refreshActivities,
@@ -126,16 +128,10 @@ export function ActivityPage({
           <h1>{t("activity.title")}</h1>
           <p>{t("activity.description")}</p>
         </div>
-        <button
-          className="text-button"
-          disabled={selection ? detailLoading : loading}
+        <RefreshButton
+          refreshing={selection ? detailLoading : refreshing}
           onClick={refreshActivities}
-        >
-          <Icon name="refresh" />
-          {(selection ? detailLoading : loading)
-            ? t("common.refreshing")
-            : t("common.refresh")}
-        </button>
+        />
       </div>
       {feedback}
       <div className={`activity-layout ${selection ? "has-selection" : ""}`}>
@@ -177,6 +173,7 @@ export function ActivityPage({
           <section
             className="activity-record-panel"
             aria-label={t("activity.timeline")}
+            aria-busy={refreshing}
           >
             <div id="activity-records">
               {groups.map((group) => (

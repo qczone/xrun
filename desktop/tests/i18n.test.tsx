@@ -11,7 +11,13 @@ import {
 import { en } from "../src/i18n/en";
 import { zh } from "../src/i18n/zh";
 import { clockTime, duration, dateTime } from "../src/format";
-import { event, fixture, commandJob, findActivity } from "./fixtures";
+import {
+  event,
+  fixture,
+  commandJob,
+  findActivity,
+  selectOption,
+} from "./fixtures";
 
 const browserLanguages = Object.getOwnPropertyDescriptor(
   navigator,
@@ -209,11 +215,9 @@ test("language switching is immediate, persists, and preserves unsaved fields an
   fireEvent.change(screen.getByLabelText("Tool search path"), {
     target: { value: "/custom/bin" },
   });
-  fireEvent.change(screen.getByLabelText("Language"), {
-    target: { value: "zh" },
-  });
+  await selectOption(screen.getByLabelText("Language"), "zh");
   const chinese = await screen.findByLabelText("语言");
-  expect((chinese as HTMLSelectElement).value).toBe("zh");
+  expect((chinese as HTMLButtonElement).value).toBe("zh");
   expect(document.documentElement.lang).toBe("zh-CN");
   expect(
     (screen.getByLabelText("默认工作目录") as HTMLInputElement).value,
@@ -228,26 +232,22 @@ test("language switching is immediate, persists, and preserves unsaved fields an
   expect(screen.getByText("original output")).toBeTruthy();
   await page("设备");
   expect(
-    screen.getByText(
-      "暂时没有其他设备。新设备需要管理设备生成的邀请链接才能加入。",
-    ),
+    screen.getByText("还没有其他设备。可使用接入码添加设备。"),
   ).toBeTruthy();
   await page("设置");
-  fireEvent.change(screen.getByLabelText("语言"), {
-    target: { value: "system" },
-  });
+  await selectOption(screen.getByLabelText("语言"), "system");
   const automatic = await screen.findByLabelText("Language");
-  expect((automatic as HTMLSelectElement).value).toBe("system");
+  expect((automatic as HTMLButtonElement).value).toBe("system");
   expect(
     (screen.getByLabelText("Default working directory") as HTMLInputElement)
       .value,
   ).toBe("/unsaved/path");
-  fireEvent.change(automatic, { target: { value: "zh" } });
+  await selectOption(automatic, "zh");
   await screen.findByLabelText("语言");
   await act(async () => {
     await initializeLanguage();
   });
-  expect((screen.getByLabelText("语言") as HTMLSelectElement).value).toBe("zh");
+  expect((screen.getByLabelText("语言") as HTMLButtonElement).value).toBe("zh");
   expect(
     calls
       .filter((call) => call.command === "set_language")
@@ -270,8 +270,8 @@ test("failed language saves keep the previous preference and can be retried", as
     "en-US",
   );
   await page("Settings");
-  const select = screen.getByLabelText("Language") as HTMLSelectElement;
-  fireEvent.change(select, { target: { value: "zh" } });
+  const select = screen.getByLabelText("Language") as HTMLButtonElement;
+  await selectOption(select, "zh");
   expect(select.disabled).toBe(true);
   expect(select.value).toBe("system");
   await act(async () => {
@@ -282,7 +282,7 @@ test("failed language saves keep the previous preference and can be retried", as
   );
   expect(select.disabled).toBe(false);
   expect(document.documentElement.lang).toBe("en");
-  fireEvent.change(select, { target: { value: "zh" } });
+  await selectOption(select, "zh");
   await screen.findByLabelText("语言");
   expect(screen.queryByRole("alert")).toBeNull();
 });

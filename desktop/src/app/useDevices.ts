@@ -17,41 +17,58 @@ export function useDevices(
   const [devices, setDevices] = useState<Device[]>([]);
   const [message, setMessage] = useState<PlainMessageKey>("devices.reading");
   const [loading, setLoading] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const request = useRef(0);
-  const refresh = useCallback(async () => {
-    if (!scope || scope !== currentScope.current) return;
-    const token = ++request.current;
-    setLoading(true);
-    setMessage("devices.querying");
-    try {
-      const result = await api.devices();
-      if (token !== request.current || scope !== currentScope.current) return;
-      if (result.devices !== null)
-        setDevices(
-          (result.devices || []).sort(
-            (left, right) =>
-              Number(right.online) - Number(left.online) ||
-              left.name.localeCompare(right.name),
-          ),
-        );
-      if (result.server_error) throw result.server_error;
-      setError(null);
-      setMessage("devices.empty");
-    } catch (failure) {
-      if (token === request.current && scope === currentScope.current) {
-        setError(errorText(failure));
-        setMessage("devices.unavailable");
+  const pending = useRef(false);
+  const hasResult = useRef(false);
+  const refresh = useCallback(
+    async (automatic = false) => {
+      if (!scope || scope !== currentScope.current) return;
+      if (automatic && pending.current) return;
+      const token = ++request.current;
+      pending.current = true;
+      setLoading(!hasResult.current);
+      setRefreshing(true);
+      try {
+        const result = await api.devices();
+        if (token !== request.current || scope !== currentScope.current) return;
+        if (result.devices !== null) {
+          hasResult.current = true;
+          setDevices(
+            (result.devices || []).sort(
+              (left, right) =>
+                Number(right.online) - Number(left.online) ||
+                left.name.localeCompare(right.name),
+            ),
+          );
+        }
+        if (result.server_error) throw result.server_error;
+        setError(null);
+        setMessage("devices.empty");
+      } catch (failure) {
+        if (token === request.current && scope === currentScope.current) {
+          setError(errorText(failure));
+          setMessage("devices.unavailable");
+        }
+      } finally {
+        if (token === request.current) {
+          pending.current = false;
+          setLoading(false);
+          setRefreshing(false);
+        }
       }
-    } finally {
-      if (token === request.current) setLoading(false);
-    }
-  }, [scope]);
+    },
+    [scope],
+  );
   useEffect(() => {
     request.current++;
+    pending.current = false;
+    hasResult.current = false;
     setDevices([]);
     setError(null);
     setLoading(false);
+    setRefreshing(false);
     setMessage(scope ? "devices.reading" : "devices.joinFirst");
     return () => {
       request.current++;
@@ -64,10 +81,10 @@ export function useDevices(
   useEffect(() => {
     if (!visible || paused || !scope) return;
     const timer = setInterval(() => {
-      if (!loading) void refresh();
+      void refresh(true);
     }, 3000);
     return () => clearInterval(timer);
-  }, [visible, paused, scope, loading, refresh]);
+  }, [visible, paused, scope, refresh]);
   const applyRevocation = (result: Revocation, network: string | null) => {
     if (network !== currentScope.current) return;
     setDevices((entries) =>
@@ -82,6 +99,7 @@ export function useDevices(
     devices,
     message: t(message),
     loading,
+    refreshing,
     error,
     refresh,
     applyRevocation,

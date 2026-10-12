@@ -6,6 +6,7 @@ import {
   event,
   activityJob,
   findActivity,
+  selectOption,
 } from "./fixtures";
 import type { Attachment } from "../src/api";
 
@@ -109,9 +110,7 @@ test("command output deduplicates sequences, decodes split UTF-8 and renders fai
   expect(calls.filter((call) => call.command === "job_output")[1].args).toEqual(
     { dbId: "db-original", job: "ABC123", after: 3 },
   );
-  fireEvent.change(screen.getByLabelText("输出类型"), {
-    target: { value: "stderr" },
-  });
+  await selectOption(screen.getByLabelText("输出类型"), "stderr");
   expect(document.getElementById("command-log")?.dataset.filter).toBe("stderr");
   await poll();
   expect(reads).toBe(2);

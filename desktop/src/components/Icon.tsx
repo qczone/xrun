@@ -16,6 +16,7 @@ export type IconName =
   | "search"
   | "copy"
   | "check"
+  | "chevron-down"
   | "close"
   | "image"
   | "up"
@@ -39,6 +40,9 @@ export function IconDefinitions() {
   return (
     <svg className="icon-defs" aria-hidden="true">
       <defs>
+        <symbol id="i-chevron-down" viewBox="0 0 24 24">
+          <path d="m6 9 6 6 6-6" />
+        </symbol>
         <symbol id="i-check" viewBox="0 0 24 24">
           <path d="m5 12 4 4L19 6" />
         </symbol>

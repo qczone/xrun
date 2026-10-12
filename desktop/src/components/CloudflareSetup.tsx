@@ -4,6 +4,7 @@ import { useOperations } from "../app/useOperations";
 import { t } from "../i18n";
 import { errorText } from "../errors";
 import { ErrorNotice } from "./ErrorNotice";
+import { Select } from "./Select";
 
 export function CloudflareSetup({
   name,
@@ -113,6 +114,7 @@ export function CloudflareSetup({
             <label htmlFor="worker-name">{t("cloudflare.workerName")}</label>
             <input
               id="worker-name"
+              type="text"
               required
               pattern="[a-z0-9][a-z0-9-]{0,62}"
               maxLength={63}
@@ -143,20 +145,21 @@ export function CloudflareSetup({
             <label htmlFor="cloudflare-account">
               {t("cloudflare.account")}
             </label>
-            <select
+            <Select
               id="cloudflare-account"
               value={account}
               required
+              fullWidth
               disabled={busy}
-              onChange={(event) => setAccount(event.target.value)}
-            >
-              <option value="">{t("cloudflare.chooseAccount")}</option>
-              {accounts.map((item) => (
-                <option key={item.id} value={item.id}>
-                  {item.name}
-                </option>
-              ))}
-            </select>
+              onChange={setAccount}
+              options={[
+                { value: "", label: t("cloudflare.chooseAccount") },
+                ...accounts.map((item) => ({
+                  value: item.id,
+                  label: item.name,
+                })),
+              ]}
+            />
           </>
         )}
         {deployment && (

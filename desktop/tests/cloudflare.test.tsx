@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import { act, fireEvent, screen, waitFor } from "@testing-library/react";
 import { emit } from "@tauri-apps/api/event";
-import { fixture } from "./fixtures";
+import { fixture, selectOption } from "./fixtures";
 import type { Status } from "../src/api";
 
 const account = { id: "a".repeat(32), name: "个人账户" };
@@ -54,7 +54,7 @@ test("multiple Cloudflare accounts require an explicit choice before deployment"
   expect(calls.some((call) => call.command === "deploy_cloudflare")).toBe(
     false,
   );
-  fireEvent.change(select, { target: { value: second.id } });
+  await selectOption(select, second.id);
   await create();
   expect(
     calls.find((call) => call.command === "deploy_cloudflare")?.args.account,

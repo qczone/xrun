@@ -1,0 +1,135 @@
+.select-field {
+  display: inline-flex;
+  width: 160px;
+  min-width: 0;
+  max-width: 100%;
+  flex-shrink: 0;
+  vertical-align: middle;
+  font-size: 13px;
+}
+.select-field.full-width {
+  display: flex;
+  width: 100%;
+}
+.select-field.compact {
+  width: 120px;
+  font-size: 12px;
+}
+.select-trigger {
+  width: 100%;
+  min-width: 0;
+  min-height: 36px;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 7px 10px;
+  background: var(--input);
+  font-size: inherit;
+  font-weight: 400;
+  text-align: left;
+}
+.select-field.compact .select-trigger {
+  min-height: 30px;
+  padding: 4px 9px;
+}
+.select-trigger[data-state="open"] {
+  border-color: var(--accent);
+  background: var(--input);
+}
+.select-trigger[data-placeholder] {
+  color: var(--muted);
+}
+.select-value {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.select-chevron {
+  display: flex;
+  color: var(--muted);
+  transition: transform 0.15s;
+}
+.select-chevron .icon {
+  width: 14px;
+  height: 14px;
+}
+.select-trigger[data-state="open"] .select-chevron {
+  transform: rotate(180deg);
+}
+.select-menu {
+  z-index: 10;
+  width: max(160px, var(--radix-select-trigger-width));
+  max-width: calc(100vw - 16px);
+  max-height: min(288px, var(--radix-select-content-available-height));
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: var(--card);
+  color: var(--text);
+  box-shadow: var(--menu-shadow);
+  font-size: 13px;
+  line-height: 20px;
+}
+.select-options {
+  padding: 5px;
+  overscroll-behavior: contain;
+}
+.select-option {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 34px;
+  padding: 7px 9px;
+  border-radius: 5px;
+  cursor: default;
+  outline: none;
+  user-select: none;
+}
+.select-option > span:first-child {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.select-option[data-highlighted] {
+  background: var(--control-hover);
+}
+.select-option[data-state="checked"] {
+  color: var(--accent);
+  font-weight: 500;
+}
+.select-option[data-disabled] {
+  opacity: 0.45;
+}
+.select-check {
+  display: flex;
+  margin-left: auto;
+  color: var(--accent);
+  flex-shrink: 0;
+}
+.select-check .icon,
+.select-scroll-button .icon {
+  width: 14px;
+  height: 14px;
+}
+.select-scroll-button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 22px;
+  color: var(--muted);
+  background: var(--card);
+}
+.select-scroll-button.up .icon {
+  transform: rotate(180deg);
+}
+@media (max-width: 720px) {
+  .select-field {
+    width: 140px;
+  }
+  .select-field.compact {
+    width: 120px;
+  }
+  .select-field.full-width {
+    width: 100%;
+  }
+}

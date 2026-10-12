@@ -4,6 +4,7 @@ import { dateTime } from "../format";
 import { t } from "../i18n";
 import { ErrorNotice } from "./ErrorNotice";
 import { Identifier } from "./Identifier";
+import { RefreshButton } from "./RefreshButton";
 
 export function trafficSize(bytes: number) {
   if (bytes < 1024) return `${bytes} B`;
@@ -93,24 +94,35 @@ export function TrafficDetails({
   if (status.local.device_id && status.local.name)
     names.set(status.local.device_id, status.local.name);
   return (
-    <section className="panel traffic-panel" aria-label={t("traffic.title")}>
+    <section
+      className="panel traffic-panel"
+      aria-label={t("traffic.title")}
+      aria-busy={traffic.refreshing}
+    >
       <div className="panel-heading">
         <h2>{t(manager ? "traffic.network" : "traffic.device")}</h2>
-        <div
-          className="traffic-periods"
-          role="group"
-          aria-label={t("traffic.period")}
-        >
-          {(["today", "month", "all"] as const).map((value) => (
-            <button
-              key={value}
-              className={`text-button ${period === value ? "selected" : ""}`}
-              aria-pressed={period === value}
-              onClick={() => traffic.changePeriod(value)}
-            >
-              {t(`traffic.${value}`)}
-            </button>
-          ))}
+        <div className="heading-actions">
+          <div
+            className="traffic-periods filter-tabs"
+            role="group"
+            aria-label={t("traffic.period")}
+          >
+            {(["today", "month", "all"] as const).map((value) => (
+              <button
+                key={value}
+                className={`filter-tab ${period === value ? "selected" : ""}`}
+                aria-pressed={period === value}
+                onClick={() => traffic.changePeriod(value)}
+              >
+                {t(`traffic.${value}`)}
+              </button>
+            ))}
+          </div>
+          <RefreshButton
+            compact
+            refreshing={traffic.refreshing}
+            onClick={() => void traffic.refresh()}
+          />
         </div>
       </div>
       {error && (

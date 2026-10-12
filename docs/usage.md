@@ -22,7 +22,7 @@
 
 ## 安装
 
-CLI 和 daemon 是同一个 Rust 二进制，运行已构建程序不需要 Rust、Node.js 或 Bun。桌面 App 管理网络、授权与服务，也可直接执行远程命令；文件传输使用 CLI。当前版本为 `0.1.0-rc.5`；本机 CLI 与 daemon 要求发布版本一致，设备与中转按协议范围协商互通。
+CLI 和 daemon 是同一个 Rust 二进制，运行已构建程序不需要 Rust、Node.js 或 Bun。桌面 App 管理网络、授权与服务，也可直接执行远程命令；文件传输使用 CLI。当前版本为 `0.1.0-rc.6`；本机 CLI 与 daemon 要求发布版本一致，设备与中转按协议范围协商互通。
 
 | 平台 | 安装方式 |
 | --- | --- |
@@ -45,25 +45,25 @@ Windows EXE 安装器同时安装桌面 App 和终端 CLI，并自动将安装�
 从相应版本的 Release 下载安装脚本。例如 macOS / Linux：
 
 ```bash
-curl -fL https://github.com/qczone/xrun/releases/download/v0.1.0-rc.5/install.sh -o install.sh
-bash install.sh --version 0.1.0-rc.5
+curl -fL https://github.com/qczone/xrun/releases/download/v0.1.0-rc.6/install.sh -o install.sh
+bash install.sh --version 0.1.0-rc.6
 ```
 
 ```powershell
-Invoke-WebRequest https://github.com/qczone/xrun/releases/download/v0.1.0-rc.5/install.ps1 -OutFile install.ps1
-powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File .\install.ps1 -Version 0.1.0-rc.5
+Invoke-WebRequest https://github.com/qczone/xrun/releases/download/v0.1.0-rc.6/install.ps1 -OutFile install.ps1
+powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File .\install.ps1 -Version 0.1.0-rc.6
 ```
 
 整个过程通过 stdout 返回一条 JSON，失败时 `ok` 为 `false`、包含 `error.code` 和 `error.message`，进程退出码为 1；成功返回版本、安装路径、终端 CLI 的 `executable` 路径、`changed` 和自检结果。Windows 另返回 `helper_executable` 供检查后台 helper。重复安装相同产物时返回 `changed: false`。源码中的安装脚本位于 `scripts/`，也可直接从项目根目录执行。
 
-macOS 默认识别设备的真实架构，即使终端通过 Rosetta 运行也会选择 arm64 包。已安装 Rosetta 的 Apple Silicon Mac 可用 `--arch x86_64` 安装 Intel 版，例如 `bash install.sh --version 0.1.0-rc.5 --arch x86_64`；Intel Mac 不支持安装 arm64 版。Windows 和 Linux 按系统架构自动选择原生包。
+macOS 默认识别设备的真实架构，即使终端通过 Rosetta 运行也会选择 arm64 包。已安装 Rosetta 的 Apple Silicon Mac 可用 `--arch x86_64` 安装 Intel 版，例如 `bash install.sh --version 0.1.0-rc.6 --arch x86_64`；Intel Mac 不支持安装 arm64 版。Windows 和 Linux 按系统架构自动选择原生包。
 
 默认下载地址是 `https://github.com/qczone/xrun/releases/download/v<完整版本>/`。`--base-url`／`-BaseUrl` 可指定其他 HTTPS 产物目录。每个目录需包含对应的 `xrun-<系统>-<架构>.json` 清单及其引用的文件，系统为 `darwin`、`windows` 或 `linux`，架构为 `x86_64` 或 `arm64`。安装时不需要 Bun；产物准备见 [开发与发布](development.md#发布与内置文档)。
 
 离线安装或验收本地打包产物时，用 `--source-dir`／`-SourceDir` 指定产物目录。例如 macOS：
 
 ```bash
-bash scripts/install.sh --version 0.1.0-rc.5 --source-dir ./dist
+bash scripts/install.sh --version 0.1.0-rc.6 --source-dir ./dist
 ```
 
 默认 macOS App 安装到 `~/Applications/xrun.app`，CLI 入口为 `~/.local/bin/xrun`；Windows App 安装到 `%LOCALAPPDATA%\Programs\xrun`，CLI 位于其 `cli` 子目录；Linux CLI 安装到 `~/.local/bin/xrun`。`--install-dir`／`-InstallDir` 可指定父目录，AI 可直接使用 JSON 返回的 `executable` 路径调用程序。脚本安装程序并配置当前用户的终端 PATH；网络加入、设备授权和后台服务的启用继续使用现有 App 或 CLI 命令。

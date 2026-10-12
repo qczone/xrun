@@ -7,18 +7,33 @@
 }
 .setup-tabs {
   display: flex;
-  gap: 5px;
+  gap: 3px;
+  padding: 3px;
+  border-radius: 9px;
+  background: var(--sidebar);
   margin-bottom: 24px;
 }
 .setup-tabs button {
+  flex: 1;
+  min-height: 32px;
+  padding: 5px 9px;
   font-size: 12px;
-  border: 0;
+  border-color: transparent;
+  border-radius: 6px;
   color: var(--muted);
   background: transparent;
 }
 .setup-tabs button.selected {
-  background: var(--soft);
-  color: var(--accent);
+  background: var(--card);
+  border-color: var(--border);
+  color: var(--text);
+}
+.setup-tabs button:hover:not(:disabled) {
+  border-color: transparent;
+}
+.setup-tabs button.selected:hover:not(:disabled) {
+  background: var(--card);
+  border-color: var(--control-border-hover);
 }
 .setup-description {
   color: var(--muted);

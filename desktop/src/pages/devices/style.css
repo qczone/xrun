@@ -196,18 +196,6 @@
 .revocation-result code {
   overflow-wrap: anywhere;
 }
-.invitation-option {
-  display: flex;
-  align-items: center;
-  gap: 9px;
-  font-size: 13px;
-}
-.invitation-option input {
-  accent-color: var(--accent);
-  width: 16px;
-  height: 16px;
-  flex-shrink: 0;
-}
 .invite-content > .primary {
   margin-top: 18px;
 }

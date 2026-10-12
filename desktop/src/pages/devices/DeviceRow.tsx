@@ -71,8 +71,8 @@ export function DeviceRow({
           {device.revoked
             ? t("devices.revoked")
             : device.online
-              ? t("devices.connected")
-              : t("devices.disconnected")}
+              ? t("devices.online")
+              : t("devices.offline")}
         </span>
       </div>
       <div className="device-permission">

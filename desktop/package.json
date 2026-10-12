@@ -1,6 +1,6 @@
 {
   "name": "xrun-desktop",
-  "version": "0.1.0-rc.5",
+  "version": "0.1.0-rc.6",
   "private": true,
   "type": "module",
   "packageManager": "bun@1.4.2",
@@ -29,7 +29,9 @@
     "vite": "^8.3.3"
   },
   "dependencies": {
+    "@radix-ui/react-select": "^2.4.0",
     "@tauri-apps/api": "^2.12.1",
+    "get-nonce": "^1.0.1",
     "react": "^19.3.0",
     "react-dom": "^19.3.0"
   }

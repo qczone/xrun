@@ -6,6 +6,7 @@ import {
   type LanguagePreference,
 } from "../i18n";
 import { useOperations } from "../app/useOperations";
+import { Select } from "./Select";
 
 export function LanguageSelect() {
   const { preference } = useLanguage();
@@ -17,14 +18,13 @@ export function LanguageSelect() {
         <strong>{t("language.title")}</strong>
         <small id="language-hint">{t("language.hint")}</small>
       </span>
-      <select
+      <Select<LanguagePreference>
         id="language"
         aria-label={t("language.title")}
         aria-describedby="language-hint"
         value={preference}
         disabled={busy || saving}
-        onChange={async (event) => {
-          const selected = event.target.value as LanguagePreference;
+        onChange={async (selected) => {
           setSaving(true);
           clearError();
           try {
@@ -35,15 +35,12 @@ export function LanguageSelect() {
             setSaving(false);
           }
         }}
-      >
-        <option value="system">{t("language.system")}</option>
-        <option value="zh" lang="zh-CN">
-          中文
-        </option>
-        <option value="en" lang="en">
-          English
-        </option>
-      </select>
+        options={[
+          { value: "system", label: t("language.system") },
+          { value: "zh", label: "中文", lang: "zh-CN" },
+          { value: "en", label: "English", lang: "en" },
+        ]}
+      />
     </label>
   );
 }

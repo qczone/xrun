@@ -84,7 +84,7 @@ mod tests {
             revoked: false,
             os: Some("windows".into()),
             arch: Some("aarch64".into()),
-            version: Some("0.1.0-rc.5".into()),
+            version: Some("0.1.0-rc.6".into()),
             hostname: None,
             execution_user: None,
             default_cwd: None,

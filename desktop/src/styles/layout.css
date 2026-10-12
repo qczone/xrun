@@ -20,7 +20,7 @@
 }
 .brand-logo {
   display: block;
-  width: 85px;
+  width: 111px;
   flex-shrink: 0;
 }
 .brand-logo img {
@@ -254,23 +254,34 @@ main {
 .filter-tabs {
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: 3px;
+  padding: 3px;
+  border-radius: 8px;
+  background: var(--sidebar);
   flex-wrap: wrap;
 }
 .filter-tab {
   background: transparent;
-  border: 0;
-  border-radius: 5px;
+  border: 1px solid transparent;
+  border-radius: 6px;
   color: var(--muted);
   font-size: 12px;
   font-weight: 400;
   min-height: 28px;
-  padding: 4px 10px;
+  padding: 3px 10px;
 }
 .filter-tab.selected {
-  color: var(--accent);
-  background: var(--soft);
+  color: var(--text);
+  background: var(--card);
+  border-color: var(--border);
   font-weight: 500;
+}
+.filter-tab:hover:not(:disabled) {
+  border-color: transparent;
+}
+.filter-tab.selected:hover:not(:disabled) {
+  background: var(--card);
+  border-color: var(--control-border-hover);
 }
 .filter-tab > span {
   font-size: 11px;
@@ -294,21 +305,6 @@ main {
   font-size: 12px;
   padding: 4px 0;
   width: 122px;
-}
-.icon-button {
-  width: 29px;
-  min-height: 29px;
-  height: 29px;
-  display: inline-grid;
-  place-items: center;
-  padding: 0;
-  border: 0;
-  background: transparent;
-  color: var(--muted);
-}
-.icon-button .icon {
-  width: 16px;
-  height: 16px;
 }
 @media (max-width: 1000px) {
   .sidebar {

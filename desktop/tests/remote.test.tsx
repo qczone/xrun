@@ -6,7 +6,13 @@ import {
   waitFor,
   within,
 } from "@testing-library/react";
-import { commandJob, event, fixture, openMemberActions } from "./fixtures";
+import {
+  commandJob,
+  event,
+  fixture,
+  openMemberActions,
+  selectOption,
+} from "./fixtures";
 import type { CommandJob } from "../src/api";
 
 const openCommand = async (name: string) => {
@@ -121,9 +127,7 @@ test("an unconfirmed submission is queried without resubmitting, including after
   fireEvent.click(screen.getByRole("button", { name: "关闭远程命令" }));
   dialog = await openCommand(devices[0].name);
   const history = await within(dialog).findByLabelText("最近提交");
-  await act(async () =>
-    fireEvent.change(history, { target: { value: requestId } }),
-  );
+  await selectOption(history, requestId);
   await waitFor(() =>
     expect(within(dialog).getByRole("status").textContent).toContain(
       "ABC123 · 已完成",

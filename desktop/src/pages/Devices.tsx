@@ -8,6 +8,7 @@ import { t } from "../i18n";
 import { ErrorNotice } from "../components/ErrorNotice";
 import { NetworkSetup } from "../components/NetworkSetup";
 import { TrafficSummary } from "../components/TrafficSummary";
+import { RefreshButton } from "../components/RefreshButton";
 import { DeviceRow } from "./devices/DeviceRow";
 import { InvitationDialog } from "./devices/InvitationDialog";
 import { RevocationResult } from "./devices/RevocationResult";
@@ -23,7 +24,7 @@ interface Props {
 }
 export function Devices({ active, paused, status, members, feedback }: Props) {
   const { busy, pending, confirm, action, clearError } = useOperations();
-  const { loading, error: listError, message, refresh } = members;
+  const { loading, refreshing, error: listError, message, refresh } = members;
   const devices = members.devices.filter(
     (device) => device.device_id !== status?.local.device_id,
   );
@@ -165,19 +166,18 @@ export function Devices({ active, paused, status, members, feedback }: Props) {
                   onChange={(event) => setSearch(event.target.value)}
                 />
               </label>
-              <button
-                className="icon-button"
-                aria-label={t("common.refresh")}
-                disabled={busy || loading}
+              <RefreshButton
+                compact
+                refreshing={refreshing}
+                disabled={busy}
                 onClick={() => void refresh()}
-              >
-                <Icon name="refresh" />
-              </button>
+              />
             </div>
           </div>
           <section
             className="device-list"
             aria-label={t("devices.networkDevices")}
+            aria-busy={refreshing}
           >
             <div className="list-heading">
               <span>{t("devices.name")}</span>

@@ -408,14 +408,3 @@ dialog p {
     flex-wrap: wrap;
   }
 }
-.brand-logo {
-  display: block;
-  width: 111px;
-  flex-shrink: 0;
-}
-
-.brand-logo img {
-  display: block;
-  width: 100%;
-  height: auto;
-}

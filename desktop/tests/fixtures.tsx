@@ -5,6 +5,7 @@ import {
   render,
   screen,
   waitFor,
+  within,
 } from "@testing-library/react";
 import { mockIPC } from "@tauri-apps/api/mocks";
 import { StrictMode } from "react";
@@ -49,7 +50,7 @@ export async function fixture(
       joined,
       device_id: "self",
       name: "mac1",
-      version: "0.1.0-rc.5",
+      version: "0.1.0-rc.6",
       daemon_running: true,
       daemon_connected: true,
       remote_access_paused: false,
@@ -267,6 +268,17 @@ export async function fixture(
 export function openMemberActions(name: string) {
   const summary = screen.getByLabelText(`${name} 的更多操作`);
   if (!summary.closest("details")!.open) fireEvent.click(summary);
+}
+
+export async function selectOption(control: HTMLElement, value: string) {
+  if (control.getAttribute("aria-expanded") !== "true")
+    fireEvent.click(control);
+  const menu = await screen.findByRole("listbox");
+  const option = within(menu)
+    .getAllByRole("option")
+    .find((item) => item.dataset.value === value);
+  if (!option) throw new Error(`Missing select option: ${value}`);
+  fireEvent.click(option);
 }
 
 function common(id: string): JobCommon {

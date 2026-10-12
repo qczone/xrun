@@ -3,6 +3,7 @@ import type { Status } from "../../api";
 import { Icon } from "../../components/Icon";
 import { Identifier } from "../../components/Identifier";
 import { ErrorNotice } from "../../components/ErrorNotice";
+import { Select } from "../../components/Select";
 import { commandText, duration, isRunning, dateTime } from "../../format";
 import { t } from "../../i18n";
 import { ActivityState } from "./ActivityState";
@@ -131,15 +132,17 @@ export function CommandActivityDetail({
           <label className="sr-only" htmlFor="output-stream">
             {t("output.type")}
           </label>
-          <select
+          <Select
             id="output-stream"
             value={stream}
-            onChange={(event) => setStream(event.target.value)}
-          >
-            <option value="all">{t("output.all")}</option>
-            <option value="stdout">{t("output.stdout")}</option>
-            <option value="stderr">{t("output.stderr")}</option>
-          </select>
+            compact
+            onChange={setStream}
+            options={[
+              { value: "all", label: t("output.all") },
+              { value: "stdout", label: t("output.stdout") },
+              { value: "stderr", label: t("output.stderr") },
+            ]}
+          />
           <label className="follow-output">
             <input
               type="checkbox"

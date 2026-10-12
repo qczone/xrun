@@ -28,6 +28,8 @@ export function useTraffic(
   const [report, setReport] = useState<TrafficReport | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
+  const hasResult = useRef(false);
   const generation = useRef(0);
   const current = useRef(scope);
   current.current = scope;
@@ -36,11 +38,13 @@ export function useTraffic(
     if (!scope || current.current !== scope) return;
     const token = ++generation.current;
     pending.current = true;
-    setLoading(true);
+    setLoading(!hasResult.current);
+    setRefreshing(true);
     try {
       const value = await api.traffic(period, offset);
       if (token !== generation.current || current.current !== scope) return;
       setReport(value);
+      hasResult.current = true;
       setError(null);
     } catch (failure) {
       if (token === generation.current && current.current === scope)
@@ -49,15 +53,18 @@ export function useTraffic(
       if (token === generation.current) {
         pending.current = false;
         setLoading(false);
+        setRefreshing(false);
       }
     }
   }, [scope, period, offset]);
   useEffect(() => {
     generation.current++;
     pending.current = false;
+    hasResult.current = false;
     setReport(null);
     setError(null);
     setLoading(false);
+    setRefreshing(false);
     return () => {
       generation.current++;
     };
@@ -72,14 +79,18 @@ export function useTraffic(
       clearInterval(timer);
       generation.current++;
       pending.current = false;
+      setLoading(false);
+      setRefreshing(false);
     };
   }, [scope, active, refresh]);
   const changePeriod = (next: TrafficPeriod) => {
+    if (next === period) return;
     setReport(null);
     setPeriod(next);
     setOffset(0);
   };
   const changeOffset = (next: number) => {
+    if (next === offset) return;
     setReport(null);
     setOffset(next);
   };
@@ -96,5 +107,6 @@ export function useTraffic(
     refresh,
     error,
     loading,
+    refreshing,
   };
 }

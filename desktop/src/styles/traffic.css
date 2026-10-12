@@ -51,11 +51,7 @@
   font-weight: 400;
 }
 .traffic-periods {
-  display: flex;
-  gap: 4px;
-}
-.traffic-periods .selected {
-  background: var(--soft);
+  flex-wrap: nowrap;
 }
 .traffic-totals {
   display: flex;

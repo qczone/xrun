@@ -14,6 +14,7 @@ import {
 import { useOperations } from "../../app/useOperations";
 import { ErrorNotice } from "../../components/ErrorNotice";
 import { Icon } from "../../components/Icon";
+import { Select } from "../../components/Select";
 import { errorCode, errorText } from "../../errors";
 import { dateTime, isRunning, jobState } from "../../format";
 import { t } from "../../i18n";
@@ -235,7 +236,7 @@ export function RemoteCommandDialog({
       {receipts.length > 0 && (
         <div className="remote-recent">
           <label htmlFor="remote-recent">{t("remote.recent")}</label>
-          <select
+          <Select
             id="remote-recent"
             value={
               receipts.some((item) => item.request_id === requestId)
@@ -243,24 +244,26 @@ export function RemoteCommandDialog({
                 : ""
             }
             disabled={busy || reading}
-            onChange={(event) => {
-              if (event.target.value) void selectRequest(event.target.value);
+            fullWidth
+            onChange={(value) => {
+              if (value) void selectRequest(value);
               else newCommand();
             }}
-          >
-            <option value="">{t("remote.new")}</option>
-            {receipts.map((receipt) => (
-              <option key={receipt.request_id} value={receipt.request_id}>
-                {dateTime(receipt.created_at_ms)} ·{" "}
-                {receipt.job_id ||
+            options={[
+              { value: "", label: t("remote.new") },
+              ...receipts.map((receipt) => ({
+                value: receipt.request_id,
+                label: `${dateTime(receipt.created_at_ms)} · ${
+                  receipt.job_id ||
                   t(
                     receipt.status === "not_accepted"
                       ? "remote.notAccepted"
                       : "remote.unconfirmed",
-                  )}
-              </option>
-            ))}
-          </select>
+                  )
+                }`,
+              })),
+            ]}
+          />
         </div>
       )}
       {!requestId && (
@@ -286,24 +289,20 @@ export function RemoteCommandDialog({
           <details className="remote-options">
             <summary>{t("remote.options")}</summary>
             <label htmlFor="remote-shell">{t("remote.shell")}</label>
-            <select
+            <Select
               id="remote-shell"
               value={shell}
               disabled={busy}
-              onChange={(event) => setShell(event.target.value)}
-            >
-              {(device.os === "windows"
+              onChange={setShell}
+              options={(device.os === "windows"
                 ? ["powershell", "pwsh", "cmd"]
                 : ["sh", "bash", "zsh"]
-              ).map((name) => (
-                <option key={name} value={name}>
-                  {name}
-                </option>
-              ))}
-            </select>
+              ).map((name) => ({ value: name, label: name }))}
+            />
             <label htmlFor="remote-cwd">{t("remote.cwd")}</label>
             <input
               id="remote-cwd"
+              type="text"
               value={cwd}
               disabled={busy}
               placeholder={t("remote.defaultCwd")}
