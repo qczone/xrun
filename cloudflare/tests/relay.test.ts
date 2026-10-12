@@ -1,5 +1,6 @@
 import { PROTOCOL, PROTOCOL_HEADER } from "../src/protocol";
 import { Socket } from "./socket";
+import { upgradeResponse } from "./upgrade-response";
 import {
   afterAll,
   afterEach,
@@ -177,11 +178,15 @@ test("short pairing locators route only to the proven manager and survive restor
   target.close();
   control.send({ type: "pairing_cancel", invitation_id });
   expect((await control.json()).error).toBeNull();
-  const missing = await runtime.dispatchFetch(
+  const missing = await upgradeResponse(
     `${origin}/.well-known/xrun/pair/K7`,
-    { headers: { Upgrade: "websocket", "X-Xrun-Protocol": PROTOCOL_HEADER } },
+    { "X-Xrun-Protocol": PROTOCOL_HEADER },
   );
-  expect(await missing.json()).toMatchObject({type:"error",code:"INVALID_CODE"});
+  expect(missing.status).toBe(404);
+  expect(await missing.json()).toMatchObject({
+    type: "error",
+    code: "INVALID_CODE",
+  });
   control.close();
 });
 
@@ -294,10 +299,17 @@ test("concurrent valid claims choose one persistent manager and reject every for
     "control",
     `connect/${device}`,
     `attach/${device}/${"a".repeat(32)}/${"b".repeat(32)}`,
-  ])
-    await expect(open(`/networks/${foreign}/${action}`)).rejects.toThrow(
-      "RELAY_CLAIMED",
+  ]) {
+    const response = await upgradeResponse(
+      `${origin}/${secret}/networks/${foreign}/${action}`,
+      { "X-Xrun-Version": VERSION, "X-Xrun-Protocol": PROTOCOL_HEADER },
     );
+    expect(response.status).toBe(403);
+    expect(await response.json()).toMatchObject({
+      type: "error",
+      code: "RELAY_CLAIMED",
+    });
+  }
   const member = await networks[winner].member();
   const claimedPath = paths[winner];
   const takeover = await authenticated(claimedPath, (nonce) =>
