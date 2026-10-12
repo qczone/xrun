@@ -616,7 +616,10 @@ mod tests {
                 let cert_pem = pair.cert_pem;
                 let roster = pair.roster;
                 let members = RosterCache::open(&dir.join("roster.db"))?;
-                members.observe(&roster.roster.network_id, &roster)?;
+                members.observe_authority(
+                    &roster.roster.network_id,
+                    &manager.authority_state(crate::membership::DEFAULT_LEASE_MS)?,
+                )?;
                 let id = Identity {
                     device_id: member.device_id,
                     name: member.name,

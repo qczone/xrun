@@ -16,15 +16,24 @@ pub fn migrate_authority(device: &str, path: &Path, password: &[u8]) -> Result<B
 }
 /// Validate and atomically restore identity, root keys, authority DB and local policy.
 /// Requires a stopped daemon; wrong passwords and failed validation preserve its state.
-pub fn restore_authority(path: &Path, password: &[u8]) -> Result<BackupInfo> {
-    backup::import_at(&config::device_dir()?, path, password)
+pub async fn restore_authority(path: &Path, password: &[u8]) -> Result<BackupInfo> {
+    let dir = config::device_dir()?;
+    let path = path.to_owned();
+    let password = zeroize::Zeroizing::new(password.to_vec());
+    let prepared =
+        tokio::task::spawn_blocking(move || backup::prepare_import(&dir, &path, &password))
+            .await??;
+    let latest = crate::network::latest_authority(prepared.base_roster()).await?;
+    tokio::task::spawn_blocking(move || prepared.finish(latest)).await?
 }
 /// Finish a verified handover by revoking saved Cloudflare credentials and removing
 /// every managed plaintext root-key copy before this host accepts ordinary operations.
 pub async fn retire_authority() -> Result<()> {
     let identity = config::Identity::load()?;
     let roster = crate::network::current(&identity)?;
-    if roster.roster.manager_id == identity.device_id {
+    if roster.roster.manager_id == identity.device_id
+        && !backup::authority_obsolete(&config::device_dir()?, &roster)?
+    {
         anyhow::bail!(
             crate::error::ErrorCode::ManagerProtected
                 .error("complete the handover on the new manager first")

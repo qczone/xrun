@@ -377,6 +377,7 @@ struct RosterExchange {
     version: String,
     protocol: ProtocolRange,
     roster: SignedRoster,
+    lease: Option<crate::membership::SignedLease>,
 }
 async fn receive_roster(ws: &mut Ws) -> Result<RosterExchange> {
     let value: serde_json::Value = net::receive(ws).await?;
@@ -409,6 +410,7 @@ pub async fn exchange_client(
             version: VERSION.into(),
             protocol: ProtocolRange::CURRENT,
             roster,
+            lease: cache.authority(network)?.map(|state| state.lease),
         },
     )
     .await?;
@@ -418,6 +420,19 @@ pub async fn exchange_client(
     let peer = receive_roster(ws).await?;
     ProtocolRange::CURRENT.negotiate(peer.protocol)?;
     observe(cache, network, &peer.roster)?;
+    if let Some(lease) = peer.lease {
+        match cache.observe_authority(
+            network,
+            &crate::membership::AuthorityState {
+                roster: peer.roster.clone(),
+                lease,
+            },
+        ) {
+            Ok(()) => {}
+            Err(error) if crate::error::is(&error, ErrorCode::RosterRollback) => {}
+            Err(error) => return Err(error),
+        }
+    }
     let current = cache.load(network)?;
     current.peer(cert, Some(target))?;
     Ok(current)
@@ -431,6 +446,19 @@ pub async fn exchange_server(
     let peer = receive_roster(ws).await?;
     let selected = ProtocolRange::CURRENT.negotiate(peer.protocol)?;
     observe(cache, network, &peer.roster)?;
+    if let Some(lease) = peer.lease {
+        match cache.observe_authority(
+            network,
+            &crate::membership::AuthorityState {
+                roster: peer.roster.clone(),
+                lease,
+            },
+        ) {
+            Ok(()) => {}
+            Err(error) if crate::error::is(&error, ErrorCode::RosterRollback) => {}
+            Err(error) => return Err(error),
+        }
+    }
     let current = cache.load(network)?;
     let source = current.peer(cert, None)?.device_id.clone();
     net::send(
@@ -439,6 +467,7 @@ pub async fn exchange_server(
             version: VERSION.into(),
             protocol: ProtocolRange::CURRENT,
             roster: current.clone(),
+            lease: cache.authority(network)?.map(|state| state.lease),
         },
     )
     .await?;

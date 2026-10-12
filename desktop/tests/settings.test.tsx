@@ -45,3 +45,20 @@ test("attachment retention can be saved before joining without losing unsaved ex
   expect(settings.attachment_retention_days).toBe(7);
   expect(calls.some((call) => call.command === "save_settings")).toBe(false);
 });
+
+test("membership freshness is editable only by the manager", async () => {
+  const { calls, poll, page, status, settings } = await fixture();
+  await page("设置");
+  expect(screen.queryByRole("combobox", { name: "成员有效期" })).toBeNull();
+  if (status.network) status.network.is_manager = true;
+  await poll();
+  fireEvent.click(screen.getByText("网络与服务", { selector: "summary span" }));
+  const control = await screen.findByRole("combobox", { name: "成员有效期" });
+  fireEvent.keyDown(control, { key: "ArrowDown" });
+  const option = await screen.findByRole("option", { name: "60 分钟" });
+  fireEvent.click(option);
+  await waitFor(() => expect(settings.membership_lease_minutes).toBe(60));
+  expect(
+    calls.find((call) => call.command === "save_membership_lease")?.args,
+  ).toEqual({ minutes: 60 });
+});

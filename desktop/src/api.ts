@@ -51,6 +51,7 @@ export interface ExecutionSettings {
 export interface Settings {
   execution: ExecutionSettings;
   attachment_retention_days: number;
+  membership_lease_minutes: number;
   home_dir: string;
   data_dir: string;
   os: string;
@@ -352,6 +353,8 @@ export const api = {
     invoke<DesktopNavigation | null>("desktop_navigation"),
   status: () => invoke<Status>("status"),
   settings: () => invoke<Settings>("settings"),
+  saveMembershipLease: (minutes: number) =>
+    invoke<void>("save_membership_lease", { minutes }),
   traffic: (period: TrafficPeriod, offset = 0) =>
     invoke<TrafficReport>("traffic", { query: { period, offset, limit: 50 } }),
   invite: (allow: boolean, replace?: string) =>

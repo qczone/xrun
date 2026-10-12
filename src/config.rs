@@ -83,6 +83,8 @@ pub struct DaemonConfig {
     pub max_concurrent_jobs: usize,
     #[serde(default = "attachment_retention")]
     pub attachment_retention_days: u16,
+    #[serde(default = "membership_lease_minutes")]
+    pub membership_lease_minutes: u16,
     #[serde(default)]
     pub env: BTreeMap<String, String>,
 }
@@ -91,6 +93,9 @@ fn concurrency() -> usize {
 }
 fn attachment_retention() -> u16 {
     30
+}
+fn membership_lease_minutes() -> u16 {
+    15
 }
 impl Default for DaemonConfig {
     fn default() -> Self {
@@ -103,6 +108,7 @@ impl Default for DaemonConfig {
             default_cwd: None,
             max_concurrent_jobs: 4,
             attachment_retention_days: attachment_retention(),
+            membership_lease_minutes: membership_lease_minutes(),
             env: BTreeMap::new(),
         }
     }
@@ -152,6 +158,9 @@ impl DaemonConfig {
         Ok(value)
     }
     pub(crate) fn validate(&self) -> Result<()> {
+        if !(1..=1440).contains(&self.membership_lease_minutes) {
+            bail!(ErrorCode::InvalidConfig.error("membership_lease_minutes must be 1..1440"));
+        }
         if self.attachment_retention_days > 3650 {
             bail!(ErrorCode::InvalidConfig.error(
                 "attachment_retention_days must be 0..3650 (0 keeps attachments indefinitely)"

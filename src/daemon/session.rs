@@ -52,7 +52,8 @@ pub(super) async fn data_session(
             let expiry = cert.validity().not_after.timestamp()
                 .min(crate::crypto::certificate_expiry(&id.cert_pem)?)
                 .min(crate::crypto::certificate_expiry(&id.ca_pem)?);
-            let lease = AccessLease { source: &source, generation, identity: &id, expiry };
+            let lease = AccessLease { source: &source, generation, identity: &id, expiry,
+                authority_generation: rt.authorization()?.roster.roster.authority_generation };
             send_ready(&rt, &mut ws, protocol).await?;
             let mut stop = rt.stop.subscribe();
             loop {
@@ -129,10 +130,17 @@ struct AccessLease<'a> {
     generation: u64,
     identity: &'a Identity,
     expiry: i64,
+    authority_generation: u64,
 }
 impl AccessLease<'_> {
     fn check(&self, rt: &Runtime) -> Result<()> {
         rt.check_session(self.source, self.generation)?;
+        if rt.authorization()?.roster.roster.authority_generation != self.authority_generation {
+            bail!(
+                ErrorCode::MembershipChanged
+                    .error("management generation changed; renew the connection")
+            );
+        }
         if self.expiry <= now_ms() / 1000
             || rt.authorization()?.identity.cert_pem != self.identity.cert_pem
         {
@@ -143,11 +151,15 @@ impl AccessLease<'_> {
 }
 async fn access_ended(rt: &Runtime, lease: &AccessLease<'_>) -> Result<()> {
     let mut changes = rt.access.subscribe();
+    let mut membership = rt.members.subscribe();
     loop {
         lease.check(rt)?;
-        let remaining = Duration::from_secs((lease.expiry - now_ms() / 1000).max(0) as u64);
+        let freshness = rt.members.require_fresh(&rt.network_id, now_ms())?;
+        let end = (lease.expiry * 1000).min(freshness.lease.lease.expires_at_ms);
+        let remaining = Duration::from_millis((end - now_ms()).max(0) as u64);
         tokio::select! {
             result = changes.changed() => result?,
+            result = membership.changed() => result?,
             _ = tokio::time::sleep(remaining) => {},
         }
     }

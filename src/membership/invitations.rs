@@ -177,7 +177,7 @@ mod tests {
         db.execute_batch("BEGIN IMMEDIATE; ALTER TABLE invitations RENAME TO previous;
           CREATE TABLE invitations(hash TEXT PRIMARY KEY,expires INTEGER NOT NULL,allow INTEGER NOT NULL);
           INSERT INTO invitations SELECT hash,expires,allow FROM previous; DROP TABLE previous;
-          PRAGMA user_version=1; COMMIT;")?;
+          DROP TABLE freshness; PRAGMA user_version=1; COMMIT;")?;
         drop(db);
         let manager = Manager::open(dir.path())?;
         assert_eq!(std::fs::read(dir.path().join("root.key"))?, root);

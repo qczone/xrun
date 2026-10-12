@@ -13,6 +13,6 @@ export const CONNECTION_LIMIT = 512;
 export const CONTROL_LIMIT = 256;
 export const AUTHENTICATING_PER_IP = 8;
 export const ANONYMOUS_PER_TARGET = 4;
-export const PROOF_MESSAGE_BYTES = 24 * 1024;
+export const PROOF_MESSAGE_BYTES = 144 * 1024;
 export const CONTROL_MESSAGE_BYTES = 4096;
 export const ACK_MESSAGE_BYTES = 128;

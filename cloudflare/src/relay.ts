@@ -1,6 +1,7 @@
 import { DurableObject } from "cloudflare:workers";
 import { Admission, AdmissionError } from "./admission";
-import { object, randomRoute, verifyProof } from "./auth";
+import { object, randomRoute, verifyProof, type VerifiedProof } from "./auth";
+import { AUTHORITY_BYTES, requireFresh, verifyAuthority } from "./authority";
 import { Connections, type Connection } from "./connections";
 import {
   ACK_MESSAGE_BYTES,
@@ -51,6 +52,7 @@ export class XrunRelay extends DurableObject<Env> {
   private pairings: Pairings;
   private connections: Connections;
   private nextAlarm: number | null = null;
+  private retryAuthorityAt: number | null = null;
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
@@ -60,16 +62,19 @@ export class XrunRelay extends DurableObject<Env> {
     this.connections = new Connections(ctx.getWebSockets());
     this.validateRestoredBindings();
     ctx.blockConcurrencyWhile(async () => {
+      await this.admission.validate();
       this.nextAlarm = await ctx.storage.getAlarm();
       await this.schedule();
     });
   }
   /** The same restoration path is used after eviction and by workerd recovery tests. */
-  protected restoreSockets(): void {
+  protected async restoreSockets(): Promise<void> {
     this.admission = new Admission(this.ctx.storage);
     this.pairings = new Pairings(this.ctx.storage);
     this.connections = new Connections(this.ctx.getWebSockets());
+    await this.admission.validate();
     this.validateRestoredBindings();
+    this.publishAuthority();
   }
   private validateRestoredBindings(): void {
     for (const { socket, state } of [...this.connections.all()]) {
@@ -101,6 +106,49 @@ export class XrunRelay extends DurableObject<Env> {
         peer.pairing === state.pairing &&
         (!state.pairing || control.state.manager);
       if (!bound) this.close(socket, 1008, "Restored tunnel binding missing");
+    }
+  }
+  private publishAuthority(retryOnly = false): void {
+    const authority = this.admission.state();
+    this.retryAuthorityAt = null;
+    if (!authority) return;
+    const roster = authority.roster.roster;
+    const active = (device: string) =>
+      roster.members.some((m) => m.device_id === device && !m.revoked);
+    const pending = new Set(this.admission.pending());
+    for (const { socket, state } of [...this.connections.all()]) {
+      if (state.role === "control") {
+        if (
+          !active(state.device) ||
+          state.authorityGeneration !== roster.authority_generation ||
+          state.manager !== (state.device === roster.manager_id)
+        ) {
+          this.close(socket, 1008, "Membership changed");
+        } else if (!retryOnly || pending.has(state.device)) {
+          try {
+            this.send(socket, { type: "authority", state: authority });
+          } catch {
+            this.close(socket, 1011, "Authority delivery failed");
+          }
+          if (pending.has(state.device))
+            this.retryAuthorityAt = Date.now() + 5000;
+        }
+      } else if (
+        session(state) &&
+        (state.authorityGeneration !== roster.authority_generation ||
+          !active(state.target) ||
+          (state.role !== "target" &&
+            state.source !== null &&
+            !active(state.source)))
+      ) {
+        this.close(socket, 1008, "Membership changed");
+      } else if (
+        state.role === "traffic" &&
+        (!active(state.device) ||
+          state.authorityGeneration !== roster.authority_generation)
+      ) {
+        this.close(socket, 1008, "Membership changed");
+      }
     }
   }
   private send(ws: WebSocket, value: object): void {
@@ -145,7 +193,7 @@ export class XrunRelay extends DurableObject<Env> {
     }
   }
   private async schedule(): Promise<void> {
-    let next: number | null = null;
+    let next: number | null = this.retryAuthorityAt;
     for (const { state } of this.connections.all()) {
       if ("deadline" in state && (next === null || state.deadline < next))
         next = state.deadline;
@@ -163,6 +211,8 @@ export class XrunRelay extends DurableObject<Env> {
   async alarm(): Promise<void> {
     this.nextAlarm = null;
     const now = Date.now();
+    if (this.retryAuthorityAt !== null && this.retryAuthorityAt <= now)
+      this.publishAuthority(true);
     for (const { socket, state } of [...this.connections.all()]) {
       if (!this.connections.get(socket) || !expired(state, now)) continue;
       const message =
@@ -269,6 +319,7 @@ export class XrunRelay extends DurableObject<Env> {
         target: source.target,
         generation: source.generation,
         sid: source.sid,
+        authorityGeneration: source.authorityGeneration,
         ...(source.pairing ? { pairing: source.pairing } : {}),
       };
       const deadline = Date.now() + (source.pairing ? 20_000 : IDLE);
@@ -305,7 +356,11 @@ export class XrunRelay extends DurableObject<Env> {
           invitation_id: pairing.invitation_id,
           locator,
         });
-      this.send(server, { type: "challenge", nonce });
+      this.send(server, {
+        type: "challenge",
+        nonce,
+        authority: pairing ? null : this.admission.state(),
+      });
       if (probe) {
         this.send(server, {
           type: "relay_info",
@@ -327,7 +382,7 @@ export class XrunRelay extends DurableObject<Env> {
   protected async proof(
     value: unknown,
     state: ChallengeState,
-  ): Promise<{ device: string; manager: boolean } | undefined> {
+  ): Promise<VerifiedProof | undefined> {
     if (value == null) return;
     return verifyProof(value, state.network, state.path, state.nonce);
   }
@@ -353,6 +408,9 @@ export class XrunRelay extends DurableObject<Env> {
     if (ws.readyState !== WebSocket.OPEN || !sameChallenge) return;
     if (expired(current, Date.now()))
       throw new Error("Authentication timed out");
+    if (proof && (this.admission.owner() || proof.manager)) {
+      if (this.admission.authenticate(proof)) this.publishAuthority();
+    }
     if (state.action === "claim") {
       if (!proof)
         throw new AdmissionError("NOT_MANAGER", "Manager proof required");
@@ -373,7 +431,11 @@ export class XrunRelay extends DurableObject<Env> {
       proof.manager = this.admission.manager(proof.device, proof.manager);
     if (state.action === "status") {
       if (!proof) throw new Error("Member proof required");
-      this.send(ws, { type: "status", devices: this.connections.devices() });
+      this.send(ws, {
+        type: "status",
+        devices: this.connections.devices(),
+        pending_authority: proof.manager ? this.admission.pending() : [],
+      });
       this.close(ws);
     } else if (state.action === "traffic") {
       if (!proof) throw new Error("Member proof required");
@@ -383,6 +445,7 @@ export class XrunRelay extends DurableObject<Env> {
         device: proof.device,
         manager: proof.manager,
         deadline: Date.now() + AUTH_TIMEOUT_MS,
+        authorityGeneration: proof.authorityGeneration,
       });
       this.send(ws, { type: "traffic_ready" });
     } else if (state.action === "control") {
@@ -395,7 +458,7 @@ export class XrunRelay extends DurableObject<Env> {
   private registerControl(
     ws: WebSocket,
     state: ChallengeState,
-    proof: { device: string; manager: boolean },
+    proof: VerifiedProof,
   ): void {
     const previous = this.connections.control(proof.device);
     if (!previous && this.connections.controlCount >= CONTROL_LIMIT) {
@@ -410,13 +473,17 @@ export class XrunRelay extends DurableObject<Env> {
       device: proof.device,
       manager: proof.manager,
       generation,
+      authorityGeneration: proof.authorityGeneration,
     });
     this.send(ws, { type: "hello_ack", generation });
+    const authority = this.admission.state();
+    if (authority) this.send(ws, { type: "authority", state: authority });
+    this.retryAuthorityAt = Date.now() + 5000;
   }
   private startSession(
     ws: WebSocket,
     state: ChallengeState & { action: "connect"; target: string },
-    proof: { device: string; manager: boolean } | undefined,
+    proof: VerifiedProof | undefined,
   ): void {
     const target = this.connections.control(state.target);
     if (!target) {
@@ -425,6 +492,14 @@ export class XrunRelay extends DurableObject<Env> {
     }
     if (!proof && !target.state.manager)
       throw new Error("Member proof required");
+    const authority = this.admission.state();
+    if (!authority) throw new Error("Membership freshness is missing");
+    requireFresh(authority);
+    if (
+      target.state.authorityGeneration !==
+      authority.roster.roster.authority_generation
+    )
+      throw new Error("Target uses old management generation");
     const source = proof?.device ?? null;
     // The manager's authenticated live control already carries its root proof.
     // Anonymous pairing cannot consume this last protected network slot.
@@ -469,6 +544,7 @@ export class XrunRelay extends DurableObject<Env> {
       role: "pending",
       target: state.target,
       generation: target.state.generation,
+      authorityGeneration: authority.roster.roster.authority_generation,
       sid,
       anonymous: !proof,
       source,
@@ -486,14 +562,54 @@ export class XrunRelay extends DurableObject<Env> {
         : { type: "incoming", session_id: sid },
     );
   }
-  private controlMessage(
+  private async controlMessage(
     ws: WebSocket,
     state: ControlState,
     message: string | ArrayBuffer,
-  ): void {
-    if (typeof message !== "string" || message.length > CONTROL_MESSAGE_BYTES)
+  ): Promise<void> {
+    if (typeof message !== "string" || message.length > AUTHORITY_BYTES)
       throw new Error("Invalid control message");
     const value: unknown = JSON.parse(message);
+    if (object(value) && value.type === "authority") {
+      if (!state.manager || this.admission.owner()?.manager_id !== state.device)
+        throw new AdmissionError(
+          "NOT_MANAGER",
+          "Only the current manager can publish authority",
+        );
+      const authority = await verifyAuthority(value.state, state.network);
+      if (
+        authority.roster.roster.manager_id !== state.device ||
+        authority.roster.roster.authority_generation !==
+          state.authorityGeneration
+      )
+        throw new Error("Control and authority differ");
+      if (this.admission.publish(authority)) this.publishAuthority();
+      this.send(ws, {
+        type: "authority_ack",
+        authority_generation: authority.lease.lease.authority_generation,
+        version: authority.lease.lease.version,
+        hash: authority.lease.lease.hash,
+      });
+      return;
+    }
+    if (message.length > CONTROL_MESSAGE_BYTES)
+      throw new Error("Invalid control message size");
+    if (object(value) && value.type === "authority_ack") {
+      if (
+        typeof value.authority_generation !== "number" ||
+        typeof value.version !== "number" ||
+        typeof value.hash !== "string"
+      )
+        throw new Error("Invalid authority acknowledgement");
+      this.admission.ack(
+        state.device,
+        value.authority_generation,
+        value.version,
+        value.hash,
+      );
+      this.publishAuthority(true);
+      return;
+    }
     if (
       object(value) &&
       (value.type === "pairing_register" || value.type === "pairing_cancel")
@@ -702,7 +818,7 @@ export class XrunRelay extends DurableObject<Env> {
           this.reject(ws, "STORAGE_ERROR", "Relay traffic storage unavailable");
         }
       } else if (state.role === "control") {
-        this.controlMessage(ws, state, message);
+        await this.controlMessage(ws, state, message);
       } else if (tunnel(state)) {
         this.tunnelMessage(ws, state, message);
         // Extending an idle expiry cannot bring the next alarm forward. No
@@ -717,6 +833,31 @@ export class XrunRelay extends DurableObject<Env> {
         this.reject(ws, reason.code, reason.message);
         await this.schedule();
         return;
+      }
+      if (
+        reason instanceof Error &&
+        reason.message.startsWith("NOT_MANAGER:")
+      ) {
+        this.reject(
+          ws,
+          (state.role === "auth" || state.role === "verifying") &&
+            state.action === "claim"
+            ? "RELAY_CLAIMED"
+            : "NOT_MANAGER",
+          "Manager proof differs from current authority",
+        );
+        await this.schedule();
+        return;
+      }
+      if (reason instanceof Error) {
+        const code = reason.message.split(":", 1)[0];
+        if (
+          ["ROSTER_EXPIRED", "ROSTER_ROLLBACK", "DEVICE_REVOKED"].includes(code)
+        ) {
+          this.reject(ws, code, reason.message);
+          await this.schedule();
+          return;
+        }
       }
       const authenticating =
         state.role === "auth" || state.role === "verifying";

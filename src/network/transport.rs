@@ -58,20 +58,128 @@ pub(super) async fn open_via(
 async fn open(id: &Identity, path: &str) -> Result<(Ws, String)> {
     open_via(id, &current(id)?, path).await
 }
-pub async fn authenticate(
+pub(crate) async fn latest_authority(roster: &SignedRoster) -> Result<Option<SignedRoster>> {
+    for address in &roster.roster.relay_addresses {
+        let connected = tokio::time::timeout(
+            std::time::Duration::from_secs(3),
+            open_at(roster, address, "/networks/probe/status"),
+        )
+        .await;
+        let Ok(Ok(mut ws)) = connected else {
+            continue;
+        };
+        let message = tokio::time::timeout(CONNECT_TIMEOUT, receive(&mut ws)).await??;
+        if let RelayMessage::Challenge {
+            authority: Some(state),
+            ..
+        } = message
+        {
+            state.verify(&roster.roster.network_id)?;
+            if crate::crypto::cert_der(&state.roster.ca_pem)?
+                != crate::crypto::cert_der(&roster.ca_pem)?
+            {
+                bail!(ErrorCode::NetworkMismatch.error("relay restoration state has another root"));
+            }
+            // The archive can be newer than a relay, such as a staged handover.
+            if state.roster.roster.version >= roster.roster.version
+                && state.roster.roster.authority_generation >= roster.roster.authority_generation
+            {
+                roster.check_successor(&state.roster)?;
+                return Ok(Some(state.roster));
+            }
+        }
+    }
+    Ok(None)
+}
+pub(crate) async fn authenticate(
     ws: &mut Ws,
     id: Option<&Identity>,
     network: &str,
     path: &str,
     root: Option<&Manager>,
 ) -> Result<()> {
-    let RelayMessage::Challenge { nonce } = receive(ws).await? else {
+    let known = if let Some(root) = root {
+        Some(root.authority_state(
+            i64::from(crate::config::DaemonConfig::load()?.membership_lease_minutes) * 60_000,
+        )?)
+    } else if id.is_some() {
+        cache()?
+            .authority(network)?
+            .filter(|state| state.require_fresh(crate::protocol::now_ms()).is_ok())
+    } else {
+        None
+    };
+    let state = authenticate_with_state(ws, id, network, path, root, known).await?;
+    if let (Some(id), Some(state)) = (id, state) {
+        super::observe_authority(id, &state)?;
+    }
+    Ok(())
+}
+pub(crate) async fn authenticate_read_only(
+    ws: &mut Ws,
+    id: Option<&Identity>,
+    network: &str,
+    path: &str,
+    root: Option<&Manager>,
+) -> Result<Option<crate::membership::AuthorityState>> {
+    authenticate_with_state(ws, id, network, path, root, None).await
+}
+async fn authenticate_with_state(
+    ws: &mut Ws,
+    id: Option<&Identity>,
+    network: &str,
+    path: &str,
+    root: Option<&Manager>,
+    known: Option<crate::membership::AuthorityState>,
+) -> Result<Option<crate::membership::AuthorityState>> {
+    let RelayMessage::Challenge {
+        nonce,
+        authority: state,
+    } = receive(ws).await?
+    else {
         bail!(ErrorCode::InvalidMessage.error("expected a relay challenge"))
     };
-    let proof = id
-        .map(|id| Proof::create(id, network, path, &nonce, root))
+    if let Some(state) = &state {
+        state.verify(network)?;
+        if let Some(id) = id
+            && crypto::cert_der(&state.roster.ca_pem)? != crypto::cert_der(&id.ca_pem)?
+        {
+            bail!(ErrorCode::NetworkMismatch.error("relay supplied another authority root"));
+        }
+    }
+    let local_generation = root
+        .map(|manager| manager.roster().map(|r| r.roster.authority_generation))
         .transpose()?;
-    net::send(ws, &RelayMessage::Authenticate { proof }).await
+    let root = root.filter(|_| {
+        state.as_ref().is_none_or(|state| {
+            local_generation
+                .is_some_and(|generation| generation >= state.roster.roster.authority_generation)
+                && (path.ends_with("/claim")
+                    || local_generation.is_some_and(|generation| {
+                        generation > state.roster.roster.authority_generation
+                    })
+                    || id.is_some_and(|id| state.roster.roster.manager_id == id.device_id))
+        })
+    });
+    let generation = state
+        .as_ref()
+        .map_or(1, |state| state.roster.roster.authority_generation);
+    let known = known.filter(|known| {
+        state
+            .as_ref()
+            .is_none_or(|state| known.roster.roster.version >= state.roster.roster.version)
+    });
+    let proof = id
+        .map(|id| {
+            if known.is_some() {
+                Proof::create_with_authority(id, network, path, &nonce, root, generation, known)
+            } else {
+                Proof::create_with_generation(id, network, path, &nonce, root, generation)
+            }
+        })
+        .transpose()?;
+    net::send(ws, &RelayMessage::Authenticate { proof }).await?;
+    Ok(state)
 }
 pub(crate) async fn control(id: &Identity) -> Result<(Ws, String)> {
     let network = &authority(id)?.network_id;

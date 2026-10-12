@@ -39,6 +39,18 @@ fn password(from_stdin: bool, confirm: bool) -> Result<Zeroizing<String>> {
 }
 pub(super) async fn manage(operation: NetworkCommand, json: bool) -> Result<()> {
     let info = match operation {
+        NetworkCommand::Lease { minutes } => {
+            if let Some(minutes) = minutes {
+                client::save_membership_lease(minutes).await?;
+            }
+            let minutes = client::settings()?.membership_lease_minutes;
+            print(
+                json,
+                &serde_json::json!({"membership_lease_minutes": minutes}),
+                || println!("membership freshness: {minutes} minutes"),
+            );
+            return Ok(());
+        }
         NetworkCommand::Backup {
             path,
             password_stdin,
@@ -59,7 +71,7 @@ pub(super) async fn manage(operation: NetworkCommand, json: bool) -> Result<()> 
             password_stdin,
         } => {
             let password = password(password_stdin, false)?;
-            let info = client::network::restore_authority(&path, password.as_bytes())?;
+            let info = client::network::restore_authority(&path, password.as_bytes()).await?;
             client::services::initialize_daemon()?;
             info
         }

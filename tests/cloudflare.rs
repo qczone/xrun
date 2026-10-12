@@ -182,7 +182,7 @@ async fn public_relay_executes_transfers_streams_and_rejects_route_takeover() ->
         let roster = RosterCache::open(&lab.source.join(".xrun/roster.db"))?.load(network)?;
         let path = format!("/networks/{network}/control");
         let mut attacker = xrun::testing::net::websocket_at(&roster.roster.relay_addresses[0], &path, xrun::testing::crypto::relay_tls_config(&roster.roster.relay_ca_pem)?).await?;
-        let RelayMessage::Challenge { nonce } = xrun::testing::net::receive(&mut attacker).await? else { anyhow::bail!("challenge") };
+        let RelayMessage::Challenge { nonce, .. } = xrun::testing::net::receive(&mut attacker).await? else { anyhow::bail!("challenge") };
         let mut proof = xrun::testing::relay_proof(&source, network, &path, &nonce, None)?;
         proof.device_id = target.device_id.clone();
         xrun::testing::net::send(&mut attacker, &RelayMessage::Authenticate { proof: Some(proof) }).await?;

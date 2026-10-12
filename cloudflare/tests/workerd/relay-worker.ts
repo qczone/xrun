@@ -96,7 +96,7 @@ export class TestRelay extends XrunRelay {
             socket.serializeAttachment(state);
           }
         }
-      this.restoreSockets();
+      await this.restoreSockets();
       return Response.json({ restored: true });
     }
     if (path === "/test/alarm") {
@@ -120,7 +120,7 @@ export class TestRelay extends XrunRelay {
           socket.serializeAttachment(state);
         }
       }
-      this.restoreSockets();
+      await this.restoreSockets();
       await this.ctx.storage.setAlarm(Date.now());
       return Response.json({ runs });
     }

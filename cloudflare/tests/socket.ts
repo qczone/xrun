@@ -10,9 +10,23 @@ export class Socket {
     readonly ws: NonNullable<
       Awaited<ReturnType<Miniflare["dispatchFetch"]>>["webSocket"]
     >,
+    readonly automaticAuthority = true,
   ) {
     ws.addEventListener("message", (event) => {
       const value = event.data as string | ArrayBuffer;
+      if (this.automaticAuthority && typeof value === "string") {
+        const parsed = JSON.parse(value);
+        if (parsed.type === "authority") {
+          const lease = parsed.state.lease.lease;
+          this.send({
+            type: "authority_ack",
+            authority_generation: lease.authority_generation,
+            version: lease.version,
+            hash: lease.hash,
+          });
+          return;
+        }
+      }
       if (this.waiting) {
         const { resolve } = this.waiting;
         this.waiting = undefined;
@@ -52,8 +66,18 @@ export class Socket {
       };
     });
   }
-  async json() {
-    return JSON.parse((await this.next()) as string);
+  async json(includeAuthority = false) {
+    for (;;) {
+      const value = JSON.parse((await this.next()) as string);
+      if (value.type !== "authority" || includeAuthority) return value;
+      const lease = value.state.lease.lease;
+      this.send({
+        type: "authority_ack",
+        authority_generation: lease.authority_generation,
+        version: lease.version,
+        hash: lease.hash,
+      });
+    }
   }
   close() {
     this.ws.close();

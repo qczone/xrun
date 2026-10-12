@@ -208,6 +208,8 @@ pub(super) enum Local {
 }
 #[derive(Subcommand)]
 pub(super) enum NetworkCommand {
+    /// Read or set the signed membership freshness lifetime (1..1440 minutes)
+    Lease { minutes: Option<u16> },
     /// Encrypt the manager identity and a consistent authority database snapshot
     Backup {
         path: std::path::PathBuf,

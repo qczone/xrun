@@ -80,6 +80,7 @@ export async function fixture(
   const settings: Settings = {
     execution: { default_cwd: null, max_concurrent_jobs: 4, path: null },
     attachment_retention_days: 30,
+    membership_lease_minutes: 15,
     home_dir: "/Users/test",
     data_dir: "/Users/test/.xrun",
     os: "macos",
@@ -183,6 +184,9 @@ export async function fixture(
           return null;
         case "save_attachment_retention":
           settings.attachment_retention_days = args.days as number;
+          return null;
+        case "save_membership_lease":
+          settings.membership_lease_minutes = args.minutes as number;
           return null;
         case "join":
           status.local.joined = true;

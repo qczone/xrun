@@ -44,7 +44,7 @@ pub(super) fn database(path: &Path, create: bool) -> Result<Connection> {
             CREATE UNIQUE INDEX invitation_identity ON invitations(invitation_id);",
         )?;
         tx.pragma_update(None, "user_version", 2)?;
-    } else if version != 2 && version != 3 {
+    } else if version != 2 && version != 3 && version != 4 {
         bail!(ErrorCode::DbSchemaMismatch.error("unsupported membership database schema"));
     }
     if version <= 2 {
@@ -52,6 +52,12 @@ pub(super) fn database(path: &Path, create: bool) -> Result<Connection> {
             "ALTER TABLE invitations ADD COLUMN next_attempt_ms INTEGER NOT NULL DEFAULT 0;",
         )?;
         tx.pragma_update(None, "user_version", 3)?;
+    }
+    if version <= 3 {
+        tx.execute_batch(
+            "CREATE TABLE freshness(id INTEGER PRIMARY KEY CHECK(id=1),data TEXT NOT NULL);",
+        )?;
+        tx.pragma_update(None, "user_version", 4)?;
     }
     tx.commit()?;
     Ok(db)

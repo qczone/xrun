@@ -1,5 +1,5 @@
 //! Verified monotonic roster cache and committed-change notifications.
-use super::{SignedRoster, storage::*};
+use super::{AuthorityState, SignedLease, SignedRoster, storage::*};
 use anyhow::Result;
 use rusqlite::{Connection, OptionalExtension, TransactionBehavior};
 use std::{path::Path, sync::Mutex};
@@ -47,6 +47,48 @@ impl RosterCache {
         self.changes.subscribe()
     }
     pub fn observe(&self, network: &str, next: &SignedRoster) -> Result<()> {
+        self.observe_record(network, next, None)
+    }
+    pub fn observe_authority(&self, network: &str, next: &AuthorityState) -> Result<()> {
+        next.verify(network)?;
+        self.observe_record(network, &next.roster, Some(&next.lease))
+    }
+    pub fn authority(&self, network: &str) -> Result<Option<AuthorityState>> {
+        let roster = self.load(network)?;
+        let cached = self.state.lock().unwrap();
+        let data: Option<String> = cached
+            .db
+            .query_row("SELECT data FROM freshness WHERE id=1", [], |row| {
+                row.get(0)
+            })
+            .optional()?;
+        data.map(|data| {
+            let lease: SignedLease = serde_json::from_str(&data)?;
+            if lease.lease.version != roster.roster.version
+                || lease.lease.authority_generation != roster.roster.authority_generation
+            {
+                return Ok(None);
+            }
+            lease.verify(&roster)?;
+            Ok(Some(AuthorityState { roster, lease }))
+        })
+        .transpose()
+        .map(Option::flatten)
+    }
+    pub fn require_fresh(&self, network: &str, now: i64) -> Result<AuthorityState> {
+        let state = self.authority(network)?.ok_or_else(|| {
+            crate::error::ErrorCode::RosterExpired
+                .error("membership freshness is not yet synchronized")
+        })?;
+        state.require_fresh(now)?;
+        Ok(state)
+    }
+    fn observe_record(
+        &self,
+        network: &str,
+        next: &SignedRoster,
+        lease: Option<&SignedLease>,
+    ) -> Result<()> {
         next.verify(network)?;
         let mut cached = self.state.lock().unwrap();
         let observed_version = cached
@@ -61,9 +103,26 @@ impl RosterCache {
         if let Some(old) = old {
             let previous = serde_json::from_str::<SignedRoster>(&old)?;
             previous.check_successor(next)?;
-            if previous.roster.version == next.roster.version {
+            if previous.roster.version == next.roster.version && lease.is_none() {
                 return Ok(());
             }
+        }
+        if let Some(lease) = lease {
+            lease.verify(next)?;
+            let old: Option<String> = tx
+                .query_row("SELECT data FROM freshness WHERE id=1", [], |row| {
+                    row.get(0)
+                })
+                .optional()?;
+            if let Some(old) = old {
+                let old: SignedLease = serde_json::from_str(&old)?;
+                if old.lease.hash == lease.lease.hash
+                    && old.lease.issued_at_ms >= lease.lease.issued_at_ms
+                {
+                    return Ok(());
+                }
+            }
+            tx.execute("INSERT INTO freshness VALUES(1,?1) ON CONFLICT(id) DO UPDATE SET data=excluded.data", [serde_json::to_string(lease)?])?;
         }
         save_state(&tx, next)?;
         tx.commit()?;

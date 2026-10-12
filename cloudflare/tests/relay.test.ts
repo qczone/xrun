@@ -1048,3 +1048,52 @@ test("idle expiry closes both tunnel peers, preserves live traffic and restores 
   ])
     socket.close();
 });
+
+test("signed revocation persists across restoration and closes both ciphertext legs", async () => {
+  const f = await fixture();
+  const target = await f.member(), source = await f.member();
+  const controlPath = `/networks/${f.network}/control`;
+  const manager = await authenticated(controlPath, (nonce) => f.manager.proof(controlPath, nonce, true));
+  await manager.json();
+  const control = await authenticated(controlPath, (nonce) => target.proof(controlPath, nonce));
+  const hello = await control.json();
+  const connect = `/networks/${f.network}/connect/${target.device}`;
+  const sender = await authenticated(connect, (nonce) => source.proof(connect, nonce));
+  const incoming = await control.json();
+  const receiver = await open(`/networks/${f.network}/attach/${target.device}/${hello.generation}/${incoming.session_id}`);
+  await sender.json(); await receiver.json();
+  f.revoke(source.device);
+  const state = await f.authority();
+  manager.send({type: "authority", state});
+  expect(await manager.json()).toMatchObject({type: "authority_ack", version: state.roster.roster.version, hash: state.lease.lease.hash});
+  await expect(sender.next()).rejects.toThrow("closed");
+  await expect(receiver.next()).rejects.toThrow("closed");
+  await inspect(f.network, "restore");
+  const refused = await authenticated(controlPath, (nonce) => source.proof(controlPath, nonce));
+  expect((await refused.json()).code).toBe("DEVICE_REVOKED");
+  const statusPath = `/networks/${f.network}/status`;
+  const status = await authenticated(statusPath, (nonce) => f.manager.proof(statusPath, nonce, true));
+  const pending = (await status.json()).pending_authority;
+  expect(pending).not.toContain(target.device);
+  expect(pending).not.toContain(source.device);
+  for (const socket of [manager, control, refused, status]) socket.close();
+});
+
+test("management generations replace the owner and reject a restored obsolete root proof", async () => {
+  const f = await fixture(), next = await f.member();
+  const controlPath = `/networks/${f.network}/control`;
+  const old = await authenticated(controlPath, (nonce) => f.manager.proof(controlPath, nonce, true));
+  await old.json();
+  const previous = await f.authority();
+  f.migrate(next.device);
+  const current = await authenticated(controlPath, (nonce) => next.proof(controlPath, nonce, true));
+  expect((await current.json()).type).toBe("hello_ack");
+  await expect(old.next()).rejects.toThrow("closed");
+  expect((await relayInfo()).owner.manager_id).toBe(next.device);
+  await inspect(f.network, "restore");
+  current.send({type: "authority", state: previous});
+  expect((await current.json()).code).toBe("INVALID_MESSAGE");
+  const obsolete = await authenticated(controlPath, (nonce) => f.manager.proof(controlPath, nonce, true));
+  expect((await obsolete.json()).code).toBe("NOT_MANAGER");
+  current.close(); obsolete.close();
+});

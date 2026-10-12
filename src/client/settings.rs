@@ -23,6 +23,8 @@ pub struct Settings {
     pub execution: ExecutionSettings,
     /// Days to keep attachment snapshots; zero retains them indefinitely.
     pub attachment_retention_days: u16,
+    /// Minutes a manager-signed membership lease permits new operations offline.
+    pub membership_lease_minutes: u16,
     /// Home directory used when no working directory is configured.
     pub home_dir: PathBuf,
     /// Private xrun data directory.
@@ -37,6 +39,7 @@ pub fn settings() -> Result<Settings> {
     let policy = config::DaemonConfig::load()?;
     Ok(Settings {
         attachment_retention_days: policy.attachment_retention_days,
+        membership_lease_minutes: policy.membership_lease_minutes,
         execution: ExecutionSettings {
             default_cwd: policy.default_cwd,
             max_concurrent_jobs: policy.max_concurrent_jobs,
@@ -82,4 +85,14 @@ pub fn save_attachment_retention(days: u16) -> Result<()> {
         Ok(())
     })?;
     crate::attachments::Cache::new(&dir).prune()
+}
+/// Set the manager's freshness policy and immediately refresh its live publication.
+pub async fn save_membership_lease(minutes: u16) -> Result<()> {
+    let id = Identity::load()?;
+    crate::network::manager(&id)?;
+    config::update_daemon_config(&config::device_dir()?, |policy| {
+        policy.membership_lease_minutes = minutes;
+        Ok(())
+    })?;
+    crate::control::refresh_access().await
 }

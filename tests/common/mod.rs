@@ -355,6 +355,29 @@ impl Lab {
 }
 
 /// Opens a relay socket and answers its challenge; None pairs anonymously.
+pub async fn control_message(
+    ws: &mut xrun::testing::net::Ws,
+) -> Result<xrun::protocol::RelayMessage> {
+    use xrun::{protocol::RelayMessage, testing::net};
+    loop {
+        let message = net::receive(ws).await?;
+        if let RelayMessage::Authority { state } = message {
+            net::send(
+                ws,
+                &RelayMessage::AuthorityAck {
+                    authority_generation: state.roster.roster.authority_generation,
+                    version: state.roster.roster.version,
+                    hash: state.roster.hash()?,
+                },
+            )
+            .await?;
+        } else {
+            return Ok(message);
+        }
+    }
+}
+
+/// Opens a relay socket and answers its challenge; None pairs anonymously.
 pub async fn relay_socket(
     id: Option<&Identity>,
     roster: &xrun::testing::membership::SignedRoster,

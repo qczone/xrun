@@ -143,6 +143,7 @@ codes! {
     ResultLost => "RESULT_LOST",
     RosterConflict => "ROSTER_CONFLICT",
     RosterRollback => "ROSTER_ROLLBACK",
+    RosterExpired => "ROSTER_EXPIRED",
     RosterVersionExhausted => "ROSTER_VERSION_EXHAUSTED",
     ScreenshotFailed => "SCREENSHOT_FAILED",
     ScreenshotUnavailable => "SCREENSHOT_UNAVAILABLE",

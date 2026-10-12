@@ -4,6 +4,7 @@ mod job;
 mod relay;
 mod traffic;
 mod version;
+pub use crate::membership::{AuthorityState, SignedLease};
 pub use job::*;
 pub use relay::{ChallengeBinding, Proof, RelayMessage, RelayOwner, valid_relay_route};
 use serde::{Deserialize, Serialize};

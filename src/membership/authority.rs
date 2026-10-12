@@ -103,8 +103,10 @@ impl Manager {
     pub fn open(dir: &Path) -> Result<Self> {
         let ca_pem = std::fs::read_to_string(dir.join("root.pem"))
             .context(ErrorCode::ManagerStateMissing.error("root certificate is missing"))?;
-        let key_pem = std::fs::read_to_string(dir.join("root.key"))
-            .context(ErrorCode::ManagerStateMissing.error("root key is missing"))?;
+        let key_pem = zeroize::Zeroizing::new(
+            std::fs::read_to_string(dir.join("root.key"))
+                .context(ErrorCode::ManagerStateMissing.error("root key is missing"))?,
+        );
         let db = database(&dir.join("manager.db"), false)?;
         let roster = state(&db)?;
         roster.verify(&roster.roster.network_id)?;
@@ -120,7 +122,7 @@ impl Manager {
         Ok(Self {
             db: Mutex::new(db),
             ca_pem,
-            key_pem: zeroize::Zeroizing::new(key_pem),
+            key_pem,
         })
     }
     pub fn roster(&self) -> Result<SignedRoster> {
@@ -250,6 +252,7 @@ impl Manager {
         let cert_pem = issue(&self.ca_pem, &self.key_pem, csr, &member.device_id)?;
         tx.commit()?;
         Ok(Pairing {
+            lease: self.lease_for(&roster, super::DEFAULT_LEASE_MS)?,
             member,
             cert_pem,
             roster,

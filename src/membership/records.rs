@@ -55,6 +55,7 @@ pub struct Pairing {
     pub cert_pem: String,
     pub roster: SignedRoster,
     pub receipt: SignedReceipt,
+    pub lease: super::SignedLease,
 }
 
 // Domain separation prevents a roster signature from being interpreted as a
@@ -426,6 +427,7 @@ mod tests {
             device: value["device"].as_str().unwrap(),
             path: value["path"].as_str().unwrap(),
             nonce: value["nonce"].as_str().unwrap(),
+            authority_generation: value["authority_generation"].as_u64().unwrap(),
         };
         check(&fixture, "relay-proof", &binding)?;
         check(&fixture, "relay-manager", &binding)?;
@@ -435,14 +437,11 @@ mod tests {
             cert_pem: ack.cert_pem,
             root_pem: root_pem.into(),
             signature: records["relay-proof"]["signature"].as_str().unwrap().into(),
-            manager_signature: Some(
-                records["relay-manager"]["signature"]
-                    .as_str()
-                    .unwrap()
-                    .into(),
-            ),
+            manager_signature: None,
+            authority_generation: binding.authority_generation,
+            authority: None,
         };
-        assert!(proof.verify(binding.network, binding.path, binding.nonce)?);
+        assert!(!proof.verify(binding.network, binding.path, binding.nonce)?);
         assert!(
             proof
                 .verify(binding.network, binding.path, "replay")

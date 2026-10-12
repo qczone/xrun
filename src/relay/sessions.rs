@@ -118,7 +118,7 @@ pub(super) async fn source(
     let SourceOptions { protocol, pairing } = options;
     ProtocolRange::require(protocol)?;
     let path = format!("/networks/{network}/connect/{target}");
-    let device = authenticate(ws, network, &path, permit)
+    let device = authenticate(app, ws, network, &path, permit, pairing.is_some())
         .await?
         .map(|(device, _)| device);
     let anonymous = device.is_none();
@@ -157,6 +157,13 @@ pub(super) async fn source(
         connections.sessions.insert(
             sid.clone(),
             Session {
+                authority_generation: app
+                    .admission
+                    .authority()
+                    .expect("admitted authority")
+                    .roster
+                    .roster
+                    .authority_generation,
                 network: network.into(),
                 source,
                 device,
@@ -517,6 +524,7 @@ mod tests {
             connections.sessions.insert(
                 index.to_string(),
                 Session {
+                    authority_generation: 1,
                     network: "network".into(),
                     source,
                     device: Some("device".into()),
@@ -544,6 +552,7 @@ mod tests {
         connections.sessions.insert(
             "replacement".into(),
             Session {
+                authority_generation: 1,
                 network: "network".into(),
                 source,
                 device: Some("device".into()),

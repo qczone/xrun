@@ -10,7 +10,9 @@ test("frozen Rust and Cloudflare proof vectors keep signature bytes independent 
     cert_pem: vectors.member_pem,
     root_pem: vectors.root_pem,
     signature: vectors.records["relay-proof"].signature,
-    manager_signature: vectors.records["relay-manager"].signature,
+    manager_signature: null,
+    authority_generation: binding.authority_generation,
+    authority: null,
   };
   for (const domain of ["relay-proof", "relay-manager"] as const)
     expect(vectors.records[domain].payload_utf8).toBe(
@@ -18,7 +20,7 @@ test("frozen Rust and Cloudflare proof vectors keep signature bytes independent 
     );
   expect(
     await verifyProof(proof, binding.network, binding.path, binding.nonce),
-  ).toEqual({ device: binding.device, manager: true });
+  ).toMatchObject({ device: binding.device, manager: false });
   await expect(
     verifyProof(proof, binding.network, binding.path, "replay"),
   ).rejects.toThrow();
@@ -30,7 +32,7 @@ test("member and manager proofs bind network, device, path and fresh challenge",
   const other = await f.member();
   const path = `/networks/${f.network}/control`;
   const proof = await member.proof(path, "nonce", true);
-  expect(await verifyProof(proof, f.network, path, "nonce")).toEqual({
+  expect(await verifyProof(proof, f.network, path, "nonce")).toMatchObject({
     device: member.device,
     manager: true,
   });

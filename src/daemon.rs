@@ -285,6 +285,7 @@ impl Runtime {
     }
     fn allow(&self, source: &str) -> Result<()> {
         self.membership(source)?;
+        self.members.require_fresh(&self.network_id, now_ms())?;
         if crate::membership::backup::holds_authority(&config::device_dir()?)? {
             bail!(
                 ErrorCode::ManagerProtected

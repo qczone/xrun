@@ -74,18 +74,17 @@ pub(super) async fn restore_authority<R: tauri::Runtime>(
     password: String,
 ) -> Result<BackupInfo, CommandError> {
     let _guard = state.action.lock().await;
-    let result = tauri::async_runtime::spawn_blocking(move || {
+    let result = async {
         let password = zeroize::Zeroizing::new(password);
         let restored = xrun::client::network::restore_authority(
             std::path::Path::new(&path),
             password.as_bytes(),
-        )?;
+        )
+        .await?;
         xrun::client::services::initialize_daemon()?;
         Ok::<_, anyhow::Error>(restored)
-    })
-    .await
-    .map_err(anyhow::Error::from)
-    .and_then(|result| result);
+    }
+    .await;
     record(&app, result)
 }
 #[tauri::command]

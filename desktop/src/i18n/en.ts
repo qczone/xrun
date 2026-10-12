@@ -1,5 +1,10 @@
 /** English is the default and defines the complete set of message keys. */
 export const en = {
+  "freshness.title": "Membership freshness",
+  "freshness.hint":
+    "When the manager stays offline beyond this period, new operations wait for renewal.",
+  "freshness.minutes": "{minutes} min",
+  "freshness.failed": "Could not save freshness settings.",
   "traffic.title": "Traffic statistics",
   "traffic.network": "Network traffic",
   "traffic.device": "This device's traffic",

@@ -1,6 +1,10 @@
 import type { en } from "./en";
 
 export const zh = {
+  "freshness.title": "成员有效期",
+  "freshness.hint": "管理设备离线超过这段时间，新操作需等待续期。",
+  "freshness.minutes": "{minutes} 分钟",
+  "freshness.failed": "有效期保存失败。",
   "traffic.title": "流量统计",
   "traffic.network": "网络流量",
   "traffic.device": "本机流量",

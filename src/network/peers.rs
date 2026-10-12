@@ -89,11 +89,26 @@ pub(super) async fn peer_state(
     .context(ErrorCode::ConnectTimeout.error("peer state request timed out"))?
 }
 pub(super) async fn online_ids(id: &Identity, via: &SignedRoster) -> Result<Vec<String>> {
+    Ok(relay_state(id, via).await?.0)
+}
+pub(super) async fn relay_state(
+    id: &Identity,
+    via: &SignedRoster,
+) -> Result<(Vec<String>, Vec<String>)> {
     let network = &authority(id)?.network_id;
     let path = format!("/networks/{network}/status");
     let (mut ws, _) = open_via(id, via, &path).await?;
-    authenticate(&mut ws, Some(id), network, &path, None).await?;
-    let RelayMessage::Status { mut devices } = receive(&mut ws).await? else {
+    let manager = if via.roster.manager_id == id.device_id {
+        Some(super::manager(id)?)
+    } else {
+        None
+    };
+    authenticate(&mut ws, Some(id), network, &path, manager.as_ref()).await?;
+    let RelayMessage::Status {
+        mut devices,
+        pending_authority,
+    } = receive(&mut ws).await?
+    else {
         bail!(ErrorCode::InvalidMessage.error("expected relay routes"))
     };
     if devices.len() > MAX_NETWORK_MEMBERS {
@@ -102,7 +117,7 @@ pub(super) async fn online_ids(id: &Identity, via: &SignedRoster) -> Result<Vec<
     devices.retain(|d| crate::membership::device_name(d).is_ok());
     devices.sort();
     devices.dedup();
-    Ok(devices)
+    Ok((devices, pending_authority))
 }
 pub(super) async fn states_for(
     id: &Identity,
@@ -254,45 +269,6 @@ pub(crate) async fn device(id: &Identity, selector: &str) -> Result<Device> {
     Ok(listed_device(&roster, member, info.as_ref()))
 }
 
-pub(crate) async fn devices(id: &Identity) -> Result<(Vec<Device>, Vec<ReceiptAck>)> {
-    let via = current(id)?;
-    let ids = online_ids(id, &via).await?;
-    let mut states = states_for(id, &via, ids.clone()).await?;
-    if ids.contains(&id.device_id)
-        && config::instance_running(&config::device_dir()?.join("daemon.lock"))?
-    {
-        let cfg = config::DaemonConfig::load()?;
-        let cwd = cfg
-            .default_cwd
-            .unwrap_or(config::home_dir()?)
-            .to_string_lossy()
-            .into();
-        states.push(PeerState {
-            device: local_device(id, cwd)?,
-            ack: ReceiptAck::create(id, &current(id)?)?,
-        });
-    }
-    let roster = current(id)?;
-    let acks = states
-        .iter()
-        .map(|s| s.ack.clone())
-        .filter(|a| a.verify(&roster).is_ok())
-        .collect();
-    let metadata: HashMap<_, _> = states
-        .into_iter()
-        .map(|s| (s.device.device_id.clone(), s.device))
-        .collect();
-    let devices = roster
-        .roster
-        .members
-        .iter()
-        .map(|member| {
-            let info = metadata.get(&member.device_id).filter(|_| !member.revoked);
-            listed_device(&roster, member, info)
-        })
-        .collect();
-    Ok((devices, acks))
-}
 pub(crate) async fn refresh(id: &Identity) -> Result<()> {
     let via = current(id)?;
     states_for(id, &via, online_ids(id, &via).await?).await?;

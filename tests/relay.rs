@@ -152,7 +152,7 @@ async fn forged(
     make: impl FnOnce(&str) -> Result<Proof>,
 ) -> Result<net::Ws> {
     let mut ws = socket(cfg, path).await?;
-    let RelayMessage::Challenge { nonce } = net::receive(&mut ws).await? else {
+    let RelayMessage::Challenge { nonce, .. } = net::receive(&mut ws).await? else {
         anyhow::bail!("missing relay challenge")
     };
     net::send(
@@ -193,7 +193,7 @@ async fn source(
     authed(cfg, network, &path, id, None).await
 }
 async fn incoming(ws: &mut net::Ws) -> Result<String> {
-    let RelayMessage::Incoming { session_id } = net::receive(ws).await? else {
+    let RelayMessage::Incoming { session_id } = common::control_message(ws).await? else {
         anyhow::bail!("missing incoming session")
     };
     Ok(session_id)
@@ -378,6 +378,7 @@ async fn authenticated_devices_behind_one_nat_do_not_share_a_source_quota() -> R
                 key,
             ));
         }
+        claim(&cfg, &network).await?;
         let mut sessions = Vec::new();
         for device in devices
             .iter()
@@ -527,7 +528,7 @@ async fn relay_routes_only_proven_members_and_keeps_binding_and_resource_limits(
         let mut hidden = authed(&cfg, &n, &status_path, None, None).await?;
         refused(&mut hidden, "UNAUTHENTICATED").await?;
         let mut status = authed(&cfg, &n, &status_path, Some(&net.source), None).await?;
-        let RelayMessage::Status { devices } = net::receive(&mut status).await? else {
+        let RelayMessage::Status { devices, .. } = net::receive(&mut status).await? else {
             anyhow::bail!("missing routes")
         };
         assert_eq!(devices, vec![target.clone()]);

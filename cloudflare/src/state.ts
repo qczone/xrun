@@ -26,17 +26,20 @@ export interface ControlState extends ConnectionBase {
   device: string;
   manager: boolean;
   generation: string;
+  authorityGeneration: number;
 }
 export interface TrafficState extends ConnectionBase {
   role: "traffic";
   device: string;
   manager: boolean;
   deadline: number;
+  authorityGeneration: number;
 }
 export interface SessionBinding {
   target: string;
   generation: string;
   sid: string;
+  authorityGeneration: number;
 }
 export interface PendingState extends ConnectionBase, SessionBinding {
   role: "pending";
@@ -73,7 +76,7 @@ export type Attachment =
   | ClosedState;
 
 const BASE_KEYS = ["id", "role", "network", "ip", "protocol", "pairing"];
-const BINDING_KEYS = ["target", "generation", "sid"];
+const BINDING_KEYS = ["target", "generation", "sid", "authorityGeneration"];
 const TUNNEL_KEYS = [
   ...BASE_KEYS,
   ...BINDING_KEYS,
@@ -89,10 +92,18 @@ function binding(value: Record<string, unknown>): SessionBinding | undefined {
     typeof value.generation !== "string" ||
     !SESSION_TOKEN.test(value.generation) ||
     typeof value.sid !== "string" ||
-    !SESSION_TOKEN.test(value.sid)
+    !SESSION_TOKEN.test(value.sid) ||
+    typeof value.authorityGeneration !== "number" ||
+    !Number.isSafeInteger(value.authorityGeneration) ||
+    value.authorityGeneration <= 0
   )
     return;
-  return { target: value.target, generation: value.generation, sid: value.sid };
+  return {
+    target: value.target,
+    generation: value.generation,
+    sid: value.sid,
+    authorityGeneration: value.authorityGeneration,
+  };
 }
 function deadline(value: unknown): value is number {
   return typeof value === "number" && Number.isSafeInteger(value) && value > 0;
@@ -116,6 +127,7 @@ export function attachment(value: unknown): Attachment | undefined {
       "cachedSince",
       "source",
       "management",
+      "authorityGeneration",
     ])
   )
     return;
@@ -155,11 +167,18 @@ export function attachment(value: unknown): Attachment | undefined {
   switch (value.role) {
     case "traffic":
       if (
-        !object(value, [...BASE_KEYS, "device", "manager", "deadline"]) ||
+        !object(value, [
+          ...BASE_KEYS,
+          "device",
+          "manager",
+          "deadline",
+          "authorityGeneration",
+        ]) ||
         typeof value.device !== "string" ||
         !DEVICE.test(value.device) ||
         typeof value.manager !== "boolean" ||
-        !deadline(value.deadline)
+        !deadline(value.deadline) ||
+        !deadline(value.authorityGeneration)
       )
         return;
       return {
@@ -168,6 +187,7 @@ export function attachment(value: unknown): Attachment | undefined {
         device: value.device,
         manager: value.manager,
         deadline: value.deadline,
+        authorityGeneration: value.authorityGeneration,
       };
     case "auth":
     case "verifying": {
@@ -211,12 +231,19 @@ export function attachment(value: unknown): Attachment | undefined {
     }
     case "control":
       if (
-        !object(value, [...BASE_KEYS, "device", "manager", "generation"]) ||
+        !object(value, [
+          ...BASE_KEYS,
+          "device",
+          "manager",
+          "generation",
+          "authorityGeneration",
+        ]) ||
         typeof value.device !== "string" ||
         !DEVICE.test(value.device) ||
         typeof value.manager !== "boolean" ||
         typeof value.generation !== "string" ||
-        !SESSION_TOKEN.test(value.generation)
+        !SESSION_TOKEN.test(value.generation) ||
+        !deadline(value.authorityGeneration)
       )
         return;
       return {
@@ -225,6 +252,7 @@ export function attachment(value: unknown): Attachment | undefined {
         device: value.device,
         manager: value.manager,
         generation: value.generation,
+        authorityGeneration: value.authorityGeneration,
       };
     case "pending": {
       const session = binding(value);

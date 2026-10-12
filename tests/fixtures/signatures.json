@@ -69,10 +69,11 @@
         "network": "net_tpu5dixsnflzdsjdpxsawsx26olu3ci5zf65zgmubc4xebk6co5q",
         "device": "dev_00000000000000000000000000000002",
         "path": "/networks/net_tpu5dixsnflzdsjdpxsawsx26olu3ci5zf65zgmubc4xebk6co5q/control",
-        "nonce": "fixed-vector-challenge"
+        "nonce": "fixed-vector-challenge",
+        "authority_generation": 1
       },
-      "payload_utf8": "xrun/sig-v2/relay-proof\u0000{\"network\":\"net_tpu5dixsnflzdsjdpxsawsx26olu3ci5zf65zgmubc4xebk6co5q\",\"device\":\"dev_00000000000000000000000000000002\",\"path\":\"/networks/net_tpu5dixsnflzdsjdpxsawsx26olu3ci5zf65zgmubc4xebk6co5q/control\",\"nonce\":\"fixed-vector-challenge\"}",
-      "signature": "MEQCIFbwRxL6fIe89HRNftf3mJiBflnfHawY7nFYTaflo6OVAiBxVW2srwR+R0B1TAH3AQt3Ey9IAFWCkQpAkTzwULqEyA==",
+      "payload_utf8": "xrun/sig-v2/relay-proof\u0000{\"network\":\"net_tpu5dixsnflzdsjdpxsawsx26olu3ci5zf65zgmubc4xebk6co5q\",\"device\":\"dev_00000000000000000000000000000002\",\"path\":\"/networks/net_tpu5dixsnflzdsjdpxsawsx26olu3ci5zf65zgmubc4xebk6co5q/control\",\"nonce\":\"fixed-vector-challenge\",\"authority_generation\":1}",
+      "signature": "MEYCIQDKvhPkLmLFrPxNAKrDd4hRfgjhkuPw5jJfD+JROLfNMAIhAOgHXpN97xGMR0TUPPsJh8dcvR80I1oJgSN9GAbVnFW1",
       "signer": "member"
     },
     "relay-manager": {
@@ -80,10 +81,11 @@
         "network": "net_tpu5dixsnflzdsjdpxsawsx26olu3ci5zf65zgmubc4xebk6co5q",
         "device": "dev_00000000000000000000000000000002",
         "path": "/networks/net_tpu5dixsnflzdsjdpxsawsx26olu3ci5zf65zgmubc4xebk6co5q/control",
-        "nonce": "fixed-vector-challenge"
+        "nonce": "fixed-vector-challenge",
+        "authority_generation": 1
       },
-      "payload_utf8": "xrun/sig-v2/relay-manager\u0000{\"network\":\"net_tpu5dixsnflzdsjdpxsawsx26olu3ci5zf65zgmubc4xebk6co5q\",\"device\":\"dev_00000000000000000000000000000002\",\"path\":\"/networks/net_tpu5dixsnflzdsjdpxsawsx26olu3ci5zf65zgmubc4xebk6co5q/control\",\"nonce\":\"fixed-vector-challenge\"}",
-      "signature": "MEUCIFNCT4fApsMORy9A9S54iM/SMdEnDi1xr9vZu9D9486gAiEAzklKwwQeQI/A1ANbbPTsaGTuKIRpUJaqz28bsPv3WH0=",
+      "payload_utf8": "xrun/sig-v2/relay-manager\u0000{\"network\":\"net_tpu5dixsnflzdsjdpxsawsx26olu3ci5zf65zgmubc4xebk6co5q\",\"device\":\"dev_00000000000000000000000000000002\",\"path\":\"/networks/net_tpu5dixsnflzdsjdpxsawsx26olu3ci5zf65zgmubc4xebk6co5q/control\",\"nonce\":\"fixed-vector-challenge\",\"authority_generation\":1}",
+      "signature": "MEUCIQD90dl8wauTYs4cmVslHzoBMdusI/D0LdIDBk71HgShuwIgWc8GdYtPRnwLjnwxvMpNQhCfBeYdaCMLdOR2ODm1P2c=",
       "signer": "root"
     },
     "key-check": {

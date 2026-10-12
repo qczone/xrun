@@ -4,7 +4,10 @@ mod authority;
 pub(crate) mod backup;
 mod cache;
 mod invitations;
+mod leases;
 mod records;
+pub(crate) use leases::DEFAULT_LEASE_MS;
+pub use leases::{AuthorityState, SignedLease};
 mod storage;
 
 pub use authority::Manager;

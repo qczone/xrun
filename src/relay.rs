@@ -121,6 +121,7 @@ impl IntoResponse for Api {
 type ApiResult<T> = std::result::Result<T, Api>;
 
 struct ControlConnection {
+    authority_generation: u64,
     protocol: u32,
     generation: String,
     manager: bool,
@@ -128,6 +129,7 @@ struct ControlConnection {
     cancel: watch::Sender<bool>,
 }
 struct Session {
+    authority_generation: u64,
     network: String,
     source: std::net::IpAddr,
     device: Option<String>,
@@ -141,16 +143,23 @@ struct Session {
 /// Challenges the client and returns the proven device and whether it holds
 /// the network root key, or None for a pairing client without a certificate.
 async fn authenticate(
+    app: &App,
     ws: &mut WebSocket,
     network: &str,
     path: &str,
     permit: &TransportPermit,
+    public_pairing: bool,
 ) -> Result<Option<(String, bool)>> {
     let nonce = crypto::random_token();
     send(
         ws,
         &RelayMessage::Challenge {
             nonce: nonce.clone(),
+            authority: if public_pairing {
+                None
+            } else {
+                app.admission.authority()
+            },
         },
     )
     .await?;
@@ -163,16 +172,54 @@ async fn authenticate(
         return Ok(None);
     };
     let manager = proof.verify(network, path, &nonce)?;
+    if app.admission.authenticate(&proof, manager)?
+        && let Some(state) = &proof.authority
+    {
+        publish_connections(app, state).await;
+    }
     permit.authenticated();
     Ok(Some((proof.device_id, manager)))
 }
+async fn publish_connections(app: &App, state: &crate::membership::AuthorityState) {
+    let connections = app.connections.lock().await;
+    let roster = &state.roster;
+    for ((network, device), control) in &connections.controls {
+        if network != &roster.roster.network_id {
+            continue;
+        }
+        let revoked = roster.member(device).map_or(true, |member| member.revoked);
+        let _ = control.tx.try_send(RelayMessage::Authority {
+            state: state.clone(),
+        });
+        if revoked
+            || control.authority_generation != roster.roster.authority_generation
+            || control.manager != (device == &roster.roster.manager_id)
+        {
+            let _ = control.cancel.send(true);
+        }
+    }
+    for session in connections.sessions.values() {
+        if session.network == roster.roster.network_id
+            && (session.authority_generation != roster.roster.authority_generation
+                || roster
+                    .member(&session.target)
+                    .map_or(true, |member| member.revoked)
+                || session.device.as_ref().is_some_and(|device| {
+                    roster.member(device).map_or(true, |member| member.revoked)
+                }))
+        {
+            let _ = session.cancel.send(true);
+        }
+    }
+}
 async fn member(
+    app: &App,
     ws: &mut WebSocket,
     network: &str,
     path: &str,
     permit: &TransportPermit,
 ) -> Result<(String, bool)> {
-    authenticate(ws, network, path, permit)
+    authenticate(app, ws, network, path, permit, false)
         .await?
         .context(ErrorCode::Unauthenticated.error("member proof required"))
 }

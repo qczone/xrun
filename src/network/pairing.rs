@@ -12,12 +12,11 @@ use crate::{
 use anyhow::{Result, bail};
 use base64::{Engine, engine::general_purpose::STANDARD};
 use serde::{Deserialize, Serialize};
-use std::{collections::HashMap, time::Duration};
+use std::time::Duration;
 
 use super::links::{discover_relay_ca, invitation_link, parse_link};
-use super::peers::peer_state;
 use super::transport::{authenticate, receive};
-use super::{archive_legacy, authority, cache, current, devices, observe, synchronize};
+use super::{archive_legacy, authority, cache, current, observe, synchronize};
 
 #[derive(Serialize, Deserialize)]
 struct PairResponse {
@@ -62,29 +61,27 @@ pub(crate) async fn revoke(id: &Identity, selector: &str) -> Result<serde_json::
     let roster = manager.revoke(selector)?;
     let target = roster.member(selector)?.device_id.clone();
     observe(id, &roster)?;
-    // The revoked endpoint must learn its own revocation to close existing
-    // sessions. Exchange delivers the signed record before rejecting its ID.
-    // Offline targets cannot be confirmed; peers also enforce the update.
-    let _ = peer_state(id, &target, &roster).await;
-    let mut delivered = HashMap::new();
-    let mut sync_error = None;
-    match devices(id).await {
-        Ok((_, acks)) => {
-            for a in acks {
-                delivered.insert(a.device_id, a.version);
-            }
-        }
-        Err(error) => sync_error = Some(error.to_string()),
-    }
-    let undelivered: Vec<_> = roster
-        .roster
-        .members
-        .iter()
-        .filter(|m| {
-            !m.revoked && m.device_id != id.device_id && !delivered.contains_key(&m.device_id)
-        })
-        .map(|m| m.device_id.clone())
-        .collect();
+    // Publishing is durable at the relay before success is reported. Offline
+    // members stay pending, and relay controls retry delivery after reconnect.
+    let (undelivered, sync_error) = match super::peers::relay_state(id, &roster).await {
+        Ok((_, pending)) => (
+            pending
+                .into_iter()
+                .filter(|device| device != &id.device_id)
+                .collect::<Vec<_>>(),
+            None,
+        ),
+        Err(error) => (
+            roster
+                .roster
+                .members
+                .iter()
+                .filter(|m| !m.revoked && m.device_id != id.device_id)
+                .map(|m| m.device_id.clone())
+                .collect(),
+            Some(error.to_string()),
+        ),
+    };
     Ok(serde_json::json!({
         "device_id": target,
         "revoked": true,
@@ -253,6 +250,13 @@ pub(super) async fn join_with_key(
                 archive_legacy(&dir)?;
             }
             cache()?.observe(&invite.network, &pair.roster)?;
+            cache()?.observe_authority(
+                &invite.network,
+                &crate::membership::AuthorityState {
+                    roster: pair.roster.clone(),
+                    lease: pair.lease.clone(),
+                },
+            )?;
             id.save()?;
             net::remember(&id, address);
             if id.registration.allow_inviter {
@@ -358,6 +362,13 @@ pub(crate) async fn renew(id: &mut Identity) -> Result<()> {
             bail!(ErrorCode::IdentityMismatch.error("renewal changed the device ID"))
         }
         observe(id, &pair.roster)?;
+        super::observe_authority(
+            id,
+            &crate::membership::AuthorityState {
+                roster: pair.roster.clone(),
+                lease: pair.lease.clone(),
+            },
+        )?;
         id.cert_pem = pair.cert_pem;
         id.save()?;
         Ok::<_, anyhow::Error>(())

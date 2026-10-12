@@ -21,6 +21,7 @@ pub(super) async fn status_route(
                             &mut ws,
                             &RelayMessage::Challenge {
                                 nonce: crypto::random_token(),
+                                authority: app.admission.authority(),
                             },
                         )
                         .await?;
@@ -34,7 +35,7 @@ pub(super) async fn status_route(
                         return Ok(());
                     }
                     let path = format!("/networks/{network}/status");
-                    member(&mut ws, &network, &path, &permit).await?;
+                    let (_, manager) = member(&app, &mut ws, &network, &path, &permit).await?;
                     let devices = app
                         .connections
                         .lock()
@@ -44,7 +45,19 @@ pub(super) async fn status_route(
                         .filter(|(n, _)| n == &network)
                         .map(|(_, id)| id.clone())
                         .collect();
-                    send(&mut ws, &RelayMessage::Status { devices }).await
+                    let pending_authority = if manager {
+                        app.admission.pending()?
+                    } else {
+                        Vec::new()
+                    };
+                    send(
+                        &mut ws,
+                        &RelayMessage::Status {
+                            devices,
+                            pending_authority,
+                        },
+                    )
+                    .await
                 }
                 .await;
                 finish(&mut ws, result).await;
@@ -81,7 +94,7 @@ async fn control(
     // Only the holder of a device key can take over that device's routing slot.
     // Authorization still happens inside the end-to-end tunnel.
     let path = format!("/networks/{network}/control");
-    let (id, manager) = member(ws, network, &path, permit).await?;
+    let (id, manager) = member(app, ws, network, &path, permit).await?;
     // An existing manager can establish the same binding when upgrading a relay.
     if app.admission.owner().is_none() && manager {
         app.admission.claim(network, &id, manager)?;
@@ -108,6 +121,13 @@ async fn control(
         if let Some(old) = connections.controls.insert(
             key.clone(),
             ControlConnection {
+                authority_generation: app
+                    .admission
+                    .authority()
+                    .expect("authenticated authority")
+                    .roster
+                    .roster
+                    .authority_generation,
                 protocol,
                 generation: generation.clone(),
                 manager,
@@ -126,11 +146,18 @@ async fn control(
     let result = async {
         send(ws, &RelayMessage::HelloAck { generation: generation.clone() }).await?;
         let mut tick = tokio::time::interval(HEARTBEAT_INTERVAL);
+        let mut delivery = tokio::time::interval(std::time::Duration::from_secs(5));
+        delivery.tick().await;
         let mut last = Instant::now();
         loop {
             tokio::select! {
                 _ = closed.changed() => return Ok(()),
                 _ = tick.tick() => control_heartbeat(ws, last).await?,
+                _ = delivery.tick() => {
+                    if app.admission.pending()?.contains(&id) && let Some(state) = app.admission.authority() {
+                        send(ws, &RelayMessage::Authority {state}).await?;
+                    }
+                },
                 message = rx.recv() => send(ws, &message.context(ErrorCode::ConnectionClosed.error("control sender stopped"))?).await?,
                 message = ws.next() => control_message(app, ws, message, network, &id, &generation, &mut last).await?,
             }
@@ -176,6 +203,45 @@ async fn control_message(
         Message::Text(text) => {
             *last = Instant::now();
             let message = serde_json::from_str::<RelayMessage>(&text)?;
+            if let RelayMessage::Authority { state } = &message {
+                let control = app
+                    .connections
+                    .lock()
+                    .await
+                    .controls
+                    .get(&(network.into(), device.into()))
+                    .map(|control| (control.manager, control.generation.clone()));
+                if control != Some((true, generation.into()))
+                    || state.roster.roster.manager_id != device
+                {
+                    bail!(
+                        ErrorCode::NotManager
+                            .error("only the current manager control can publish authority")
+                    );
+                }
+                app.admission.publish(state)?;
+                super::publish_connections(app, state).await;
+                send(
+                    ws,
+                    &RelayMessage::AuthorityAck {
+                        authority_generation: state.roster.roster.authority_generation,
+                        version: state.roster.roster.version,
+                        hash: state.roster.hash()?,
+                    },
+                )
+                .await?;
+                return Ok(());
+            }
+            if let RelayMessage::AuthorityAck {
+                authority_generation,
+                version,
+                hash,
+            } = &message
+            {
+                app.admission
+                    .acknowledge(device, *authority_generation, *version, hash)?;
+                return Ok(());
+            }
             if pairing::control(app, ws, network, device, generation, &message).await? {
                 return Ok(());
             }

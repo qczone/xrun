@@ -13,6 +13,7 @@ test("restored roles require their own complete fields and reject malformed budg
     target: `dev_${"a".repeat(32)}`,
     generation: "b".repeat(32),
     sid: "c".repeat(32),
+    authorityGeneration: 1,
   };
   const live: SourceState = {
     ...common,

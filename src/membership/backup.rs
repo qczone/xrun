@@ -21,7 +21,7 @@ use std::{
 };
 use zeroize::{Zeroize, Zeroizing};
 
-const MAGIC: &[u8] = b"XRUNAUTH\x01";
+const MAGIC: &[u8] = b"XRUNAUTH\x02";
 const HEADER: usize = MAGIC.len() + 16 + 12;
 const MAX_ARCHIVE: usize = 32 * 1024 * 1024;
 const MAX_DATABASE: usize = 16 * 1024 * 1024;
@@ -61,6 +61,7 @@ struct Contents {
     root_key: Zeroizing<String>,
     manager_database: String,
     roster: SignedRoster,
+    base_roster: SignedRoster,
     transfer_to: Option<String>,
 }
 impl Drop for Contents {
@@ -255,6 +256,7 @@ pub(crate) fn export_at(
                 .error("choose another trusted member for management migration")
         );
     }
+    let base_roster = snapshot.roster()?;
     let roster = match &transfer_to {
         Some(target) => snapshot.advance_authority(target)?,
         None => snapshot.roster()?,
@@ -265,13 +267,14 @@ pub(crate) fn export_at(
     snapshot.snapshot(&final_copy.path().join("manager"))?;
     let database = read_bounded(&final_copy.path().join("manager/manager.db"), MAX_DATABASE)?;
     let contents = Contents {
-        schema: 1,
+        schema: 2,
         identity,
         config: DaemonConfig::load_at(dir)?,
         root_pem: snapshot.ca_pem.clone(),
         root_key: snapshot.key_pem.clone(),
         manager_database: STANDARD.encode(database.as_slice()),
         roster: roster.clone(),
+        base_roster,
         transfer_to: transfer_to.clone(),
     };
     let bytes = encrypt(&contents, password)?;
@@ -296,7 +299,7 @@ pub(crate) fn export_at(
     Ok(BackupInfo::new(&roster, transfer_to))
 }
 fn validate(contents: &Contents, directory: &Path) -> Result<Manager> {
-    if contents.schema != 1 {
+    if contents.schema != 2 {
         bail!(ErrorCode::InvalidConfig.error("unsupported authority archive schema"));
     }
     contents.config.validate()?;
@@ -386,7 +389,19 @@ fn validate(contents: &Contents, directory: &Path) -> Result<Manager> {
     }
     Ok(manager)
 }
+pub(crate) struct PreparedImport {
+    manager: Manager,
+    contents: Contents,
+    // Close SQLite and zeroize secrets before deleting the stage, especially on Windows.
+    _validation: tempfile::TempDir,
+    _lock: std::fs::File,
+    dir: PathBuf,
+}
+#[cfg(test)]
 pub(crate) fn import_at(dir: &Path, path: &Path, password: &[u8]) -> Result<BackupInfo> {
+    prepare_import(dir, path, password)?.finish(None)
+}
+pub(crate) fn prepare_import(dir: &Path, path: &Path, password: &[u8]) -> Result<PreparedImport> {
     let bytes = read_bounded(path, MAX_ARCHIVE)?;
     std::fs::create_dir_all(dir)?;
     config::restrict_dir(dir)?;
@@ -419,99 +434,137 @@ pub(crate) fn import_at(dir: &Path, path: &Path, password: &[u8]) -> Result<Back
     let validation = tempfile::tempdir()?;
     config::restrict_dir(validation.path())?;
     let manager = validate(&contents, validation.path())?;
-    let active = config::network_dir_at(dir)?;
-    let previous = if active.join("identity.toml").exists() {
-        Some(config::read::<Identity>(&active.join("identity.toml"))?)
-    } else {
-        None
-    };
-    let mut identity = match (&contents.transfer_to, &previous) {
-        (Some(target), Some(identity)) if &identity.device_id == target => identity.clone(),
-        (Some(_), _) => bail!(
-            ErrorCode::IdentityMismatch
-                .error("import this migration on its selected member device")
-        ),
-        (None, _) => contents.identity.clone(),
-    };
-    if let Some(previous) = &previous {
-        if previous.network.as_ref().map(|network| &network.network_id)
-            != Some(&contents.roster.roster.network_id)
+    contents.base_roster.check_successor(&contents.roster)?;
+    Ok(PreparedImport {
+        _lock: lock,
+        _validation: validation,
+        manager,
+        contents,
+        dir: dir.into(),
+    })
+}
+impl PreparedImport {
+    pub(crate) fn base_roster(&self) -> &SignedRoster {
+        &self.contents.base_roster
+    }
+    pub(crate) fn finish(self, latest: Option<SignedRoster>) -> Result<BackupInfo> {
+        let Self {
+            _lock,
+            _validation,
+            manager,
+            contents,
+            dir,
+        } = self;
+        let dir = dir.as_path();
+        if let Some(latest) = latest {
+            contents.base_roster.check_successor(&latest)?;
+            // The handover snapshot is unpublished; rebase it on the relay's
+            // verified current state before advancing the restored generation.
+            let mut db = manager.db.lock().unwrap();
+            let tx = db.transaction_with_behavior(TransactionBehavior::Immediate)?;
+            save_state(&tx, &latest)?;
+            tx.commit()?;
+        }
+        let active = config::network_dir_at(dir)?;
+        let previous = if active.join("identity.toml").exists() {
+            Some(config::read::<Identity>(&active.join("identity.toml"))?)
+        } else {
+            None
+        };
+        let mut identity = match (&contents.transfer_to, &previous) {
+            (Some(target), Some(identity)) if &identity.device_id == target => identity.clone(),
+            (Some(_), _) => bail!(
+                ErrorCode::IdentityMismatch
+                    .error("import this migration on its selected member device")
+            ),
+            (None, _) => contents.identity.clone(),
+        };
+        if let Some(previous) = &previous {
+            if previous.network.as_ref().map(|network| &network.network_id)
+                != Some(&contents.roster.roster.network_id)
+            {
+                bail!(
+                    ErrorCode::NetworkMismatch
+                        .error("refusing to replace another network's identity")
+                );
+            }
+            let cache = RosterCache::open(&active.join("roster.db"))?;
+            let current = cache.load(&contents.roster.roster.network_id)?;
+            let snapshot = manager.roster()?;
+            if current.roster.version > snapshot.roster.version
+                || current.roster.authority_generation > snapshot.roster.authority_generation
+            {
+                manager.adopt_roster(&current)?;
+            }
+        }
+        let current = manager.roster()?;
+        let member = current.member(&identity.device_id)?;
+        if member.revoked
+            || member.key_fp != crypto::csr_key(&crypto::renew_device_request(&identity.key_pem)?)?
         {
             bail!(
-                ErrorCode::NetworkMismatch.error("refusing to replace another network's identity")
+                ErrorCode::IdentityMismatch
+                    .error("restoring device key differs from the current signed roster")
             );
         }
-        let cache = RosterCache::open(&active.join("roster.db"))?;
-        let current = cache.load(&contents.roster.roster.network_id)?;
-        let snapshot = manager.roster()?;
-        if current.roster.version > snapshot.roster.version
-            || current.roster.authority_generation > snapshot.roster.authority_generation
-        {
-            manager.adopt_roster(&current)?;
-        }
-    }
-    let current = manager.roster()?;
-    let member = current.member(&identity.device_id)?;
-    if member.revoked
-        || member.key_fp != crypto::csr_key(&crypto::renew_device_request(&identity.key_pem)?)?
-    {
-        bail!(
-            ErrorCode::IdentityMismatch
-                .error("restoring device key differs from the current signed roster")
+        let roster = manager.advance_authority(&identity.device_id)?;
+        identity.cert_pem = manager
+            .pair(
+                "",
+                &identity.name,
+                &crypto::renew_device_request(&identity.key_pem)?,
+            )?
+            .cert_pem;
+        identity
+            .network
+            .as_mut()
+            .context("missing network")?
+            .manager_id = identity.device_id.clone();
+        identity.addresses = roster.roster.relay_addresses.clone();
+        crypto::verify_member_certificate(
+            &identity.cert_pem,
+            &identity.ca_pem,
+            &identity.device_id,
+        )?;
+        std::fs::create_dir_all(dir)?;
+        config::restrict_dir(dir)?;
+        let versions = dir.join("network-versions");
+        std::fs::create_dir_all(&versions)?;
+        config::restrict_dir(&versions)?;
+        let stage = initialize_stage(&versions)?;
+        manager.snapshot(&stage.path().join("manager"))?;
+        let cache = RosterCache::open(&stage.path().join("roster.db"))?;
+        cache.observe(&roster.roster.network_id, &roster)?;
+        drop(cache);
+        let mut policy = contents.config.clone();
+        policy.allow_all = false;
+        policy.allow_from.clear();
+        policy.pause_generation = policy
+            .pause_generation
+            .checked_add(1)
+            .context(ErrorCode::InvalidConfig.error("pause generation exhausted"))?;
+        config::write(&stage.path().join("identity.toml"), &identity)?;
+        config::write(&stage.path().join("daemon.toml"), &policy)?;
+        let generation = uuid::Uuid::new_v4().simple().to_string();
+        let ready = versions.join(&generation);
+        std::fs::rename(stage.path(), &ready)?;
+        config::sync_parent(&ready)?;
+        // One small atomic pointer publishes identity, keys, config and roster together.
+        let result = config::atomic_private_write(
+            &dir.join("network-state.json"),
+            &serde_json::to_vec(&NetworkActivation { generation })?,
         );
+        if let Err(error) = result {
+            // persist may have succeeded before parent fsync failed. Keep the fully
+            // validated generation so a published pointer can never become dangling.
+            bail!(ErrorCode::Unconfirmed.error(format!(
+                "restoration activation is unconfirmed; validated state retained: {error}"
+            )));
+        }
+        Ok(BackupInfo::new(&roster, contents.transfer_to.clone()))
     }
-    let roster = manager.advance_authority(&identity.device_id)?;
-    identity.cert_pem = manager
-        .pair(
-            "",
-            &identity.name,
-            &crypto::renew_device_request(&identity.key_pem)?,
-        )?
-        .cert_pem;
-    identity
-        .network
-        .as_mut()
-        .context("missing network")?
-        .manager_id = identity.device_id.clone();
-    identity.addresses = roster.roster.relay_addresses.clone();
-    crypto::verify_member_certificate(&identity.cert_pem, &identity.ca_pem, &identity.device_id)?;
-    std::fs::create_dir_all(dir)?;
-    config::restrict_dir(dir)?;
-    let versions = dir.join("network-versions");
-    std::fs::create_dir_all(&versions)?;
-    config::restrict_dir(&versions)?;
-    let stage = initialize_stage(&versions)?;
-    manager.snapshot(&stage.path().join("manager"))?;
-    let cache = RosterCache::open(&stage.path().join("roster.db"))?;
-    cache.observe(&roster.roster.network_id, &roster)?;
-    drop(cache);
-    let mut policy = contents.config.clone();
-    policy.allow_all = false;
-    policy.allow_from.clear();
-    policy.pause_generation = policy
-        .pause_generation
-        .checked_add(1)
-        .context(ErrorCode::InvalidConfig.error("pause generation exhausted"))?;
-    config::write(&stage.path().join("identity.toml"), &identity)?;
-    config::write(&stage.path().join("daemon.toml"), &policy)?;
-    let generation = uuid::Uuid::new_v4().simple().to_string();
-    let ready = versions.join(&generation);
-    std::fs::rename(stage.path(), &ready)?;
-    config::sync_parent(&ready)?;
-    // One small atomic pointer publishes identity, keys, config and roster together.
-    let result = config::atomic_private_write(
-        &dir.join("network-state.json"),
-        &serde_json::to_vec(&NetworkActivation { generation })?,
-    );
-    if let Err(error) = result {
-        // persist may have succeeded before parent fsync failed. Keep the fully
-        // validated generation so a published pointer can never become dangling.
-        bail!(ErrorCode::Unconfirmed.error(format!(
-            "restoration activation is unconfirmed; validated state retained: {error}"
-        )));
-    }
-    Ok(BackupInfo::new(&roster, contents.transfer_to.clone()))
 }
+
 impl SignedRoster {
     fn require_manager_identity(&self, identity: &Identity) -> Result<()> {
         if self.roster.manager_id != identity.device_id {
@@ -552,6 +605,16 @@ pub(crate) fn holds_authority(dir: &Path) -> Result<bool> {
         .iter()
         .any(|directory| directory.join("manager/root.key").exists()))
 }
+pub(crate) fn authority_obsolete(dir: &Path, verified: &SignedRoster) -> Result<bool> {
+    let path = config::network_dir_at(dir)?.join("manager/manager.db");
+    if !path.exists() {
+        return Ok(false);
+    }
+    let db = Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_ONLY)?;
+    let local = state(&db)?;
+    local.check_successor(verified)?;
+    Ok(local.roster.authority_generation < verified.roster.authority_generation)
+}
 pub(crate) fn retire_at(dir: &Path, roster: &SignedRoster, identity: &Identity) -> Result<()> {
     roster.verify(&roster.roster.network_id)?;
     if identity.network.as_ref().map(|network| &network.network_id)
@@ -562,7 +625,7 @@ pub(crate) fn retire_at(dir: &Path, roster: &SignedRoster, identity: &Identity) 
                 .error("cannot retire authority using another network's roster")
         );
     }
-    if roster.roster.manager_id == identity.device_id {
+    if roster.roster.manager_id == identity.device_id && !authority_obsolete(dir, roster)? {
         bail!(
             ErrorCode::ManagerProtected
                 .error("the current manager cannot retire its own authority")

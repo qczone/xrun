@@ -44,6 +44,17 @@ async fn save_settings<R: tauri::Runtime>(
 }
 
 #[tauri::command]
+async fn save_membership_lease<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    state: State<'_, Desktop>,
+    minutes: u16,
+) -> Result<(), CommandError> {
+    let _guard = state.action.lock().await;
+    let result = xrun::client::save_membership_lease(minutes).await;
+    record(&app, result)
+}
+
+#[tauri::command]
 async fn choose_directory<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
 ) -> Result<Option<String>, CommandError> {
@@ -433,6 +444,7 @@ pub(super) fn register<R: tauri::Runtime>(builder: tauri::Builder<R>) -> tauri::
             activity_attachment,
             save_activity_attachment,
             save_attachment_retention,
+            save_membership_lease,
             invite,
             cancel_invitation,
             copy_invitation_command,

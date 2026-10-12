@@ -47,7 +47,31 @@ pub mod net {
 }
 /// Pair isolated peers and exchange signed updates without weakening protocol tests.
 pub mod network {
-    pub use crate::network::{PeerState, authenticate, invite, manager, observe};
+    pub use crate::network::{PeerState, invite, manager, observe};
+    /// Verify relay membership state without touching the test runner's real profile.
+    pub async fn authenticate(
+        ws: &mut crate::net::Ws,
+        id: Option<&crate::config::Identity>,
+        network: &str,
+        path: &str,
+        manager: Option<&crate::membership::Manager>,
+    ) -> anyhow::Result<()> {
+        let state = crate::network::authenticate_read_only(ws, id, network, path, manager).await?;
+        if path.ends_with("/control")
+            && let Some(state) = state
+        {
+            crate::net::send(
+                ws,
+                &crate::protocol::RelayMessage::AuthorityAck {
+                    authority_generation: state.roster.roster.authority_generation,
+                    version: state.roster.roster.version,
+                    hash: state.roster.hash()?,
+                },
+            )
+            .await?;
+        }
+        Ok(())
+    }
 }
 /// Verify process group cleanup using an actual child fixture.
 pub mod process {

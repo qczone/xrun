@@ -253,7 +253,7 @@ pub(super) async fn traffic_route(
             .on_upgrade(move |mut ws| async move {
                 let result = async {
                     let path = format!("/networks/{network}/traffic");
-                    let (device, manager) = member(&mut ws, &network, &path, &permit).await?;
+                    let (device, manager) = member(&app, &mut ws, &network, &path, &permit).await?;
                     let manager = app.admission.manager(&device, manager)?;
                     send(&mut ws, &RelayMessage::TrafficReady).await?;
                     let RelayMessage::TrafficQuery { query } =

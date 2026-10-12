@@ -16,10 +16,12 @@ pub use pairing::{invite, manager};
 pub(crate) use pairing::{join, renew, revoke, serve_pair};
 pub use peers::PeerState;
 pub(crate) use peers::{
-    cached_device_list, connected_devices, device, device_list, devices, local_device, refresh_one,
+    cached_device_list, connected_devices, device, device_list, local_device, refresh_one,
     synchronize,
 };
-pub use transport::authenticate;
+pub(crate) use transport::authenticate;
+pub(crate) use transport::authenticate_read_only;
+pub(crate) use transport::latest_authority;
 pub(crate) use transport::{attach, control, receive, session, session_with_expiry};
 
 use crate::error::ErrorCode;
@@ -82,6 +84,17 @@ pub fn observe(id: &Identity, value: &SignedRoster) -> Result<()> {
         Ok(()) => Ok(()),
         Err(e) if crate::error::is(&e, ErrorCode::RosterRollback) => Ok(()),
         Err(e) => Err(e),
+    }
+}
+pub(crate) fn observe_authority(
+    id: &Identity,
+    value: &crate::membership::AuthorityState,
+) -> Result<()> {
+    let network = authority(id)?;
+    match cache()?.observe_authority(&network.network_id, value) {
+        Ok(()) => Ok(()),
+        Err(error) if crate::error::is(&error, ErrorCode::RosterRollback) => Ok(()),
+        Err(error) => Err(error),
     }
 }
 fn archive_legacy(dir: &std::path::Path) -> Result<()> {

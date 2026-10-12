@@ -39,9 +39,21 @@ async fn control_once(
     if current.device_id != rt.id.device_id || current.network != rt.id.network {
         bail!(ErrorCode::IdentityChanged.error("restart daemon after replacing its identity"));
     }
-    // Membership authority and synchronization belong to endpoints.
-    if network::current(&current)?.roster.manager_id == current.device_id {
+    let verified = network::current(&current)?;
+    let obsolete =
+        crate::membership::backup::authority_obsolete(&crate::config::device_dir()?, &verified)?;
+    if obsolete && crate::membership::backup::holds_authority(&crate::config::device_dir()?)? {
+        crate::client::network::retire_authority().await?;
+        if verified.roster.manager_id == current.device_id {
+            bail!(ErrorCode::IdentityChanged.error(
+                "management was restored on another installation; this obsolete service has stopped"
+            ));
+        }
+    }
+    if verified.roster.manager_id == current.device_id {
         network::observe(&current, &network::manager(&current)?.roster()?)?;
+    } else if crate::membership::backup::holds_authority(&crate::config::device_dir()?)? {
+        crate::client::network::retire_authority().await?;
     }
     // Catch up once per connection from the manager, or from one random peer
     // while it is offline, so a relay restart does not make every device
@@ -52,6 +64,29 @@ async fn control_once(
     let RelayMessage::HelloAck { generation } = network::receive(&mut ws).await? else {
         bail!(ErrorCode::InvalidMessage.error("expected control acknowledgement"))
     };
+    let observed = network::current(&current)?;
+    if (observed.roster.manager_id != current.device_id
+        || crate::membership::backup::authority_obsolete(&crate::config::device_dir()?, &observed)?)
+        && crate::membership::backup::holds_authority(&crate::config::device_dir()?)?
+    {
+        crate::client::network::retire_authority().await?;
+        if observed.roster.manager_id == current.device_id {
+            bail!(ErrorCode::IdentityChanged.error(
+                "management was restored on another installation; this obsolete service has stopped"
+            ));
+        }
+    }
+    if let Some(state) = rt.members.authority(&rt.network_id)? {
+        net::send(
+            &mut ws,
+            &RelayMessage::AuthorityAck {
+                authority_generation: state.roster.roster.authority_generation,
+                version: state.roster.roster.version,
+                hash: state.roster.hash()?,
+            },
+        )
+        .await?;
+    }
     let protocol = ws
         .get_ref()
         .relay
@@ -65,10 +100,16 @@ async fn control_once(
         net::send(&mut ws, &registration).await?;
     }
     rt.control.connected(true)?;
+    publish_authority(&rt, &mut ws).await?;
     let mut ping = tokio::time::interval(HEARTBEAT_INTERVAL);
     let mut prune = tokio::time::interval(LOG_PRUNE_INTERVAL);
     prune.tick().await; // Startup already pruned the store.
     let mut changes = rt.access.subscribe();
+    let lease_minutes = rt.config()?.membership_lease_minutes;
+    let mut leases = tokio::time::interval(std::time::Duration::from_secs(
+        u64::from(lease_minutes) * 20,
+    ));
+    leases.tick().await;
     let mut last = tokio::time::Instant::now();
     loop {
         tokio::select! {
@@ -76,12 +117,27 @@ async fn control_once(
                 ProtocolRange::require(protocol)?;
                 net::send(&mut ws, &command.message).await?;
             },
-            _ = changes.changed() => check_control_access(&rt, &address)?,
+            _ = changes.changed() => {
+                check_control_access(&rt, &address)?;
+                publish_authority(&rt, &mut ws).await?;
+                leases.reset_after(Duration::from_secs(u64::from(rt.config()?.membership_lease_minutes) * 20));
+            },
+            _ = leases.tick() => publish_authority(&rt, &mut ws).await?,
             _ = ping.tick() => { rt.control.invitations.prune(); heartbeat(&mut ws, last).await?; },
             _ = prune.tick() => prune_logs(rt.clone()).await?,
             message = ws.next() => handle_control_message(&rt, &mut ws, message, &address, &generation, &mut last).await?,
         }
     }
+}
+async fn publish_authority(rt: &Runtime, ws: &mut net::Ws) -> Result<()> {
+    let id = Identity::load()?;
+    if network::current(&id)?.roster.manager_id == id.device_id {
+        let state = network::manager(&id)?
+            .authority_state(i64::from(rt.config()?.membership_lease_minutes) * 60_000)?;
+        rt.members.observe_authority(&rt.network_id, &state)?;
+        net::send(ws, &RelayMessage::Authority { state }).await?;
+    }
+    Ok(())
 }
 const LOG_PRUNE_INTERVAL: Duration = Duration::from_secs(10 * 60);
 fn check_control_access(rt: &Runtime, address: &str) -> Result<()> {
@@ -129,6 +185,36 @@ async fn handle_control_message(
         Message::Text(text) => {
             *last = tokio::time::Instant::now();
             match serde_json::from_str::<RelayMessage>(&text)? {
+                RelayMessage::Authority { state } => {
+                    network::observe_authority(&rt.id, &state)?;
+                    net::send(
+                        ws,
+                        &RelayMessage::AuthorityAck {
+                            authority_generation: state.roster.roster.authority_generation,
+                            version: state.roster.roster.version,
+                            hash: state.roster.hash()?,
+                        },
+                    )
+                    .await?;
+                }
+                RelayMessage::AuthorityAck {
+                    authority_generation,
+                    version,
+                    hash,
+                } => {
+                    let state = rt.members.load(&rt.network_id)?;
+                    if authority_generation > state.roster.authority_generation
+                        || version > state.roster.version
+                        || (authority_generation == state.roster.authority_generation
+                            && version == state.roster.version
+                            && hash != state.hash()?)
+                    {
+                        bail!(
+                            ErrorCode::InvalidAck
+                                .error("relay acknowledged another membership state")
+                        );
+                    }
+                }
                 RelayMessage::PairingRegistered {
                     invitation_id,
                     error,

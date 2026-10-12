@@ -50,6 +50,10 @@ pub struct Proof {
     pub signature: String,
     /// Root-key signature for manager control registration and network traffic queries.
     pub manager_signature: Option<String>,
+    /// Monotonic authority generation bound to the challenge signature.
+    pub authority_generation: u64,
+    /// Verified root-signed state, optionally relayed by any member.
+    pub authority: Option<super::AuthorityState>,
 }
 #[derive(Debug, Serialize)]
 /// Fields signed together to bind a proof to its device, network, route and nonce.
@@ -62,6 +66,8 @@ pub struct ChallengeBinding<'a> {
     pub path: &'a str,
     /// Fresh random relay challenge; proofs cannot be replayed with another nonce.
     pub nonce: &'a str,
+    /// Management generation; an old restored copy cannot replace the current route.
+    pub authority_generation: u64,
 }
 impl Proof {
     pub(crate) fn create(
@@ -71,11 +77,39 @@ impl Proof {
         nonce: &str,
         manager: Option<&Manager>,
     ) -> Result<Self> {
+        Self::create_with_generation(id, network, path, nonce, manager, 1)
+    }
+    pub(crate) fn create_with_generation(
+        id: &Identity,
+        network: &str,
+        path: &str,
+        nonce: &str,
+        manager: Option<&Manager>,
+        generation: u64,
+    ) -> Result<Self> {
+        let authority = manager
+            .map(|manager| manager.authority_state(crate::membership::DEFAULT_LEASE_MS))
+            .transpose()?;
+        Self::create_with_authority(id, network, path, nonce, manager, generation, authority)
+    }
+    pub(crate) fn create_with_authority(
+        id: &Identity,
+        network: &str,
+        path: &str,
+        nonce: &str,
+        manager: Option<&Manager>,
+        generation: u64,
+        authority: Option<super::AuthorityState>,
+    ) -> Result<Self> {
+        let authority_generation = authority
+            .as_ref()
+            .map_or(generation, |state| state.roster.roster.authority_generation);
         let binding = ChallengeBinding {
             network,
             device: &id.device_id,
             path,
             nonce,
+            authority_generation,
         };
         Ok(Self {
             device_id: id.device_id.clone(),
@@ -83,13 +117,16 @@ impl Proof {
             root_pem: id.ca_pem.clone(),
             signature: membership::sign(&id.key_pem, "relay-proof", &binding)?,
             manager_signature: manager.map(|m| m.sign_relay(&binding)).transpose()?,
+            authority_generation,
+            authority,
         })
     }
-    /// The network ID is the root key fingerprint, so the relay verifies
-    /// members without storing a roster. Revocation remains an endpoint check;
-    /// a revoked device can only appear as itself until its certificate expires.
+    /// Verify challenge possession before the relay's persisted membership gate.
     /// Returns whether the proof also holds the network root key.
     pub fn verify(&self, network: &str, path: &str, nonce: &str) -> Result<bool> {
+        if self.authority_generation == 0 {
+            bail!(ErrorCode::Unauthenticated.error("invalid authority generation"));
+        }
         if network != format!("net_{}", crypto::ca_spki_pin(&self.root_pem)?) {
             bail!(ErrorCode::Unauthenticated.error("proof belongs to another network"))
         }
@@ -104,16 +141,40 @@ impl Proof {
             device: &self.device_id,
             path,
             nonce,
+            authority_generation: self.authority_generation,
         };
         membership::verify(&self.cert_pem, "relay-proof", &binding, &self.signature).map_err(
             |_| anyhow::anyhow!(ErrorCode::Unauthenticated.error("invalid member proof")),
         )?;
+        if let Some(state) = &self.authority {
+            state.verify(network)?;
+            state.require_fresh(super::now_ms())?;
+            if state.roster.roster.authority_generation != self.authority_generation
+                || crypto::cert_der(&state.roster.ca_pem)? != crypto::cert_der(&self.root_pem)?
+            {
+                bail!(ErrorCode::Unauthenticated.error("proof and authority state differ"));
+            }
+            state
+                .roster
+                .peer(&crypto::cert_der(&self.cert_pem)?, Some(&self.device_id))?;
+        }
         let Some(signature) = &self.manager_signature else {
             return Ok(false);
         };
         membership::verify(&self.root_pem, "relay-manager", &binding, signature).map_err(|_| {
             anyhow::anyhow!(ErrorCode::Unauthenticated.error("invalid manager proof"))
         })?;
+        let state = self.authority.as_ref().ok_or_else(|| {
+            ErrorCode::Unauthenticated.error("manager proof must publish signed authority")
+        })?;
+        state.verify(network)?;
+        state.require_fresh(super::now_ms())?;
+        if state.roster.roster.manager_id != self.device_id
+            || state.roster.roster.authority_generation != self.authority_generation
+            || crypto::cert_der(&state.roster.ca_pem)? != crypto::cert_der(&self.root_pem)?
+        {
+            bail!(ErrorCode::Unauthenticated.error("manager proof and authority state differ"));
+        }
         Ok(true)
     }
 }
@@ -132,6 +193,22 @@ pub enum RelayMessage {
     Challenge {
         /// Fresh random relay challenge; proofs cannot be replayed with another nonce.
         nonce: String,
+        /// Latest signed revocation and freshness state, verified against the endpoint's root pin.
+        authority: Option<super::AuthorityState>,
+    },
+    /// Durable signed membership publication or delivery to an existing control connection.
+    Authority {
+        /// Complete signed state. The relay cannot extend its freshness itself.
+        state: super::AuthorityState,
+    },
+    /// Correlated acknowledgement of durably stored authority state.
+    AuthorityAck {
+        /// Authority generation stored by this recipient.
+        authority_generation: u64,
+        /// Member-list version stored by this recipient.
+        version: u64,
+        /// Canonical signed content hash, independent of signature randomness.
+        hash: String,
     },
     /// None only for pairing, which the relay routes to the manager alone.
     Authenticate {
@@ -205,6 +282,8 @@ pub enum RelayMessage {
     Status {
         /// Device IDs with live relay control bindings.
         devices: Vec<String>,
+        /// Active members awaiting durable confirmation of the latest signed state.
+        pending_authority: Vec<String>,
     },
     /// Query observed ciphertext usage after authenticating the traffic connection.
     TrafficQuery {

@@ -343,7 +343,7 @@ async fn device_operations_connect_directly_while_info_still_queries_live_state(
         ));
         let peer = async {
             for state_query in [false, true] {
-                let RelayMessage::Incoming { session_id } = net::receive(&mut control).await?
+                let RelayMessage::Incoming { session_id } = control_message(&mut control).await?
                 else {
                     anyhow::bail!("incoming session")
                 };
@@ -439,7 +439,7 @@ async fn device_operations_connect_directly_while_info_still_queries_live_state(
         assert!(
             tokio::time::timeout(
                 Duration::from_millis(100),
-                net::receive::<RelayMessage>(&mut observer_control)
+                control_message(&mut observer_control)
             )
             .await
             .is_err(),
@@ -451,7 +451,7 @@ async fn device_operations_connect_directly_while_info_still_queries_live_state(
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn status_filters_known_revocations_without_claiming_roster_synchronization() -> Result<()> {
+async fn relay_rejects_revocations_and_status_synchronizes_signed_membership() -> Result<()> {
     use xrun::testing::{net, protocol::RelayMessage};
     tokio::time::timeout(Duration::from_secs(25), async {
         let mut lab = Lab::new().await?;
@@ -481,8 +481,7 @@ async fn status_filters_known_revocations_without_claiming_roster_synchronizatio
                 .iter()
                 .any(|d| d == &old.member("observer1").unwrap().device_id)
         );
-        // The relay has no revocation list. A certificate can still bind its own
-        // route, but a client with the signed revocation must not display it online.
+        // The relay persists signed revocation and refuses even a still-valid certificate.
         let roster = RosterCache::open(&lab.target.join(".xrun/roster.db"))?.load(network)?;
         let mut control = relay_socket(
             Some(&lab.target_identity),
@@ -492,7 +491,7 @@ async fn status_filters_known_revocations_without_claiming_roster_synchronizatio
         .await?;
         assert!(matches!(
             net::receive(&mut control).await?,
-            RelayMessage::HelloAck { .. }
+            RelayMessage::Error { code, .. } if code == "DEVICE_REVOKED"
         ));
         let target = |status: serde_json::Value| {
             status["devices"]
@@ -507,9 +506,9 @@ async fn status_filters_known_revocations_without_claiming_roster_synchronizatio
         assert_eq!(known["revoked"], true);
         assert_eq!(known["online"], false);
         let stale = target(json(cli(&observer, &["status", "--json"]).await));
-        assert_eq!(stale["revoked"], false);
-        assert_eq!(stale["online"], true);
-        assert_eq!(cache.load(network)?.roster.version, old.roster.version);
+        assert_eq!(stale["revoked"], true);
+        assert_eq!(stale["online"], false);
+        assert!(cache.load(network)?.roster.version > old.roster.version);
         // End-to-end info still synchronizes signed membership, independently of
         // the lightweight list and without probing the revoked device.
         let info = json(cli(&observer, &["source1", "info", "--json"]).await);

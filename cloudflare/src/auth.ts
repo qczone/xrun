@@ -1,6 +1,12 @@
 import "reflect-metadata";
 import { SIGNATURE_FORMAT } from "./protocol";
 import {
+  hexDigest,
+  requireFresh,
+  verifyAuthority,
+  type AuthorityState,
+} from "./authority";
+import {
   AsnEcSignatureFormatter,
   BasicConstraintsExtension,
   ExtendedKeyUsage,
@@ -17,6 +23,8 @@ export interface Proof {
   root_pem: string;
   signature: string;
   manager_signature: string | null;
+  authority_generation: number;
+  authority: AuthorityState | null;
 }
 export const DEVICE = /^dev_[a-f0-9]{32}$/;
 const MAX_CERTIFICATE_PEM_BYTES = 8192;
@@ -62,7 +70,7 @@ export function object(
     (!keys || Object.keys(value).every((key) => keys.includes(key)))
   );
 }
-async function signature(
+export async function signature(
   cert: X509Certificate,
   domain: string,
   binding: object,
@@ -85,13 +93,20 @@ async function signature(
   );
 }
 
-/** Validates the routing identity only. Rosters and revocation stay at peers. */
+export interface VerifiedProof {
+  device: string;
+  manager: boolean;
+  authorityGeneration: number;
+  authority: AuthorityState | null;
+  keyFingerprint: string;
+}
+/** Challenge possession plus a root-signed membership publication, when supplied. */
 export async function verifyProof(
   value: unknown,
   network: string,
   path: string,
   nonce: string,
-): Promise<{ device: string; manager: boolean }> {
+): Promise<VerifiedProof> {
   if (
     !object(value, [
       "device_id",
@@ -99,6 +114,8 @@ export async function verifyProof(
       "root_pem",
       "signature",
       "manager_signature",
+      "authority_generation",
+      "authority",
     ]) ||
     typeof value.device_id !== "string" ||
     !DEVICE.test(value.device_id) ||
@@ -107,6 +124,9 @@ export async function verifyProof(
     typeof value.root_pem !== "string" ||
     value.root_pem.length > MAX_CERTIFICATE_PEM_BYTES ||
     typeof value.signature !== "string" ||
+    typeof value.authority_generation !== "number" ||
+    !Number.isSafeInteger(value.authority_generation) ||
+    value.authority_generation <= 0 ||
     (value.manager_signature != null &&
       typeof value.manager_signature !== "string")
   ) {
@@ -159,7 +179,13 @@ export async function verifyProof(
   ) {
     throw new Error("Invalid member certificate");
   }
-  const binding = { network, device: value.device_id, path, nonce };
+  const binding = {
+    network,
+    device: value.device_id,
+    path,
+    nonce,
+    authority_generation: value.authority_generation,
+  };
   if (!(await signature(member, "relay-proof", binding, value.signature))) {
     throw new Error("Invalid member signature");
   }
@@ -171,5 +197,35 @@ export async function verifyProof(
   ) {
     throw new Error("Invalid manager signature");
   }
-  return { device: value.device_id, manager };
+  const authority =
+    value.authority == null
+      ? null
+      : await verifyAuthority(value.authority, network);
+  const keyFingerprint = await hexDigest(member.publicKey.rawData);
+  if (authority) {
+    requireFresh(authority);
+    const enrolled = authority.roster.roster.members.find(
+      (m) => m.device_id === device,
+    );
+    if (!enrolled || enrolled.revoked)
+      throw new Error("DEVICE_REVOKED: member is revoked or absent");
+    if (
+      authority.roster.roster.authority_generation !==
+        value.authority_generation ||
+      authority.roster.ca_pem !== value.root_pem ||
+      enrolled.key_fp !== keyFingerprint
+    )
+      throw new Error("Proof and authority differ");
+  }
+  if (manager && (!authority || authority.roster.roster.manager_id !== device))
+    throw new Error(
+      "NOT_MANAGER: root proof does not identify the current manager",
+    );
+  return {
+    device,
+    manager,
+    authorityGeneration: value.authority_generation,
+    authority,
+    keyFingerprint,
+  };
 }
