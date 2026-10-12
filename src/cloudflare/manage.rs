@@ -86,7 +86,10 @@ pub(crate) async fn remove(name: &str, no_browser: bool) -> Result<RemovedRelay>
     if state.status == DeploymentStatus::Removed {
         return Ok(removed(name));
     }
-    remove_with(Api::new(auth::token(no_browser).await?)?, &directory, name).await
+    let result =
+        async { remove_with(Api::new(auth::token(no_browser).await?)?, &directory, name).await }
+            .await;
+    auth::finish_temporary(result).await
 }
 
 pub(super) async fn remove_with(

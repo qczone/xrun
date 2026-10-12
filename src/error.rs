@@ -41,6 +41,8 @@ codes! {
     ConnectionLimit => "CONNECTION_LIMIT",
     ConnectFailed => "CONNECT_FAILED",
     ConnectTimeout => "CONNECT_TIMEOUT",
+    CredentialStoreUnavailable => "CREDENTIAL_STORE_UNAVAILABLE",
+    OAuthRevocationFailed => "OAUTH_REVOCATION_FAILED",
     ControlTimeout => "CONTROL_TIMEOUT",
     DaemonChanged => "DAEMON_CHANGED",
     DaemonNotInitialized => "DAEMON_NOT_INITIALIZED",

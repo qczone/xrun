@@ -70,13 +70,23 @@ pub(super) async fn manage(operation: RelayCommand, json: bool) -> Result<()> {
         RelayCommand::Login {
             provider,
             no_browser,
+            remember,
         } => {
             require_provider(provider, RelayProvider::Cloudflare, "login")?;
-            crate::cloudflare::login(no_browser).await?;
+            crate::cloudflare::login(no_browser, remember).await?;
             print(
                 json,
-                &serde_json::json!({"provider":"cloudflare", "authenticated":true}),
-                || println!("Cloudflare login saved"),
+                &serde_json::json!({"provider":"cloudflare", "remembered":remember}),
+                || {
+                    println!(
+                        "{}",
+                        if remember {
+                            "Cloudflare login saved in system credential store"
+                        } else {
+                            "Temporary Cloudflare authorization verified and revoked"
+                        }
+                    )
+                },
             );
         }
         RelayCommand::Logout { provider } => {

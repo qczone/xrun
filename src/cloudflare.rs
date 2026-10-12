@@ -1,6 +1,6 @@
 //! Native Cloudflare authorization and deployment of the prebuilt relay.
 mod api;
-mod auth;
+pub(crate) mod auth;
 mod bundle;
 mod deploy;
 mod manage;

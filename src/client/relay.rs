@@ -8,8 +8,9 @@ use anyhow::Result;
 pub async fn cloudflare_accounts(
     prompt: &(dyn Fn(&str) + Send + Sync),
     reauthorize: bool,
+    remember: bool,
 ) -> Result<Vec<Account>> {
-    crate::cloudflare::accounts(prompt, reauthorize).await
+    crate::cloudflare::accounts(prompt, reauthorize, remember).await
 }
 
 /// Deploy the bundled Worker in an explicitly selected account. Existing ownership
@@ -30,4 +31,21 @@ pub fn cloudflare_relays() -> Result<Vec<DeployedRelay>> {
 /// Reopen an OAuth address after validating its official Cloudflare host and path.
 pub fn open_cloudflare_authorization(url: &str) -> Result<()> {
     crate::cloudflare::reopen_browser(url)
+}
+
+/// Revoke temporary or remembered authorization before deleting stored credentials.
+pub async fn logout_cloudflare() -> Result<()> {
+    crate::cloudflare::logout().await
+}
+/// Locally selected login preference; it does not assert provider token validity.
+pub fn cloudflare_remembered_login() -> Result<bool> {
+    crate::cloudflare::auth::remembered_login()
+}
+/// End a desktop temporary session, for example when cancelling account selection.
+pub async fn end_cloudflare_authorization() -> Result<()> {
+    crate::cloudflare::auth::finish_temporary(Ok(())).await
+}
+/// Cancel only a pending OAuth flow; a started deployment keeps its durable recovery state.
+pub fn cancel_pending_cloudflare_authorization() -> bool {
+    crate::cloudflare::auth::cancel_pending_login()
 }

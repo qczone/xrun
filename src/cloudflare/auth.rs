@@ -1,3 +1,4 @@
+mod vault;
 use super::state;
 use crate::{config, error::ErrorCode};
 use anyhow::{Context, Result, bail};
@@ -14,17 +15,18 @@ use sha2::{Digest, Sha256};
 use std::{
     collections::HashMap,
     path::Path,
-    sync::{Arc, Mutex},
+    sync::{Arc, Mutex, OnceLock},
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 use tokio::sync::oneshot;
 use url::Url;
+use vault::{SystemVault, Vault};
 
 const REDIRECT: &str = "http://127.0.0.1:8976/oauth/callback";
 const AUTHORIZE: &str = "https://dash.cloudflare.com/oauth2/auth";
 const TOKEN: &str = "https://dash.cloudflare.com/oauth2/token";
 
-#[derive(Deserialize, Serialize)]
+#[derive(Clone, Deserialize, Serialize)]
 struct Credentials {
     client_id: String,
     access_token: String,
@@ -72,37 +74,99 @@ fn http() -> Result<reqwest::Client> {
         .build()?)
 }
 
+const REVOKE: &str = "https://dash.cloudflare.com/oauth2/revoke";
+const TEMPORARY_LIFETIME: Duration = Duration::from_secs(300);
+static TEMPORARY: OnceLock<Mutex<Option<(String, Credentials)>>> = OnceLock::new();
+type Cancellation = Option<(String, oneshot::Sender<()>)>;
+static PENDING: OnceLock<Mutex<Cancellation>> = OnceLock::new();
+fn pending() -> &'static Mutex<Cancellation> {
+    PENDING.get_or_init(|| Mutex::new(None))
+}
+struct PendingLogin(String);
+impl Drop for PendingLogin {
+    fn drop(&mut self) {
+        let mut saved = pending().lock().unwrap();
+        if saved.as_ref().is_some_and(|(stamp, _)| stamp == &self.0) {
+            saved.take();
+        }
+    }
+}
+pub(crate) fn cancel_pending_login() -> bool {
+    pending()
+        .lock()
+        .unwrap()
+        .take()
+        .is_some_and(|(_, cancel)| cancel.send(()).is_ok())
+}
+fn temporary() -> &'static Mutex<Option<(String, Credentials)>> {
+    TEMPORARY.get_or_init(|| Mutex::new(None))
+}
+#[derive(Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct LoginPreference {
+    remembered: bool,
+}
+fn remembered(directory: &Path) -> Result<bool> {
+    let path = directory.join("login.toml");
+    if !path.exists() {
+        return Ok(false);
+    }
+    Ok(config::read::<LoginPreference>(&path)?.remembered)
+}
+fn require_manager() -> Result<()> {
+    let id = crate::config::Identity::load().context(ErrorCode::NotManager.error(
+        "remembered Cloudflare login requires a manager device; use temporary deployment first",
+    ))?;
+    if crate::network::current(&id)?.roster.manager_id != id.device_id {
+        bail!(
+            ErrorCode::NotManager
+                .error("remembered Cloudflare login requires a protected manager device")
+        );
+    }
+    crate::network::manager(&id)?;
+    Ok(())
+}
 pub(super) async fn token(no_browser: bool) -> Result<String> {
     token_with_prompt(no_browser, None).await
 }
-
 pub(super) async fn token_with_prompt(
     no_browser: bool,
     prompt: Option<&(dyn Fn(&str) + Send + Sync)>,
 ) -> Result<String> {
     if let Ok(value) = std::env::var("CLOUDFLARE_API_TOKEN") {
         if value.is_empty() {
-            bail!(ErrorCode::InvalidToken.error("CLOUDFLARE_API_TOKEN is empty"))
+            bail!(ErrorCode::InvalidToken.error("CLOUDFLARE_API_TOKEN is empty"));
         }
         return Ok(value);
     }
     let directory = state::directory()?;
     let _lock = state::lock(&directory, "credentials")?;
+    cleanup_legacy(&directory).await?;
     let client_id = client_id()?;
-    if let Some(token) = cached_token(&directory, &client_id, &http()?, TOKEN).await? {
-        return Ok(token);
+    let remember = remembered(&directory)?;
+    if remember {
+        require_manager()?;
+        let store = SystemVault::open(&directory, &client_id)?;
+        if let Some(token) = cached_token(&store, &client_id, &http()?, TOKEN).await? {
+            return Ok(token);
+        }
     }
-    authorize_with_prompt(&directory, &client_id, no_browser, prompt).await
+    if let Some((_, credentials)) = temporary().lock().unwrap().as_ref()
+        && credentials.client_id == client_id
+        && credentials.expires_at > now() + 60
+    {
+        return Ok(credentials.access_token.clone());
+    }
+    finish_temporary(Ok(())).await?;
+    authorize_with_prompt(&directory, &client_id, remember, no_browser, prompt).await
 }
-
 async fn cached_token(
-    directory: &Path,
+    store: &impl Vault,
     client_id: &str,
     client: &reqwest::Client,
     endpoint: &str,
 ) -> Result<Option<String>> {
-    let path = directory.join("credentials.toml");
-    if let Some(mut credentials) = load(&path)?
+    if let Some(mut credentials) = store.load()?
         && credentials.client_id == client_id
     {
         if credentials.expires_at > now() + 60 {
@@ -122,76 +186,156 @@ async fn cached_token(
             {
                 Some(tokens) => {
                     credentials = credentials.with_tokens(tokens)?;
-                    save(&path, &credentials)?;
+                    store.save(&credentials)?;
                     return Ok(Some(credentials.access_token));
                 }
                 None => {
-                    std::fs::remove_file(&path)?;
+                    store.delete()?;
                 }
             }
         }
     }
     Ok(None)
 }
-
-pub(crate) async fn login(no_browser: bool) -> Result<()> {
-    login_with_prompt(no_browser, None).await?;
+pub(crate) async fn login(no_browser: bool, remember: bool) -> Result<()> {
+    login_with_prompt(no_browser, remember, None).await?;
+    if !remember {
+        finish_temporary(Ok(())).await?;
+    }
     Ok(())
 }
-
 pub(super) async fn login_with_prompt(
     no_browser: bool,
+    remember: bool,
     prompt: Option<&(dyn Fn(&str) + Send + Sync)>,
 ) -> Result<String> {
     let directory = state::directory()?;
     let _lock = state::lock(&directory, "credentials")?;
-    authorize_with_prompt(&directory, &client_id()?, no_browser, prompt).await
+    if remember {
+        require_manager()?;
+        SystemVault::open(&directory, &client_id()?)?;
+    }
+    finish_temporary(Ok(())).await?;
+    logout_saved(&directory).await?;
+    cleanup_legacy(&directory).await?;
+    authorize_with_prompt(&directory, &client_id()?, remember, no_browser, prompt).await
 }
-
+async fn revoke_credentials(
+    client: &reqwest::Client,
+    endpoint: &str,
+    credentials: &Credentials,
+) -> Result<()> {
+    // Revoke a refresh grant as well as its current access token, when supplied.
+    for token in credentials
+        .refresh_token
+        .iter()
+        .chain(std::iter::once(&credentials.access_token))
+    {
+        let response = form(
+            client,
+            endpoint,
+            &[("client_id", &credentials.client_id), ("token", token)],
+        )
+        .send()
+        .await
+        .map_err(|_| {
+            ErrorCode::OAuthRevocationFailed
+                .error("Cloudflare revocation could not be confirmed; retry logout")
+        })?;
+        if !response.status().is_success() {
+            bail!(ErrorCode::OAuthRevocationFailed.error(format!(
+                "Cloudflare revocation HTTP {}; retry logout",
+                response.status()
+            )));
+        }
+    }
+    Ok(())
+}
+pub(crate) async fn finish_temporary<T>(result: Result<T>) -> Result<T> {
+    finish_temporary_for(None, result).await
+}
+async fn finish_temporary_for<T>(expected: Option<&str>, result: Result<T>) -> Result<T> {
+    finish_temporary_at(expected, &http()?, REVOKE, result).await
+}
+async fn finish_temporary_at<T>(
+    expected: Option<&str>,
+    client: &reqwest::Client,
+    endpoint: &str,
+    result: Result<T>,
+) -> Result<T> {
+    let current = temporary()
+        .lock()
+        .unwrap()
+        .as_ref()
+        .filter(|(stamp, _)| expected.is_none_or(|expected| expected == stamp))
+        .cloned();
+    if let Some((stamp, credentials)) = current {
+        if let Err(error) = revoke_credentials(client, endpoint, &credentials).await {
+            return Err(error.context(if result.is_ok() {
+                "operation completed; temporary authorization revocation is unconfirmed"
+            } else {
+                "operation failed and temporary authorization revocation is unconfirmed"
+            }));
+        }
+        let mut saved = temporary().lock().unwrap();
+        if saved.as_ref().is_some_and(|(current, _)| current == &stamp) {
+            saved.take();
+        }
+    }
+    result
+}
+fn save_temporary(mut credentials: Credentials) {
+    credentials.expires_at = credentials
+        .expires_at
+        .min(now() + TEMPORARY_LIFETIME.as_secs());
+    let stamp = uuid::Uuid::new_v4().to_string();
+    *temporary().lock().unwrap() = Some((stamp.clone(), credentials));
+    tokio::spawn(async move {
+        tokio::time::sleep(TEMPORARY_LIFETIME).await;
+        if let Err(error) = finish_temporary_for(Some(&stamp), Ok(())).await {
+            tracing::warn!(code=?crate::error::code(&error), "temporary Cloudflare revocation remains unconfirmed");
+        }
+    });
+}
+// Only used to retire the old plaintext format, never to authenticate an operation.
+async fn cleanup_legacy(directory: &Path) -> Result<()> {
+    let path = directory.join("credentials.toml");
+    if path.exists() {
+        let source = std::fs::read_to_string(&path)?;
+        let old: Credentials = toml::from_str(&source).map_err(|_| {
+            ErrorCode::InvalidConfig
+                .error("invalid legacy Cloudflare login; revoke it in Cloudflare")
+        })?;
+        revoke_credentials(&http()?, REVOKE, &old).await?;
+        std::fs::remove_file(&path)?;
+        config::sync_parent(&path)?;
+    }
+    Ok(())
+}
 pub(crate) async fn logout() -> Result<()> {
     let directory = state::directory()?;
     let _lock = state::lock(&directory, "credentials")?;
-    let path = directory.join("credentials.toml");
-    if let Some(credentials) = load(&path)? {
-        let token = credentials
-            .refresh_token
-            .as_deref()
-            .unwrap_or(&credentials.access_token);
-        let status = form(
-            &http()?,
-            "https://dash.cloudflare.com/oauth2/revoke",
-            &[
-                ("client_id", credentials.client_id.as_str()),
-                ("token", token),
-            ],
-        )
-        .send()
-        .await?
-        .status();
-        if !status.is_success() {
-            bail!(ErrorCode::HttpError.error(format!(
-                "Cloudflare token revocation HTTP {status}; login retained"
-            )))
-        }
-        std::fs::remove_file(path)?;
+    finish_temporary(Ok(())).await?;
+    cleanup_legacy(&directory).await?;
+    logout_saved(&directory).await
+}
+async fn logout_saved(directory: &Path) -> Result<()> {
+    if remembered(directory)? {
+        let store = SystemVault::open(directory, &client_id()?)?;
+        revoke_saved(&store, &http()?, REVOKE).await?;
+        config::write(
+            &directory.join("login.toml"),
+            &LoginPreference { remembered: false },
+        )?;
     }
     Ok(())
 }
 
-fn load(path: &Path) -> Result<Option<Credentials>> {
-    match std::fs::read_to_string(path) {
-        Ok(source) => Ok(Some(toml::from_str(&source).map_err(|_| {
-            ErrorCode::InvalidConfig.error(
-                "invalid saved Cloudflare login; run xrun relay login --provider cloudflare again",
-            )
-        })?)),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
-        Err(error) => Err(error.into()),
+async fn revoke_saved(store: &impl Vault, client: &reqwest::Client, endpoint: &str) -> Result<()> {
+    if let Some(credentials) = store.load()? {
+        revoke_credentials(client, endpoint, &credentials).await?;
     }
-}
-
-fn save(path: &Path, credentials: &Credentials) -> Result<()> {
-    config::atomic_private_write(path, toml::to_string(credentials)?.as_bytes())
+    store.delete()
 }
 
 impl Credentials {
@@ -281,7 +425,7 @@ impl Authorization {
         })
     }
 
-    fn url(&self, client_id: &str) -> Result<Url> {
+    fn url(&self, client_id: &str, remember: bool) -> Result<Url> {
         let mut url = Url::parse(AUTHORIZE)?;
         url.query_pairs_mut().extend_pairs([
             ("response_type", "code"),
@@ -290,7 +434,11 @@ impl Authorization {
             ("state", &self.state),
             (
                 "scope",
-                "account-settings.read workers-scripts.write workers-routes.write offline_access",
+                if remember {
+                    "account-settings.read workers-scripts.write offline_access"
+                } else {
+                    "account-settings.read workers-scripts.write"
+                },
             ),
             ("code_challenge_method", "S256"),
             (
@@ -354,6 +502,7 @@ impl Drop for CallbackServer {
 async fn authorize_with_prompt(
     directory: &Path,
     client_id: &str,
+    remember: bool,
     no_browser: bool,
     prompt: Option<&(dyn Fn(&str) + Send + Sync)>,
 ) -> Result<String> {
@@ -363,12 +512,26 @@ async fn authorize_with_prompt(
             ErrorCode::InvalidPort
                 .error("Cloudflare login needs local port 8976; close another login and retry"),
         )?;
-    authorize_with_listener(directory, client_id, no_browser, prompt, listener).await
+    let (cancel, cancelled) = oneshot::channel();
+    let stamp = uuid::Uuid::new_v4().to_string();
+    *pending().lock().unwrap() = Some((stamp.clone(), cancel));
+    let _pending = PendingLogin(stamp);
+    tokio::select! {
+        biased;
+        _ = cancelled => {
+            // Cancellation only drops the OAuth flow. It cannot abort a Worker
+            // upload that started after this guard was retired.
+            logout_saved(directory).await?;
+            finish_temporary(Err(ErrorCode::Unauthenticated.error("Cloudflare authorization cancelled").into())).await
+        },
+        result = authorize_with_listener(directory, client_id, remember, no_browser, prompt, listener) => result,
+    }
 }
 
 async fn authorize_with_listener(
     directory: &Path,
     client_id: &str,
+    remember: bool,
     no_browser: bool,
     prompt: Option<&(dyn Fn(&str) + Send + Sync)>,
     listener: tokio::net::TcpListener,
@@ -391,7 +554,7 @@ async fn authorize_with_listener(
             .await
     });
     let _server_guard = CallbackServer(server.abort_handle());
-    let url = authorization.url(client_id)?;
+    let url = authorization.url(client_id, remember)?;
     if let Some(prompt) = prompt {
         prompt(url.as_str());
     } else {
@@ -436,8 +599,37 @@ async fn authorize_with_listener(
         expires_at: 0,
     }
     .with_tokens(tokens)?;
-    save(&directory.join("credentials.toml"), &credentials)?;
-    Ok(credentials.access_token)
+    let token = credentials.access_token.clone();
+    if remember {
+        require_manager()?;
+        let store = SystemVault::open(directory, client_id)?;
+        if let Err(error) = config::write(
+            &directory.join("login.toml"),
+            &LoginPreference { remembered: true },
+        )
+        .and_then(|()| store.save(&credentials))
+        {
+            match revoke_credentials(&http()?, REVOKE, &credentials).await {
+                Ok(()) => {
+                    let _ = store.delete();
+                    let _ = config::write(
+                        &directory.join("login.toml"),
+                        &LoginPreference { remembered: false },
+                    );
+                }
+                Err(error) => {
+                    let mut retirement = credentials;
+                    retirement.expires_at = 0; // Retry revocation only; never authenticate from this failure.
+                    save_temporary(retirement);
+                    return Err(error.context("remembered login could not be saved or revoked"));
+                }
+            }
+            return Err(error.context("remembered login was not saved"));
+        }
+    } else {
+        save_temporary(credentials);
+    }
+    Ok(token)
 }
 
 pub(crate) fn reopen_browser(value: &str) -> Result<()> {
@@ -475,3 +667,7 @@ fn open_browser(url: &str) {
 
 #[cfg(test)]
 mod tests;
+
+pub(crate) fn remembered_login() -> Result<bool> {
+    remembered(&config::device_dir()?.join("cloudflare"))
+}

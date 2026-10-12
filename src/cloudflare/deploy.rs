@@ -39,14 +39,20 @@ pub struct Account {
 pub(crate) async fn accounts(
     prompt: &(dyn Fn(&str) + Send + Sync),
     reauthorize: bool,
+    remember: bool,
 ) -> Result<Vec<Account>> {
-    let token = if reauthorize {
-        auth::login_with_prompt(false, Some(prompt)).await?
+    let token = if reauthorize || remember {
+        auth::login_with_prompt(false, remember, Some(prompt)).await?
     } else {
         auth::token_with_prompt(false, Some(prompt)).await?
     };
     let api = Api::new(token)?;
-    account_list(&api).await
+    let result = account_list(&api).await;
+    if result.is_err() {
+        auth::finish_temporary(result).await
+    } else {
+        result
+    }
 }
 
 pub(crate) async fn deploy(
@@ -66,6 +72,16 @@ pub(crate) async fn deploy_selected(
 }
 
 async fn deploy_with_prompt(
+    name: &str,
+    account: Option<String>,
+    no_browser: bool,
+    prompt: Option<&(dyn Fn(&str) + Send + Sync)>,
+) -> Result<DeployedRelay> {
+    let result = deploy_operation(name, account, no_browser, prompt).await;
+    auth::finish_temporary(result).await
+}
+
+async fn deploy_operation(
     name: &str,
     account: Option<String>,
     no_browser: bool,

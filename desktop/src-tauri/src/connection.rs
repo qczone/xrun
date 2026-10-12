@@ -46,13 +46,14 @@ pub(super) async fn cloudflare_accounts<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
     state: State<'_, Desktop>,
     reauthorize: bool,
+    remember: Option<bool>,
 ) -> Result<Option<Vec<Account>>, CommandError> {
     let _guard = state.action.lock().await;
     let (cancel, cancelled) = tokio::sync::oneshot::channel();
     *state.cloudflare_cancel.lock().unwrap() = Some(cancel);
     let prompt = |url: &str| authorization(&app, url);
     let result = tokio::select! {
-        result = xrun::client::relay::cloudflare_accounts(&prompt, reauthorize) => result.map(Some),
+        result = xrun::client::relay::cloudflare_accounts(&prompt, reauthorize, remember.unwrap_or(false)) => result.map(Some),
         _ = cancelled => Ok(None),
     };
     state.cloudflare_cancel.lock().unwrap().take();
@@ -61,10 +62,36 @@ pub(super) async fn cloudflare_accounts<R: tauri::Runtime>(
 }
 
 #[tauri::command]
-pub(super) fn cancel_cloudflare_authorization(state: State<'_, Desktop>) {
-    if let Some(cancel) = state.cloudflare_cancel.lock().unwrap().take() {
+pub(super) async fn cancel_cloudflare_authorization(
+    state: State<'_, Desktop>,
+) -> Result<(), CommandError> {
+    let account_selection = state.cloudflare_cancel.lock().unwrap().take();
+    let selecting = account_selection.is_some();
+    if let Some(cancel) = account_selection {
         let _ = cancel.send(());
     }
+    let pending = xrun::client::relay::cancel_pending_cloudflare_authorization();
+    if !selecting && !pending && state.cloudflare_authorization.lock().unwrap().is_some() {
+        return Err(CommandError::from_error(error::failure(
+            "INVALID_REQUEST",
+            "authorization completed; deployment continues",
+        )));
+    }
+    xrun::client::relay::end_cloudflare_authorization()
+        .await
+        .map_err(CommandError::from_error)
+}
+
+#[tauri::command]
+pub(super) fn cloudflare_remembered_login() -> Result<bool, CommandError> {
+    xrun::client::relay::cloudflare_remembered_login().map_err(CommandError::from_error)
+}
+#[tauri::command]
+pub(super) async fn logout_cloudflare(state: State<'_, Desktop>) -> Result<(), CommandError> {
+    let _guard = state.action.lock().await;
+    xrun::client::relay::logout_cloudflare()
+        .await
+        .map_err(CommandError::from_error)
 }
 
 #[tauri::command]
@@ -128,6 +155,14 @@ mod tests {
                 let directory = xrun::client::services::data_dir()?;
                 assert!(!directory.join("identity.toml").exists());
                 assert!(!directory.join("cloudflare").exists());
+                let error = invoke(
+                    &window,
+                    "cloudflare_accounts",
+                    json!({"reauthorize":true,"remember":true}),
+                )
+                .unwrap_err();
+                assert_eq!(error["code"], "NOT_MANAGER");
+                assert!(!directory.join("cloudflare/credentials.toml").exists());
                 let (sender, mut receiver) = tokio::sync::oneshot::channel();
                 *app.state::<Desktop>().cloudflare_cancel.lock().unwrap() = Some(sender);
                 assert_eq!(

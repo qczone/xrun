@@ -239,6 +239,7 @@ export type PendingOperation =
   | "copy_identifier"
   | "revoke"
   | "cloudflare_accounts"
+  | "logout_cloudflare"
   | "deploy_cloudflare"
   | "remote_submit"
   | "remote_cancel";
@@ -294,6 +295,7 @@ export const api = {
   cloudflareAccounts: async (
     onAuthorization: () => void,
     reauthorize = false,
+    remember = false,
   ) => {
     const unlisten = await listen<string>(
       "xrun-cloudflare-authorization",
@@ -302,6 +304,7 @@ export const api = {
     try {
       return await invoke<CloudflareAccount[] | null>("cloudflare_accounts", {
         reauthorize,
+        remember,
       });
     } finally {
       unlisten();
@@ -314,6 +317,9 @@ export const api = {
   deployCloudflare: (name: string, account: string) =>
     invoke<RelayDeployment>("deploy_cloudflare", { name, account }),
   cloudflareRelays: () => invoke<RelayDeployment[]>("cloudflare_relays"),
+  cloudflareRememberedLogin: () =>
+    invoke<boolean>("cloudflare_remembered_login"),
+  logoutCloudflare: () => invoke<void>("logout_cloudflare"),
   remoteSubmit: (device: string, command: RemoteCommand) =>
     invoke<CommandJob>("remote_submit", { device, command }),
   remoteRecent: (device: string) =>

@@ -216,7 +216,7 @@ xrun relay deploy --provider local --addr 192.168.1.10:9528
 
 正式代码位于 `cloudflare/`。Package 在构建 Rust 前生成 Worker 模块与版本、协议范围、SHA-256 清单，构建脚本校验后嵌入各平台 CLI 和 App helper。用户执行 `xrun relay deploy --provider cloudflare --name xrun-relay`，无需下载源码或安装任何编译工具；`--dry-run` 只校验内置产物。
 
-CLI 使用 xrun 自己注册的 Cloudflare 公共 OAuth 客户端，以 Authorization Code + PKCE S256 授权；回调只监听 127.0.0.1:8976，校验独立随机 state，超时或取消后关闭监听。发布方通过 `CLOUDFLARE_OAUTH_CLIENT_ID` 仓库变量提供公共 Client ID，OAuth client secret 不进入二进制。访问令牌和可选刷新令牌以 0600 文件保存在私有 `~/.xrun/cloudflare/` 目录；过期后刷新，失效授权重新登录。用户也可通过环境变量提供 API token，CLI 不持久化该令牌。
+CLI 使用 xrun 自己注册的 Cloudflare 公共 OAuth 客户端，以 Authorization Code + PKCE S256 授权；回调只监听 127.0.0.1:8976，校验独立随机 state，超时或取消后关闭监听。发布方通过 `CLOUDFLARE_OAUTH_CLIENT_ID` 仓库变量提供公共 Client ID，OAuth client secret 不进入二进制。默认只申请账户读取和 Worker 脚本写入权限，不申请 `offline_access` 或路由写入；凭据只留在进程内存，账号选择最长保留 5 分钟，部署、删除或取消后向 Cloudflare 撤销。强制终止进程时依赖提供方令牌到期，不宣称已经撤销。只有显式 `relay login --remember` 才申请刷新令牌，仅允许不接受远程业务的管理设备；Mac 使用 Keychain，Windows 使用 Credential Manager，Linux 使用 Secret Service，系统凭据库不可用就报错，不回退到明文文件。刷新失败的临时网络错误保留凭据，授权失效要求重登录。退出先确认服务端撤销，再删除系统凭据；失败保留可重试状态。旧明文凭据只用于撤销与清理，不再用于部署认证。用户也可通过环境变量提供 API token，CLI 不持久化该令牌。
 
 上传通过 Cloudflare 官方 Workers API 完成，包内 Worker、SQLite-backed DO 类 `XrunRelay`、协议范围和随机路由 secret 一起上传。首次部署应用 v1 迁移，更新不重建 DO；没有 workers.dev 子域名的账号自动注册。写入前保存私有部署记录，远端使用随机所有权标记识别本机部署；重试保留原路由，已有其他应用的同名 Worker 拒绝覆盖。登录退出只撤销凭据，保留中转和 DO 数据。
 
@@ -353,7 +353,7 @@ xrun <设备> start [执行选项] -- <程序> [程序参数…]
 | `xrun relay deploy --provider local [--port N] [--addr 主机:端口] [--no-detect]` | 在 Linux 安装中转服务，输出网络部署链接 |
 | `xrun relay link --provider <cloudflare\|local> [--name 名称]` | 查看部署链接，Cloudflare 从私有部署记录读取 |
 | `xrun relay remove --provider <cloudflare\|local> [--name 名称] [--purge]` | 本地卸载服务并保留数据；Cloudflare 必须显式 `--purge`，永久删除 Worker 和 DO 数据 |
-| `xrun relay login --provider cloudflare`、`xrun relay logout --provider cloudflare` | 授权、撤销 Cloudflare 登录，保留已部署中转 |
+| `xrun relay login --provider cloudflare [--remember]`、`xrun relay logout --provider cloudflare` | 授权、撤销 Cloudflare 登录，保留已部署中转 |
 | `xrun relay run --provider local` | 前台运行本地 Linux 中转 |
 | `xrun up --relay <部署链接> [--name 名称] [--allow] [--no-daemon]` | 在本机创建网络并成为管理设备；CLI 生成成员邀请，默认只注册 |
 | `xrun join <成员邀请> [--name 名称] [--no-daemon]` | 加入网络，或恢复同一身份的地址与证书 |

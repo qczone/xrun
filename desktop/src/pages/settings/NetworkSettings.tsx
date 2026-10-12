@@ -38,7 +38,10 @@ export function NetworkSettings({
         <Icon name="arrow" />
       </summary>
       <div className="settings-disclosure-content">
-        <CloudflareRelays networkId={network?.network_id} />
+        <CloudflareRelays
+          networkId={network?.network_id}
+          manager={!!network?.is_manager}
+        />
         {network && (
           <dl className="network-facts">
             <dt>{t("common.manager")}</dt>

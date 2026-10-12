@@ -492,6 +492,7 @@ export const en = {
   "traffic.details": "Details",
   "operation.connect": "Connecting to network…",
   "operation.cloudflare_accounts": "Loading Cloudflare accounts…",
+  "operation.logout_cloudflare": "Revoking authorization…",
   "operation.deploy_cloudflare": "Creating network…",
   "operation.remote_submit": "Submitting command…",
   "operation.remote_cancel": "Requesting cancellation…",
@@ -524,6 +525,14 @@ export const en = {
     "Join without allowing the manager to access this device. You can grant access later in Devices.",
   "setup.connect": "Connect",
   "setup.retryConnect": "Retry connection",
+  "cloudflare.temporaryHint":
+    "Temporary authorization ends after the operation by default.",
+  "cloudflare.rememberLogin": "Remember login on this manager",
+  "cloudflare.authorizeAccount": "Authorize account",
+  "cloudflare.authorized": "Account authorized",
+  "cloudflare.logout": "Revoke authorization",
+  "cloudflare.logoutFailed": "Authorization could not be revoked. Retry.",
+  "cloudflare.loggedOut": "Authorization revoked",
   "cloudflare.description":
     "Authorize Cloudflare in your browser to deploy a relay and create a network.",
   "cloudflare.advanced": "Relay options",

@@ -451,6 +451,8 @@ pub(super) fn register<R: tauri::Runtime>(builder: tauri::Builder<R>) -> tauri::
             super::connection::connection_defaults,
             super::connection::connect,
             super::connection::cloudflare_accounts,
+            super::connection::cloudflare_remembered_login,
+            super::connection::logout_cloudflare,
             super::connection::cancel_cloudflare_authorization,
             super::connection::open_cloudflare_authorization,
             super::connection::deploy_cloudflare,

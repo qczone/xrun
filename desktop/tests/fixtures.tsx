@@ -130,6 +130,10 @@ export async function fixture(
           : value;
       }
       switch (command) {
+        case "cloudflare_remembered_login":
+          return false;
+        case "logout_cloudflare":
+          return null;
         case "connection_defaults":
           return "mac1";
         case "cloudflare_relays":

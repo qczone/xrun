@@ -183,3 +183,41 @@ test("expired or revoked login can be reauthorized from the desktop without depl
     false,
   );
 });
+
+test("manager settings explicitly opt into remembered login and keep it when revocation fails", async () => {
+  let remembered = false;
+  let failLogout = true;
+  const { calls, status, poll, page } = await fixture({
+    cloudflare_remembered_login: () => remembered,
+    cloudflare_accounts: ({ remember }) => {
+      remembered = !!remember;
+      return [account];
+    },
+    logout_cloudflare: () => {
+      if (failLogout)
+        throw { code: "OAUTH_REVOCATION_FAILED", message: "retry logout" };
+      remembered = false;
+    },
+  });
+  status.network!.is_manager = true;
+  await poll();
+  await page("设置");
+  const option = (await screen.findByLabelText(
+    "记住登录（管理设备）",
+  )) as HTMLInputElement;
+  expect(option.checked).toBe(false);
+  fireEvent.click(option);
+  fireEvent.click(screen.getByRole("button", { name: "授权账号" }));
+  await screen.findByText("账号已授权");
+  expect(
+    calls.find((call) => call.command === "cloudflare_accounts")?.args,
+  ).toEqual({ reauthorize: true, remember: true });
+  fireEvent.click(screen.getByRole("button", { name: "退出授权" }));
+  await screen.findByText("授权未能撤销，请重试。");
+  expect(option.checked).toBe(true);
+  expect(remembered).toBe(true);
+  failLogout = false;
+  fireEvent.click(screen.getByRole("button", { name: "退出授权" }));
+  await screen.findByText("授权已撤销");
+  expect(remembered).toBe(false);
+});

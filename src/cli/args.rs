@@ -238,6 +238,9 @@ pub(super) enum RelayCommand {
     },
     /// Authorize xrun with Cloudflare in your browser
     Login {
+        /// Remember login in the OS credential store (manager devices only)
+        #[arg(long)]
+        remember: bool,
         #[arg(long, value_enum)]
         provider: RelayProvider,
         /// Print the authorization URL without opening a browser
