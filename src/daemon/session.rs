@@ -22,13 +22,13 @@ pub(super) async fn data_session(
 ) -> Result<()> {
     let id = rt.authorization()?.identity.clone();
     let (outer, flow) = network::attach(&id, address, generation, sid).await?;
-    serve_socket(rt, outer, flow).await
+    Box::pin(serve_socket(rt, outer, flow)).await
 }
 pub(super) async fn serve_socket(rt: Arc<Runtime>, outer: Ws, flow_control: bool) -> Result<()> {
-    serve_socket_policy(rt, outer, flow_control, true).await
+    Box::pin(serve_socket_policy(rt, outer, flow_control, true)).await
 }
 pub(super) async fn serve_direct(rt: Arc<Runtime>, outer: Ws) -> Result<()> {
-    serve_socket_policy(rt, outer, false, false).await
+    Box::pin(serve_socket_policy(rt, outer, false, false)).await
 }
 async fn serve_socket_policy(
     rt: Arc<Runtime>,
@@ -53,7 +53,7 @@ async fn serve_socket_policy(
             if matches!(purpose, secure::Purpose::Channel) {
                 rt.allow(&source)?;
                 net::send(&mut ws,&Data::ChannelReady{device_id:id.device_id.clone(),protocol}).await?;
-                return channel_gateway(rt.clone(),&mut ws, id.clone(),source,protocol,certificate.clone()).await;
+                return Box::pin(channel_gateway(rt.clone(),&mut ws, id.clone(),source,protocol,certificate.clone())).await;
             }
             if matches!(purpose, secure::Purpose::State) {
                 let state = network::PeerState {
@@ -106,7 +106,7 @@ async fn serve_socket_policy(
                     Request::Exec { .. } | Request::Push { .. } | Request::Kill { .. }
                 );
                 tokio::select! {
-                    result = serve(rt.clone(), &source, generation, &mut ws, request) => result?,
+                    result = Box::pin(serve(rt.clone(), &source, generation, &mut ws, request)) => result?,
                     _ = stop.changed() => {
                         if changes_remote_state {
                             bail!(ErrorCode::Unconfirmed.error(
@@ -259,7 +259,7 @@ async fn channel_gateway(
                                 let rt=rt.clone();
                                 let id=id.clone();
                                 let source=source.clone();
-        operations.spawn(async move{channel_operation(rt,ws,PairContext{id,source,protocol,generation,expiry,authority_generation}).await});
+        operations.spawn(async move{Box::pin(channel_operation(rt,ws,PairContext{id,source,protocol,generation,expiry,authority_generation})).await});
 
                                 },
                                 None=>break,
@@ -337,7 +337,7 @@ async fn channel_operation(rt: Arc<Runtime>, mut ws: Ws, pair: PairContext) -> R
                 | Request::Kill { .. }
         );
         tokio::select! {
-            result=serve(rt.clone(),&source,generation,&mut ws,request)=>result?,
+            result=Box::pin(serve(rt.clone(),&source,generation,&mut ws,request))=>result?,
             result=access_ended(&rt,&lease)=>{
                 // Once a request is read, dropping its worker cannot prove a
                 // pending database write or file operation was never committed.
@@ -388,5 +388,21 @@ pub(super) async fn standby_loop(
                 }
             });
         }
+    }
+}
+
+#[cfg(test)]
+mod stack_tests {
+    use super::*;
+    #[test]
+    fn encrypted_session_dispatch_does_not_embed_business_futures() {
+        fn size<F>(_: impl FnOnce(Arc<Runtime>, Ws, bool) -> F) -> usize {
+            std::mem::size_of::<F>()
+        }
+        let bytes = size(|rt, ws, flow| serve_socket_policy(rt, ws, flow, true));
+        assert!(
+            bytes <= 32 * 1024,
+            "encrypted dispatch future is {bytes} bytes"
+        );
     }
 }
