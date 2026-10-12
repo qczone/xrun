@@ -6,7 +6,15 @@ use std::path::PathBuf;
 /// Run the CLI using process arguments and return its documented exit status.
 /// Writes command results to stdout and diagnostics to stderr.
 pub async fn cli() -> i32 {
-    crate::cli::run().await
+    // Tokio's root future runs on the calling thread. Keep that small (Windows
+    // gives main only 1 MiB) and poll command/TLS work on the normal worker pool.
+    match tokio::spawn(crate::cli::run()).await {
+        Ok(status) => status,
+        Err(error) => {
+            eprintln!("[xrun] command task failed: {error}");
+            125
+        }
+    }
 }
 
 /// Run the local daemon until shutdown, owning its instance lock and task cleanup.
