@@ -93,9 +93,26 @@ async fn systemd_install_stop_restart_upgrade_and_uninstall() -> Result<()> {
     let upgraded = install_dir.join("xrun-upgraded");
     std::fs::copy(binary(), &old)?;
     std::fs::copy(binary(), &upgraded)?;
+    // Keep the authority in its own disposable profile. A service performing
+    // remote jobs must be an ordinary member, never the protected manager.
+    let manager_home = temp.path().join("manager-home");
+    ok(cli(
+        &manager_home,
+        &["up", "--relay", &link, "--name", "manager1", "--no-daemon"],
+    )
+    .await);
+    let mut manager = logged(&manager_home, &["daemon"], "service-manager")?.spawn()?;
+    online(&manager_home, "manager1").await?;
+    let invitation = json(cli(&manager_home, &["invite", "--json"]).await);
     registered_cli(
         &old,
-        &["up", "--relay", &link, "--name", "service1", "--no-daemon"],
+        &[
+            "join",
+            invitation["link"].as_str().context("invitation link")?,
+            "--name",
+            "service1",
+            "--no-daemon",
+        ],
     )
     .await?;
     let identity = std::fs::read(data.join("identity.toml"))?;
@@ -178,5 +195,6 @@ async fn systemd_install_stop_restart_upgrade_and_uninstall() -> Result<()> {
         identity,
         "removing a service erased membership"
     );
+    stop_daemon(&manager_home, &mut manager).await?;
     Ok(())
 }
