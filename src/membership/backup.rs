@@ -174,7 +174,12 @@ impl Manager {
             .lock()
             .unwrap()
             .backup(rusqlite::MAIN_DB, &path, None)?;
-        std::fs::File::open(&path)?.sync_all()?;
+        // FlushFileBuffers on Windows requires a writable handle.
+        std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(&path)?
+            .sync_all()?;
         config::sync_parent(&path)
     }
     pub(crate) fn adopt_roster(&self, next: &SignedRoster) -> Result<()> {
