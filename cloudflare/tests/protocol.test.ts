@@ -8,7 +8,7 @@ import {
 import vectors from "../../tests/fixtures/signatures.json";
 
 test("wire versions select the highest common protocol and reject malformed ranges", () => {
-  expect(negotiate(PROTOCOL, vectors.protocol)).toBe(1);
+  expect(negotiate(PROTOCOL, vectors.protocol)).toBe(5);
   expect(SIGNATURE_FORMAT).toBe(vectors.signature_format);
   expect(negotiate({ min: 2, max: 3 }, { min: 1, max: 2 })).toBe(2);
   for (const invalid of [
@@ -24,6 +24,8 @@ test("wire versions select the highest common protocol and reject malformed rang
     expect(() => parseRange(invalid)).toThrow();
   for (const range of [
     { min: 0, max: 1 },
+    { min: 1, max: 4 },
+    { min: 4, max: 4 },
     { min: 3, max: 2 },
     { min: PROTOCOL.max + 1, max: PROTOCOL.max + 1 },
   ])

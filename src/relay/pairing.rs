@@ -34,7 +34,7 @@ pub(super) async fn control(
         if !current.manager || current.generation != generation {
             bail!(ErrorCode::NotManager.error("pairing registration requires the current manager"));
         }
-        ProtocolRange::require(current.protocol, 4)?;
+        ProtocolRange::require(current.protocol)?;
         if !crate::pairing::valid_id(id) {
             bail!(ErrorCode::InvalidRequest.error("invalid invitation identity"));
         }
@@ -93,7 +93,7 @@ pub(super) async fn route(
     ws: WebSocketUpgrade,
 ) -> ApiResult<Response> {
     let selected = protocol(&headers)?;
-    ProtocolRange::require(selected, 4)?;
+    ProtocolRange::require(selected)?;
     if !crate::pairing::valid_locator(&locator) {
         return Err(ErrorCode::InvalidCode
             .error("invalid pairing locator")

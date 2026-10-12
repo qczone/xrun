@@ -106,10 +106,7 @@ async fn bootstrap(address: &str, code: &str, key: &str) -> Result<String> {
         crypto::pairing_tls_config(),
     )
     .await?;
-    ProtocolRange::require(
-        ws.get_ref().relay.as_ref().map(|r| r.protocol).unwrap_or(1),
-        4,
-    )?;
+    ProtocolRange::require(ws.get_ref().relay.as_ref().map(|r| r.protocol).unwrap_or(0))?;
     let RelayMessage::PairingInfo {
         invitation_id,
         locator: received,

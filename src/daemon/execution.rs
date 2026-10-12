@@ -603,13 +603,17 @@ mod tests {
             .build()?
             .block_on(async {
                 let dir = config::device_dir()?;
-                let (manager, member, key_pem, cert_pem) = Manager::create(
+                let (manager, _, _, _) = Manager::create(
                     &dir.join("manager"),
                     "cancel-test",
                     vec!["https://127.0.0.1:1".into()],
                     String::new(),
                 )?;
-                let roster = manager.roster()?;
+                let (key_pem, csr) = crate::crypto::new_device_request()?;
+                let pair = manager.pair(&manager.invite(false)?, "worker-test", &csr)?;
+                let member = pair.member;
+                let cert_pem = pair.cert_pem;
+                let roster = pair.roster;
                 let members = RosterCache::open(&dir.join("roster.db"))?;
                 members.observe(&roster.roster.network_id, &roster)?;
                 let id = Identity {

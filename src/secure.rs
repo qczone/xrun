@@ -107,7 +107,7 @@ enum FlowControl {
 fn tunnel(outer: Ws, flow_control: bool) -> Tunnel {
     let mut relay = outer.get_ref().relay.clone();
     let (cache, mut cache_requests) = net::CacheControl::channel();
-    let cache_enabled = relay.as_ref().is_some_and(|context| context.protocol >= 2);
+    let cache_enabled = relay.is_some();
     if cache_enabled && let Some(context) = &mut relay {
         context.cache = Some(cache);
     }

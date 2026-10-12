@@ -24,15 +24,13 @@ pub(super) async fn status_route(
                             },
                         )
                         .await?;
-                        if selected >= 3 {
-                            send(
-                                &mut ws,
-                                &RelayMessage::RelayInfo {
-                                    owner: app.admission.owner(),
-                                },
-                            )
-                            .await?;
-                        }
+                        send(
+                            &mut ws,
+                            &RelayMessage::RelayInfo {
+                                owner: app.admission.owner(),
+                            },
+                        )
+                        .await?;
                         return Ok(());
                     }
                     let path = format!("/networks/{network}/status");

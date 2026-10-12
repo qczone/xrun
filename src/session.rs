@@ -155,7 +155,7 @@ impl Session {
     }
     // Complete local validation before the caller records a possibly sent request.
     pub(crate) fn prepare_request(&self, request: Request) -> Result<Message> {
-        encode_request(self.protocol, request.minimum_protocol(), request)
+        encode_request(self.protocol, request)
     }
     // Recycling is optional. A confirmed operation must not become a failure
     // just because the daemon/socket disappears after the final response.
@@ -182,8 +182,8 @@ impl Session {
     }
 }
 
-fn encode_request(protocol: u32, required: u32, request: Request) -> Result<Message> {
-    ProtocolRange::require(protocol, required)?;
+fn encode_request(protocol: u32, request: Request) -> Result<Message> {
+    ProtocolRange::require(protocol)?;
     let text = serde_json::to_string(&Data::Request { request })?;
     if text.len() > MAX_MESSAGE {
         bail!(ErrorCode::MessageTooLarge.error("request header limit exceeded"));
@@ -201,9 +201,9 @@ mod tests {
             port: 1234,
             context: crate::protocol::JobContext::new("db"),
         };
-        let error = encode_request(1, 2, request()).unwrap_err();
+        let error = encode_request(4, request()).unwrap_err();
         assert!(crate::error::is(&error, ErrorCode::VersionMismatch));
-        let Message::Text(text) = encode_request(1, 1, request()).unwrap() else {
+        let Message::Text(text) = encode_request(PROTOCOL, request()).unwrap() else {
             panic!("request header must be text");
         };
         assert!(matches!(

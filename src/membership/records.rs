@@ -373,7 +373,7 @@ mod tests {
         let fixture = vector();
         assert_eq!(fixture["signature_format"], SIGNATURE_FORMAT);
         let original: ProtocolRange = serde_json::from_value(fixture["protocol"].clone())?;
-        assert_eq!(ProtocolRange::CURRENT.negotiate(original)?, 1);
+        assert_eq!(ProtocolRange::CURRENT.negotiate(original)?, PROTOCOL);
         let records = &fixture["records"];
         let roster: Roster = serde_json::from_value(records["roster"]["value"][0].clone())?;
         let root_pem = fixture["root_pem"].as_str().unwrap();

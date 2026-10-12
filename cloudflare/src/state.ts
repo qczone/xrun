@@ -126,7 +126,7 @@ export function attachment(value: unknown): Attachment | undefined {
     typeof value.ip !== "string"
   )
     return;
-  const protocol = value.protocol ?? 1;
+  const protocol = value.protocol;
   if (
     typeof protocol !== "number" ||
     !Number.isInteger(protocol) ||
@@ -136,8 +136,7 @@ export function attachment(value: unknown): Attachment | undefined {
     return;
   if (
     value.pairing !== undefined &&
-    (protocol < 4 ||
-      typeof value.pairing !== "string" ||
+    (typeof value.pairing !== "string" ||
       !SESSION_TOKEN.test(value.pairing) ||
       !["auth", "verifying", "pending", "source", "target"].includes(
         String(value.role),
@@ -249,7 +248,7 @@ export function attachment(value: unknown): Attachment | undefined {
         ...session,
         role: "pending",
         anonymous: value.anonymous,
-        source: (value.source as string | null | undefined) ?? null,
+        source: value.source as string | null,
         management: value.management === true,
         deadline: value.deadline,
       };
@@ -281,17 +280,14 @@ export function attachment(value: unknown): Attachment | undefined {
       };
       if (value.role === "target") return { ...tunnel, role: "target" };
       if (typeof value.anonymous !== "boolean" || !admission(value)) return;
-      const cachedSince = value.cachedSince ?? null;
-      if (
-        cachedSince !== null &&
-        (!deadline(cachedSince) || protocol < 2 || value.anonymous)
-      )
+      const cachedSince = value.cachedSince;
+      if (cachedSince !== null && (!deadline(cachedSince) || value.anonymous))
         return;
       return {
         ...tunnel,
         role: "source",
         anonymous: value.anonymous,
-        source: (value.source as string | null | undefined) ?? null,
+        source: value.source as string | null,
         management: value.management === true,
         cachedSince,
       };
@@ -303,9 +299,9 @@ export function attachment(value: unknown): Attachment | undefined {
 
 function admission(value: Record<string, unknown>): boolean {
   return (
-    (value.source == null ||
+    (value.source === null ||
       (typeof value.source === "string" && DEVICE.test(value.source))) &&
-    (value.management === undefined || typeof value.management === "boolean") &&
+    typeof value.management === "boolean" &&
     !(value.anonymous && (value.source != null || value.management === true)) &&
     !(value.management === true && value.source == null)
   );

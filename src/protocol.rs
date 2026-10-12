@@ -337,24 +337,6 @@ pub enum Request {
         execution: StreamExecution,
     },
 }
-impl Request {
-    /// Oldest protocol that implements this operation and its semantic options.
-    /// New operations and behavior-changing fields must add explicit version gates here.
-    pub fn minimum_protocol(&self) -> u32 {
-        match self {
-            Self::Exec { .. }
-            | Self::Jobs { .. }
-            | Self::Logs { .. }
-            | Self::Kill { .. }
-            | Self::Wait { .. }
-            | Self::Push { .. }
-            | Self::Pull { .. }
-            | Self::Screenshot { .. }
-            | Self::Forward { .. }
-            | Self::StreamExec { .. } => 1,
-        }
-    }
-}
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 /// Endpoint request/response messages; Complete bounds one cached-session operation.
@@ -533,11 +515,10 @@ mod limit_tests {
         }))
         .unwrap();
         assert!(matches!(request, Request::Forward { port: 1234, .. }));
-        assert_eq!(request.minimum_protocol(), 1);
         assert!(serde_json::from_value::<Request>(serde_json::json!({"op":"forward"})).is_err());
         let ready: Data = serde_json::from_value(serde_json::json!({
-            "type":"ready", "version":"future-release", "protocol":{"min":1,"max":2},
-            "selected_protocol":2, "device_id":"device", "db_id":"db", "default_cwd":"/tmp",
+            "type":"ready", "version":"future-release", "protocol":{"min":5,"max":5},
+            "selected_protocol":5, "device_id":"device", "db_id":"db", "default_cwd":"/tmp",
             "diagnostic":"optional metadata",
         }))
         .unwrap();

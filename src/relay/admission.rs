@@ -76,7 +76,7 @@ pub(super) async fn claim_route(
     ws: WebSocketUpgrade,
 ) -> ApiResult<Response> {
     let selected = protocol(&headers)?;
-    ProtocolRange::require(selected, 3)?;
+    ProtocolRange::require(selected)?;
     app.admission.check(&network, true)?;
     Ok(negotiated(
         ws.max_message_size(MAX_MESSAGE)

@@ -7,7 +7,7 @@ test("restored roles require their own complete fields and reject malformed budg
     id: crypto.randomUUID(),
     network: "probe",
     ip: "unknown",
-    protocol: 2,
+    protocol: 5,
   };
   const binding = {
     target: `dev_${"a".repeat(32)}`,
@@ -28,16 +28,21 @@ test("restored roles require their own complete fields and reject malformed budg
   };
   expect(attachment(live)).toEqual(live);
   const cachedSince = Date.now();
-  expect(attachment({...live, cachedSince})).toEqual({...live, cachedSince});
-  expect(attachment({...live, cachedSince, protocol: 1})).toBeUndefined();
-  expect(attachment({...live, cachedSince, anonymous: true})).toBeUndefined();
-  const {protocol: _protocol, cachedSince: _cached, ...legacy} = live;
-  expect(attachment(legacy)).toEqual({...live, protocol: 1});
-  const {source: _source, management: _management, ...oldAdmission} = live;
-  expect(attachment(oldAdmission)).toEqual({...live, source: null});
-  expect(attachment({...live, source: "invalid"})).toBeUndefined();
-  expect(attachment({...live, source: null, management: true})).toBeUndefined();
-  expect(attachment({...live, anonymous: true})).toBeUndefined();
+  expect(attachment({ ...live, cachedSince })).toEqual({
+    ...live,
+    cachedSince,
+  });
+  expect(attachment({ ...live, cachedSince, protocol: 1 })).toBeUndefined();
+  expect(attachment({ ...live, cachedSince, anonymous: true })).toBeUndefined();
+  const { protocol: _protocol, cachedSince: _cached, ...legacy } = live;
+  expect(attachment(legacy)).toBeUndefined();
+  const { source: _source, management: _management, ...oldAdmission } = live;
+  expect(attachment(oldAdmission)).toBeUndefined();
+  expect(attachment({ ...live, source: "invalid" })).toBeUndefined();
+  expect(
+    attachment({ ...live, source: null, management: true }),
+  ).toBeUndefined();
+  expect(attachment({ ...live, anonymous: true })).toBeUndefined();
   for (const outstanding of [-1, WINDOW + 1, 1.5, NaN, Infinity, "0"]) {
     expect(attachment({ ...live, outstanding })).toBeUndefined();
   }

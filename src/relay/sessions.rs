@@ -116,6 +116,7 @@ pub(super) async fn source(
     options: SourceOptions<'_>,
 ) -> Result<()> {
     let SourceOptions { protocol, pairing } = options;
+    ProtocolRange::require(protocol)?;
     let path = format!("/networks/{network}/connect/{target}");
     let device = authenticate(ws, network, &path, permit)
         .await?
@@ -177,7 +178,7 @@ pub(super) async fn source(
         send(ws, &RelayMessage::Connected { flow_control: false }).await?;
         let result = if let Some(room) = pairing {
             super::pairing::bridge(app, network, &room.manager, ws, &mut target, &mut closed).await
-        } else { bridge(app, &sid, ws, &mut target, &mut closed, !anonymous && protocol >= 2).await };
+        } else { bridge(app, &sid, ws, &mut target, &mut closed, !anonymous).await };
         let _ = tokio::time::timeout(CLOSE_TIMEOUT, target.close()).await;
         result
     }.await;

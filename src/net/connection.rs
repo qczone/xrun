@@ -85,9 +85,6 @@ pub(crate) async fn cache_state(ws: &mut Ws, idle: bool) -> Result<bool> {
     let Some(relay) = &ws.get_ref().relay else {
         return Ok(false);
     };
-    if relay.protocol < 2 {
-        return Ok(false);
-    }
     let Some(control) = &relay.cache else {
         return Ok(false);
     };

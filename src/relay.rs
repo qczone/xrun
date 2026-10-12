@@ -81,8 +81,15 @@ mod protocol_tests {
     fn admission_depends_on_protocol_and_not_release_identity() {
         let mut headers = HeaderMap::new();
         headers.insert("x-xrun-version", "future-release".parse().unwrap());
-        headers.insert("x-xrun-protocol", "1-2".parse().unwrap());
-        assert_eq!(protocol(&headers).unwrap(), 2);
+        headers.insert("x-xrun-protocol", "5-5".parse().unwrap());
+        assert_eq!(protocol(&headers).unwrap(), PROTOCOL);
+        for old in ["1-1", "2-2", "3-3", "4-4", "1-4"] {
+            headers.insert("x-xrun-protocol", old.parse().unwrap());
+            assert!(crate::error::is(
+                &protocol(&headers).unwrap_err(),
+                ErrorCode::VersionMismatch
+            ));
+        }
         let future = PROTOCOL + 1;
         headers.insert(
             "x-xrun-protocol",

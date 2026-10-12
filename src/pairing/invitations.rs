@@ -144,7 +144,7 @@ impl Invitations {
         if active.device != id.device_id {
             bail!(ErrorCode::IdentityChanged.error("restart daemon after replacing its identity"));
         }
-        ProtocolRange::require(active.protocol, 4)?;
+        ProtocolRange::require(active.protocol)?;
         let manager = network::manager(id)?;
         network::observe(id, &manager.roster()?)?;
         if let Some(old) = replace {

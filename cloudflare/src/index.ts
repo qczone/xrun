@@ -33,12 +33,6 @@ export default {
     }
     if (request.headers.get("Upgrade")?.toLowerCase() !== "websocket")
       return error("INVALID_REQUEST", "WebSocket required", 426);
-    if (pairing && selected < 4)
-      return error(
-        "VERSION_MISMATCH",
-        "Short pairing requires protocol 4",
-        409,
-      );
     const headers = new Headers(request.headers);
     headers.set("X-Xrun-Negotiated-Protocol", String(selected));
     headers.set(

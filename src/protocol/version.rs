@@ -3,8 +3,8 @@ use crate::error::ErrorCode;
 use anyhow::{Result, bail};
 use serde::{Deserialize, Serialize};
 
-/// Highest implemented protocol version. Version 1 starts the new compatibility baseline.
-pub const PROTOCOL: u32 = 4;
+/// The single pre-release wire protocol. Older releases must upgrade all components.
+pub const PROTOCOL: u32 = 5;
 /// Signature format version; changing serialized signed records requires a new format.
 pub const SIGNATURE_FORMAT: u32 = 1;
 
@@ -17,9 +17,9 @@ pub struct ProtocolRange {
     pub max: u32,
 }
 impl ProtocolRange {
-    /// Supported versions. The initial protocol has no historical predecessor.
+    /// Only protocol 5 is implemented.
     pub const CURRENT: Self = Self {
-        min: 1,
+        min: PROTOCOL,
         max: PROTOCOL,
     };
 
@@ -32,7 +32,10 @@ impl ProtocolRange {
             || peer.min > peer.max
             || selected < self.min.max(peer.min)
         {
-            bail!(ErrorCode::VersionMismatch.error("no common supported protocol"));
+            bail!(
+                ErrorCode::VersionMismatch
+                    .error("protocol 5 required; upgrade peers and relay together")
+            );
         }
         Ok(selected)
     }
@@ -46,14 +49,11 @@ impl ProtocolRange {
     }
 
     /// Require a negotiated version before sending a feature with execution semantics.
-    pub fn require(selected: u32, introduced: u32) -> Result<()> {
+    pub fn require(selected: u32) -> Result<()> {
         Self::CURRENT.negotiate(Self {
             min: selected,
             max: selected,
         })?;
-        if selected < introduced {
-            bail!(ErrorCode::VersionMismatch.error("operation requires a newer protocol"));
-        }
         Ok(())
     }
 
@@ -101,8 +101,8 @@ mod tests {
             assert!(crate::error::is(&error, ErrorCode::VersionMismatch));
         }
         assert!(current.confirm(current, 2).is_err());
-        assert!(ProtocolRange::require(1, 2).is_err());
-        assert!(ProtocolRange::require(1, 1).is_ok());
+        assert!(ProtocolRange::require(4).is_err());
+        assert!(ProtocolRange::require(PROTOCOL).is_ok());
         for invalid in [
             "",
             "1",

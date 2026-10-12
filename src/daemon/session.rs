@@ -74,7 +74,7 @@ pub(super) async fn data_session(
                 let Data::Request { request } = req else {
                     bail!(ErrorCode::InvalidMessage.error("expected operation"));
                 };
-                ProtocolRange::require(protocol, request.minimum_protocol())?;
+                ProtocolRange::require(protocol)?;
                 let changes_remote_state = matches!(
                     &request,
                     Request::Exec { .. } | Request::Push { .. } | Request::Kill { .. }

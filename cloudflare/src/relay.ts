@@ -242,14 +242,6 @@ export class XrunRelay extends DurableObject<Env> {
         "Missing negotiated relay protocol",
         409,
       );
-    if (parsed.action === "claim" && protocol < 3)
-      return error("VERSION_MISMATCH", "Relay claims require protocol 3", 409);
-    if (pairing && protocol < 4)
-      return error(
-        "VERSION_MISMATCH",
-        "Short pairing requires protocol 4",
-        409,
-      );
     const connection = {
       id: crypto.randomUUID(),
       network: parsed.network,
@@ -302,11 +294,10 @@ export class XrunRelay extends DurableObject<Env> {
         });
       this.send(server, { type: "challenge", nonce });
       if (probe) {
-        if (protocol >= 3)
-          this.send(server, {
-            type: "relay_info",
-            owner: this.admission.owner(),
-          });
+        this.send(server, {
+          type: "relay_info",
+          owner: this.admission.owner(),
+        });
         this.close(server);
       }
     }
@@ -494,7 +485,7 @@ export class XrunRelay extends DurableObject<Env> {
       object(value) &&
       (value.type === "pairing_register" || value.type === "pairing_cancel")
     ) {
-      if (!state.manager || state.protocol < 4)
+      if (!state.manager)
         throw new AdmissionError(
           "NOT_MANAGER",
           "Pairing requires the proven manager",
@@ -588,7 +579,6 @@ export class XrunRelay extends DurableObject<Env> {
         if (
           state.role !== "source" ||
           state.anonymous ||
-          state.protocol < 2 ||
           typeof value.idle !== "boolean"
         )
           throw new Error("Invalid cache state declaration");

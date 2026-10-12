@@ -57,14 +57,12 @@ async fn control_once(
         .relay
         .as_ref()
         .map(|relay| relay.protocol)
-        .unwrap_or(1);
+        .unwrap_or(0);
     rt.control
         .invitations
         .connected(&address, &current.device_id, protocol);
-    if protocol >= 4 {
-        for registration in rt.control.invitations.registrations(&address) {
-            net::send(&mut ws, &registration).await?;
-        }
+    for registration in rt.control.invitations.registrations(&address) {
+        net::send(&mut ws, &registration).await?;
     }
     rt.control.connected(true)?;
     let mut ping = tokio::time::interval(HEARTBEAT_INTERVAL);
@@ -75,7 +73,7 @@ async fn control_once(
     loop {
         tokio::select! {
             Some(command) = invitations.recv() => {
-                ProtocolRange::require(protocol, 4)?;
+                ProtocolRange::require(protocol)?;
                 net::send(&mut ws, &command.message).await?;
             },
             _ = changes.changed() => check_control_access(&rt, &address)?,
