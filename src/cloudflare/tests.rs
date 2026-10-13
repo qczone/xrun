@@ -121,7 +121,7 @@ async fn mock(State(state): State<Arc<Mutex<Mock>>>, request: Request<Body>) -> 
     if path.ends_with("/workers/scripts") {
         return match &state.metadata {
             Some(metadata) => reply(
-                json!([{"id":"xrun-relay","tags":metadata["tags"],"migration_tag":state.migration.as_deref().unwrap_or("v2") }]),
+                json!([{"id":"xrun-relay","tags":metadata["tags"],"migration_tag":state.migration.as_deref().unwrap_or("v1") }]),
             ),
             None => reply(json!([])),
         };
@@ -229,7 +229,7 @@ async fn new_deployment_and_updates_keep_the_origin_and_durable_objects() -> Res
     assert_eq!(state.uploads.len(), 2);
     assert_eq!(
         state.uploads[0]["migrations"],
-        json!({"new_tag":"v2","new_sqlite_classes":["XrunRelay","XrunData"]})
+        json!({"new_tag":"v1","new_sqlite_classes":["XrunRelay","XrunData"]})
     );
     assert!(state.uploads[1].get("migrations").is_none());
     assert_eq!(state.uploads[0]["bindings"], state.uploads[1]["bindings"]);
@@ -470,7 +470,7 @@ async fn interrupted_removal_retries_without_repeating_the_namespace_deletion() 
         assert_eq!(remote.uploads.len(), 2);
         assert_eq!(
             remote.uploads[1]["migrations"],
-            json!({"old_tag":"v2","new_tag":"v3","deleted_classes":["XrunRelay","XrunData"]})
+            json!({"old_tag":"v1","new_tag":"removed","deleted_classes":["XrunRelay","XrunData"]})
         );
         assert_eq!(remote.uploads[1]["bindings"], json!([]));
         remote.fail_delete = false;
@@ -531,7 +531,7 @@ async fn desktop_accounts_are_listed_without_terminal_selection_and_validate_ids
 }
 
 #[tokio::test]
-async fn region_hints_persist_and_v1_upgrade_adds_only_the_data_namespace() -> Result<()> {
+async fn region_hints_persist_across_current_deployment_updates() -> Result<()> {
     use super::Region;
     let server = server().await?;
     let directory = tempfile::tempdir()?;
@@ -547,7 +547,6 @@ async fn region_hints_persist_and_v1_upgrade_adds_only_the_data_namespace() -> R
     )
     .await?;
     assert_eq!(first.region, Region::ApacNe);
-    server.state.lock().unwrap().migration = Some("v1".into());
     let second = deploy_with(
         api()?,
         directory.path(),
@@ -561,10 +560,7 @@ async fn region_hints_persist_and_v1_upgrade_adds_only_the_data_namespace() -> R
     assert_eq!(second.region, Region::ApacNe);
     {
         let remote = server.state.lock().unwrap();
-        assert_eq!(
-            remote.uploads[1]["migrations"],
-            json!({"old_tag":"v1","new_tag":"v2","new_sqlite_classes":["XrunData"]})
-        );
+        assert!(remote.uploads[1].get("migrations").is_none());
         assert!(
             remote.uploads[1]["bindings"].as_array().unwrap().contains(
                 &json!({"type":"plain_text","name":"XRUN_RELAY_REGION","text":"apac-ne"})
@@ -589,5 +585,22 @@ async fn region_hints_persist_and_v1_upgrade_adds_only_the_data_namespace() -> R
             .any(|binding| binding["name"] == "XRUN_RELAY_REGION")
     );
     assert!(serde_json::from_str::<Region>("\"arbitrary\"").is_err());
+    let path = Deployment::path(directory.path(), "xrun-relay")?;
+    let saved = std::fs::read(&path)?;
+    server.state.lock().unwrap().migration = Some("unsupported".into());
+    let error = deploy_with(
+        api()?,
+        directory.path(),
+        "xrun-relay",
+        ACCOUNT,
+        &bundle()?,
+        None,
+    )
+    .await
+    .err()
+    .expect("unsupported Worker format must be rejected");
+    assert!(crate::error::is(&error, ErrorCode::VersionMismatch));
+    assert_eq!(server.state.lock().unwrap().uploads.len(), 3);
+    assert_eq!(std::fs::read(path)?, saved);
     Ok(())
 }

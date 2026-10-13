@@ -264,7 +264,7 @@ fn menu_view(language: Language, status: anyhow::Result<TrayStatus>) -> MenuView
     } else if s.local.daemon_connected == Some(true) {
         language.text("Connected", "已连接")
     } else if s.local.daemon_connected.is_none() {
-        language.text("Running (legacy)", "旧版运行中")
+        language.text("Starting…", "启动中…")
     } else {
         language.text("Connecting…", "连接中…")
     };
@@ -493,7 +493,7 @@ pub(crate) mod tests {
                         true,
                         false,
                         None,
-                        "旧版运行中",
+                        "启动中…",
                         PrimaryAction::Pause,
                     ),
                     (

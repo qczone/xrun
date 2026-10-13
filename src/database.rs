@@ -1,10 +1,8 @@
-//! Schema initialization; disposable history upgrades have a separate backup policy.
-mod upgrade;
+//! Atomic initialization of the single supported database layout.
 use crate::error::ErrorCode;
 use anyhow::{Result, bail};
 use rusqlite::{Connection, TransactionBehavior};
 use std::time::{Duration, Instant};
-pub(crate) use upgrade::{initialize_with_backup, older_schema};
 
 const BUSY_TIMEOUT: Duration = Duration::from_secs(5);
 const WAL_RETRY_DELAY: Duration = Duration::from_millis(10);
@@ -60,7 +58,7 @@ pub(crate) fn initialize(
     if version != 0 || tables != 0 {
         bail!(ErrorCode::DbSchemaMismatch.error(format!(
             "{kind} schema {version} is unsupported; expected {supported}. \
-             Use a matching xrun version or see `xrun doc upgrade` for explicit recovery while stopped."
+             Stop xrun and clear development data before using the current format."
         )));
     }
     transaction.execute_batch(schema)?;

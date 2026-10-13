@@ -53,7 +53,7 @@ codes! {
     DaemonRunning => "DAEMON_RUNNING",
     DaemonStopping => "DAEMON_STOPPING",
     DaemonStopTimeout => "DAEMON_STOP_TIMEOUT",
-    DaemonUpgradeRequired => "DAEMON_UPGRADE_REQUIRED",
+    DaemonNotReady => "DAEMON_NOT_READY",
     DbCorrupt => "DB_CORRUPT",
     DbMissing => "DB_MISSING",
     DbReset => "DB_RESET",
@@ -127,7 +127,6 @@ codes! {
     MemberLimit => "MEMBER_LIMIT",
     MemberStateMissing => "MEMBER_STATE_MISSING",
     MessageTooLarge => "MESSAGE_TOO_LARGE",
-    MigrationRequired => "MIGRATION_REQUIRED",
     NameInUse => "NAME_IN_USE",
     NameTaken => "NAME_TAKEN",
     NetworkMismatch => "NETWORK_MISMATCH",
@@ -198,7 +197,6 @@ impl ErrorCode {
                 | Self::NotManager
                 | Self::RelayClaimed
                 | Self::RelayUnclaimed
-                | Self::MigrationRequired
                 | Self::IdentityMismatch
                 | Self::UnknownDevice
                 | Self::InvalidToken

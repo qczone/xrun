@@ -7,22 +7,8 @@ pub(crate) const JOB_COLUMNS: &str = concat!(
     "leftover_possible,last_log_seq,log_bytes,output_complete,output_loss_reason,",
     "(SELECT value FROM meta WHERE key='db_id')"
 );
-pub(crate) const JOB_SCHEMA_VERSION: i64 = 4;
+pub(crate) const JOB_SCHEMA_VERSION: i64 = 1;
 const JOB_SCHEMA: &str = include_str!("schema.sql");
-
-pub(crate) fn prepare_upgrade(path: &Path) -> Result<()> {
-    if crate::database::older_schema(path, JOB_SCHEMA_VERSION)? {
-        let mut db = super::open(path, false)?;
-        crate::database::initialize_with_backup(
-            &mut db,
-            path,
-            "jobs",
-            JOB_SCHEMA_VERSION,
-            JOB_SCHEMA,
-        )?;
-    }
-    Ok(())
-}
 
 pub(super) struct Database {
     pub(super) db: Connection,

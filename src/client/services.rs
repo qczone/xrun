@@ -37,53 +37,39 @@ pub fn daemon_state(dir: &Path) -> Result<DaemonState> {
 }
 
 /// Initialize local daemon storage for the saved identity, without launching it.
-/// Older history is backed up and rebuilt while stopped; identity and authorization
-/// are preserved. Unknown schemas still fail. Registration may already be complete
+/// Only the current database layout is accepted. Registration may already be complete
 /// if this fails, so adapters should offer a service retry.
 pub fn initialize_daemon() -> Result<()> {
     daemon::init()
 }
 
-/// Whether an older local Job or submission database needs a backup and rebuild.
-/// This probe only reads existing databases and does not create local storage.
-pub fn storage_upgrade_required() -> Result<bool> {
-    daemon::storage_upgrade_required()
-}
-
 /// Whether a running daemon must switch to the application's current helper.
-/// A different IPC version or an older Job schema requires a graceful restart.
-pub fn daemon_upgrade_required() -> Result<bool> {
-    Ok(daemon_running()?
-        && (daemon::job_upgrade_required()?
-            || crate::ipc::version_matches(&config::device_dir()?)? == Some(false)))
+/// A different IPC version requires a graceful restart.
+pub fn daemon_restart_required() -> Result<bool> {
+    Ok(daemon_running()? && crate::ipc::version_matches(&config::device_dir()?)? == Some(false))
 }
 
-/// Back up and rebuild older disposable databases without migrating records.
-/// Old Job databases require a stopped daemon. Submission writers are serialized
-/// by SQLite. No identity, membership or authorization data is modified.
-pub fn prepare_storage_upgrade() -> Result<()> {
-    daemon::prepare_storage_upgrade()
-}
-
-/// Whether an application upgrade still needs to resume a previously running daemon.
+/// Whether service replacement still needs to resume a previously running daemon.
 /// The private marker survives a crash or a failed storage/service retry.
-pub fn daemon_upgrade_pending() -> Result<bool> {
-    Ok(config::device_dir()?.join("daemon-upgrade-resume").exists())
+pub fn daemon_restart_pending() -> Result<bool> {
+    Ok(config::device_dir()?
+        .join("daemon-restart-pending")
+        .exists())
 }
 
-/// Remember that the daemon was running, then stop it gracefully for an upgrade.
-/// Storage or supervisor failures leave the resume marker available for retry.
-pub async fn stop_daemon_for_upgrade() -> Result<()> {
+/// Remember that the daemon was running, then stop it gracefully for replacement.
+/// Supervisor failures leave the resume marker available for retry.
+pub async fn stop_daemon_for_restart() -> Result<()> {
     config::atomic_private_write(
-        &config::device_dir()?.join("daemon-upgrade-resume"),
+        &config::device_dir()?.join("daemon-restart-pending"),
         b"resume\n",
     )?;
     service::stop_daemon().await
 }
 
 /// Clear the pending restart after successful startup or an explicit user stop.
-pub fn finish_daemon_upgrade() -> Result<()> {
-    let path = config::device_dir()?.join("daemon-upgrade-resume");
+pub fn finish_daemon_restart() -> Result<()> {
+    let path = config::device_dir()?.join("daemon-restart-pending");
     match std::fs::remove_file(&path) {
         Ok(()) => config::sync_parent(&path),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
@@ -95,7 +81,7 @@ pub fn finish_daemon_upgrade() -> Result<()> {
 /// delete identity or remove history. Already stopped daemons succeed immediately.
 pub async fn stop_daemon() -> Result<()> {
     service::stop_daemon().await?;
-    finish_daemon_upgrade()
+    finish_daemon_restart()
 }
 
 /// Whether a supervisor registration exists for the current user's daemon.

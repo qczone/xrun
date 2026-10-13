@@ -280,7 +280,7 @@ async fn unrelated_membership_updates_preserve_the_authenticated_pair_and_renew_
         "{log}"
     );
     assert!(log.contains("reusing operation session"));
-    let network = &lab.source_identity.network.as_ref().unwrap().network_id;
+    let network = &lab.source_identity.network.network_id;
     let target = xrun::testing::membership::RosterCache::open(&lab.target.join(".xrun/roster.db"))?;
     assert!(target.load(network)?.member("unrelated-node").is_ok());
     Ok(())

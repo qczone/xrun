@@ -130,7 +130,7 @@ pub(super) async fn run(
                             read.await
                         };
                         match result {
-                            Ok((logs, state)) => (tail_events(logs, tail), log_error(&state)),
+                            Ok((logs, state)) => (logs, log_error(&state)),
                             Err(e) => (vec![], Some(e.to_string())),
                         }
                     };
@@ -206,7 +206,7 @@ pub(super) async fn run(
                     let latest = all.last().map(|event| event.seq).unwrap_or(after);
                     (all, state, latest)
                 };
-                let logs = tail_events(all, tail);
+                let logs = all;
                 if json {
                     println!("{}", serde_json::to_string(&logs)?)
                 } else {

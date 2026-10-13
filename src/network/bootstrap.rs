@@ -14,7 +14,7 @@ use std::time::Duration;
 use super::links::{discover_relay_ca, endpoint, relay_pin};
 use super::peers::{online_ids, states_for};
 use super::transport::{authenticate, receive};
-use super::{archive_legacy, cache, manager, observe};
+use super::{cache, manager, observe};
 
 pub(crate) async fn create(relay_link: &str, name: Option<String>) -> Result<Identity> {
     let endpoint = endpoint(relay_link)?;
@@ -70,18 +70,16 @@ pub(crate) async fn create(relay_link: &str, name: Option<String>) -> Result<Ide
     };
     let manager_dir = config::network_dir_at(&dir)?.join("manager");
     if let Some(owner) = &owner {
-        let matches = existing.as_ref().is_some_and(|id| {
-            id.network
-                .as_ref()
-                .is_some_and(|network| network.network_id == owner.network_id)
-        });
+        let matches = existing
+            .as_ref()
+            .is_some_and(|id| id.network.network_id == owner.network_id);
         if !matches && !manager_dir.join("manager.db").exists() {
             bail!(ErrorCode::RelayClaimed.error(
                 "relay already belongs to a network; ask its manager for a join invitation",
             ));
         }
     }
-    if let Some(old) = existing.as_ref().filter(|i| i.network.is_some()) {
+    if let Some(old) = existing.as_ref() {
         if name.as_ref().is_some_and(|name| name != &old.name) {
             bail!(ErrorCode::InvalidRequest.error("device names are immutable within a network"))
         }
@@ -160,15 +158,12 @@ pub(crate) async fn create(relay_link: &str, name: Option<String>) -> Result<Ide
             inviter_id: None,
             allow_inviter: false,
         },
-        network: Some(NetworkIdentity {
+        network: NetworkIdentity {
             network_id: roster.roster.network_id.clone(),
             manager_id: roster.roster.manager_id.clone(),
-        }),
+        },
     };
     claim(&id, &manager, &id.addresses, &relay_ca).await?;
-    if existing.is_some() {
-        archive_legacy(&dir)?;
-    }
     cache()?.observe(&roster.roster.network_id, &roster)?;
     id.save()?;
     for file in ["device.key.pending", "device.pem.pending"] {

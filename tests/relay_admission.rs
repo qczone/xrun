@@ -126,7 +126,7 @@ async fn first_manager_claim_survives_restart_and_other_devices_need_an_invitati
     let identity: xrun::testing::config::Identity =
         xrun::testing::config::read(&member.join(".xrun/identity.toml"))?;
     assert_eq!(joined["device_id"], identity.device_id);
-    assert_eq!(identity.network.unwrap().network_id, winner["network_id"]);
+    assert_eq!(identity.network.network_id, winner["network_id"]);
     assert_owner()?;
     manager.start_kill()?;
     manager.wait().await?;

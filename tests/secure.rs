@@ -9,7 +9,7 @@ use tokio_tungstenite::{
     tungstenite::{Message, protocol::Role},
 };
 use xrun::testing::{
-    config::{Identity, ServerConfig},
+    config::{Identity, NetworkIdentity, ServerConfig},
     crypto,
     membership::*,
     net::{self, SocketIo, Ws},
@@ -31,9 +31,14 @@ fn identities(dir: &std::path::Path) -> Result<(Manager, Identity, Identity, Ide
         vec!["https://127.0.0.1:9528".into()],
         transport.ca_pem,
     )?;
-    let root = manager.roster()?.ca_pem;
+    let roster = manager.roster()?;
+    let network = NetworkIdentity {
+        network_id: roster.roster.network_id,
+        manager_id: roster.roster.manager_id,
+    };
+    let root = roster.ca_pem;
     let manager_id = Identity {
-        network: None,
+        network: network.clone(),
         device_id: member.device_id,
         name: member.name,
         addresses: vec![],
@@ -50,7 +55,7 @@ fn identities(dir: &std::path::Path) -> Result<(Manager, Identity, Identity, Ide
         let (key_pem, csr) = crypto::new_device_request()?;
         let pair = manager.pair(&manager.invite(false)?, name, &csr)?;
         members.push(Identity {
-            network: None,
+            network: network.clone(),
             device_id: pair.member.device_id,
             name: name.into(),
             addresses: vec![],

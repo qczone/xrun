@@ -34,7 +34,7 @@ export interface Status {
     installed: boolean;
     approval_required: boolean;
     app_at_login: boolean;
-    legacy_installed: boolean;
+    cli_service_installed: boolean;
     development: boolean;
   };
   allow_from: string[];

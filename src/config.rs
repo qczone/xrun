@@ -39,8 +39,7 @@ pub struct Identity {
     pub cert_pem: String,
     pub key_pem: String,
     pub registration: Registration,
-    #[serde(default)]
-    pub network: Option<NetworkIdentity>,
+    pub network: NetworkIdentity,
 }
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]

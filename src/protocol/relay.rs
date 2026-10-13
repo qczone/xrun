@@ -277,7 +277,6 @@ pub enum RelayMessage {
     },
     /// Both ciphertext legs have been joined.
     Connected {
-        #[serde(default)]
         /// Whether ciphertext framing requires credit acknowledgments.
         flow_control: bool,
     },

@@ -101,8 +101,8 @@ pub(super) async fn remove_with(api: Api, directory: &Path, name: &str) -> Resul
     if let Some(worker) = api.worker(&state.account_id, name).await? {
         state.validate_ownership(&worker)?;
         let migration = worker["migration_tag"].as_str().unwrap_or_default();
-        if !["v1", "v2"].contains(&migration)
-            && !(migration == "v3" && state.status == DeploymentStatus::Removing)
+        if migration != "v1"
+            && !(migration == "removed" && state.status == DeploymentStatus::Removing)
         {
             bail!(
                 ErrorCode::VersionMismatch
@@ -112,17 +112,14 @@ pub(super) async fn remove_with(api: Api, directory: &Path, name: &str) -> Resul
         state.status = DeploymentStatus::Removing;
         state.save(directory)?;
         let script = format!("/accounts/{}/workers/scripts/{name}", state.account_id);
-        if migration != "v3" {
-            let classes = if migration == "v1" {
-                vec!["XrunRelay"]
-            } else {
-                vec!["XrunRelay", "XrunData"]
-            };
+        if migration != "removed" {
+            // A lifecycle marker, not another format version. It permits retry
+            // after namespace deletion succeeds but Worker deletion is interrupted.
             let metadata = json!({
                 "main_module":"relay.mjs", "compatibility_date":"2026-10-03",
                 "tags":["xrun-relay",format!("xrun-deployment-{}",state.ownership)],
                 "bindings":[],
-                "migrations":{"old_tag":migration,"new_tag":"v3","deleted_classes":classes}
+                "migrations":{"old_tag":migration,"new_tag":"removed","deleted_classes":["XrunRelay","XrunData"]}
             });
             api.upload(&script, &metadata, CLEANUP).await?;
         }

@@ -34,11 +34,7 @@ pub struct JoinInfo {
 /// safe retry. An already joined identity must remain in the same network.
 pub async fn join(link: &str, name: Option<String>) -> Result<JoinInfo> {
     let dir = config::device_dir()?;
-    let existing = if config::network_dir_at(&dir)?.join("identity.toml").exists() {
-        Identity::load()?.network.is_some()
-    } else {
-        false
-    };
+    let existing = config::network_dir_at(&dir)?.join("identity.toml").exists();
     let id = super::join_identity(link, name).await?;
     if !existing {
         config::update_permission(&crate::network::current(&id)?.roster.manager_id, false)?;

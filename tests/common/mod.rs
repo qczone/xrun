@@ -401,7 +401,7 @@ pub async fn peer_session(
 ) -> Result<xrun::testing::net::Ws> {
     use xrun::testing::{membership::RosterCache, net, protocol::RelayMessage, secure};
     let cache = RosterCache::open(&home.join(".xrun/roster.db"))?;
-    let network = &id.network.as_ref().context("network identity")?.network_id;
+    let network = &id.network.network_id;
     let roster = cache.load(network)?;
     let mut outer = relay_socket(
         Some(id),

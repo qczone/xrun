@@ -49,10 +49,7 @@ pub(crate) fn validate_connection_link(link: &str) -> Result<()> {
 }
 
 pub(crate) fn authority(id: &Identity) -> Result<&NetworkIdentity> {
-    let network = id.network.as_ref().context(
-        ErrorCode::MigrationRequired
-            .error("stop old services, then create or join an end-to-end network"),
-    )?;
+    let network = &id.network;
     if network.network_id != format!("net_{}", crypto::ca_spki_pin(&id.ca_pem)?) {
         bail!(ErrorCode::NetworkMismatch.error("identity root differs from its network ID"))
     }
@@ -98,22 +95,6 @@ pub(crate) fn observe_authority(
         Err(error) if crate::error::is(&error, ErrorCode::RosterRollback) => Ok(()),
         Err(error) => Err(error),
     }
-}
-fn archive_legacy(dir: &std::path::Path) -> Result<()> {
-    let old = std::fs::read(dir.join("identity.toml"))?;
-    config::atomic_private_write(&dir.join("identity.previous.toml"), &old)?;
-    // Preserve jobs, logs and execution settings; old-network grants must not
-    // silently turn into permission for current and future new-network members.
-    config::update_daemon_config(dir, |cfg| {
-        cfg.allow_from.clear();
-        cfg.deny_from.clear();
-        cfg.allow_all = false;
-        Ok(())
-    })?;
-    if dir.join("daemon.initialized").exists() {
-        std::fs::remove_file(dir.join("daemon.initialized"))?;
-    }
-    Ok(())
 }
 pub(crate) async fn http<T: DeserializeOwned>(
     id: &Identity,

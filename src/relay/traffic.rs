@@ -247,13 +247,7 @@ impl Traffic {
             crate::database::configure(&db)?;
             // Only statistical counters permit bounded crash loss. Jobs retain FULL.
             db.pragma_update(None, "synchronous", "NORMAL")?;
-            let version: i64 = db.pragma_query_value(None, "user_version", |row| row.get(0))?;
-            if version == 1 {
-                let tx = db.transaction()?;
-                tx.execute_batch("ALTER TABLE traffic_metadata ADD COLUMN active_sessions INTEGER NOT NULL DEFAULT 0; PRAGMA user_version=2;")?;
-                tx.commit()?;
-            }
-            crate::database::initialize(&mut db, "relay traffic", 2, SCHEMA)?;
+            crate::database::initialize(&mut db, "relay traffic", 1, SCHEMA)?;
             db.execute("UPDATE traffic_metadata SET incomplete=MAX(incomplete,active_sessions>0),active_sessions=0 WHERE id=1", [])?;
             Ok(db)
         })();
@@ -296,7 +290,7 @@ impl Traffic {
         Self::from_database(
             (|| {
                 let mut db = Connection::open_in_memory()?;
-                crate::database::initialize(&mut db, "relay traffic", 2, SCHEMA)?;
+                crate::database::initialize(&mut db, "relay traffic", 1, SCHEMA)?;
                 Ok(db)
             })(),
             false,

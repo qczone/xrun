@@ -89,7 +89,6 @@ impl Drop for Control {
             .is_some_and(|s| s.generation == self.value.lock().unwrap().generation)
         {
             let _ = std::fs::remove_file(self.dir.join("daemon-runtime.json"));
-            let _ = std::fs::remove_file(self.dir.join("daemon-stop"));
         }
     }
 }
@@ -102,22 +101,14 @@ pub fn state(dir: &Path) -> Result<Option<State>> {
 }
 pub async fn request_shutdown(dir: &Path) -> Result<()> {
     let Some(state) = state(dir)? else {
-        bail!(
-            ErrorCode::DaemonUpgradeRequired
-                .error("restart the daemon with the current xrun before stopping it from the app")
-        )
+        bail!(ErrorCode::DaemonNotReady.error("wait until the daemon is ready before stopping it"))
     };
-    if dir.join("daemon-ipc.json").exists() {
-        crate::ipc::stop(dir, &state.generation).await
-    } else {
-        // Also allows the app to stop an installed daemon from before IPC.
-        config::atomic_private_write(&dir.join("daemon-stop"), state.generation.as_bytes())
-    }
+    crate::ipc::stop(dir, &state.generation).await
 }
 /// Waits until a running daemon has applied a local authorization change.
 pub(crate) async fn refresh_access() -> Result<()> {
     let dir = config::device_dir()?;
-    if config::instance_running(&dir.join("daemon.lock"))? && dir.join("daemon-ipc.json").exists() {
+    if config::instance_running(&dir.join("daemon.lock"))? {
         crate::ipc::refresh_access(&dir).await?;
     }
     Ok(())

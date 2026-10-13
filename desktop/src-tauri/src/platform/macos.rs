@@ -30,7 +30,7 @@ impl AppService for SMAppService {
 fn service_state(
     agent: &impl AppService,
     main: &impl AppService,
-    legacy_installed: bool,
+    cli_service_installed: bool,
 ) -> ServiceStatus {
     let agent_status = agent.state();
     let main_status = main.state();
@@ -38,7 +38,7 @@ fn service_state(
         installed: matches!(agent_status, 1 | 2),
         approval_required: agent_status == 2 || main_status == 2,
         app_at_login: matches!(main_status, 1 | 2),
-        legacy_installed,
+        cli_service_installed,
         development: false,
     }
 }
@@ -103,7 +103,7 @@ pub fn state() -> Result<ServiceStatus> {
             installed: false,
             approval_required: false,
             app_at_login: false,
-            legacy_installed: xrun::client::services::cli_daemon_installed()?,
+            cli_service_installed: xrun::client::services::cli_daemon_installed()?,
             development: true,
         });
     }
@@ -271,7 +271,7 @@ mod tests {
                     assert_eq!(status.installed, matches!(agent, 1 | 2));
                     assert_eq!(status.app_at_login, matches!(main, 1 | 2));
                     assert_eq!(status.approval_required, agent == 2 || main == 2);
-                    assert!(status.legacy_installed && !status.development);
+                    assert!(status.cli_service_installed && !status.development);
                 }
             }
             let mut service = Service::new(0);
@@ -376,6 +376,7 @@ mod tests {
         let helper = dir.path().join("helper");
         std::fs::write(&source, include_str!("../../tests/fixtures/dev-daemon.rs"))?;
         let compiled = tokio::process::Command::new("rustc")
+            .arg("--edition=2024")
             .arg(&source)
             .arg("-o")
             .arg(&helper)

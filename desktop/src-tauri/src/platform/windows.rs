@@ -55,7 +55,7 @@ pub(crate) fn status() -> Result<ServiceStatus> {
         installed: xrun::client::services::daemon_installed()?,
         approval_required: false,
         app_at_login: startup_key()?.get_value::<String, _>("xrun").is_ok(),
-        legacy_installed: false,
+        cli_service_installed: false,
         development: false,
     })
 }

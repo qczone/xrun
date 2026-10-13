@@ -10,7 +10,7 @@ pub struct ServiceStatus {
     pub installed: bool,
     pub approval_required: bool,
     pub app_at_login: bool,
-    pub legacy_installed: bool,
+    pub cli_service_installed: bool,
     pub development: bool,
 }
 
@@ -47,7 +47,7 @@ pub async fn check_helper() -> Result<()> {
 
 pub async fn start() -> Result<()> {
     check_helper().await?;
-    prepare_upgrade().await?;
+    prepare_service().await?;
     let helper = helper()?;
     if xrun::client::services::daemon_running()? {
         return Ok(());
@@ -56,35 +56,27 @@ pub async fn start() -> Result<()> {
     start_service(&helper).await
 }
 
-pub async fn prepare_upgrade() -> Result<()> {
-    let (storage, restart, pending) = tokio::task::spawn_blocking(|| -> Result<_> {
+pub async fn prepare_service() -> Result<()> {
+    let (restart, pending) = tokio::task::spawn_blocking(|| -> Result<_> {
         Ok((
-            xrun::client::services::storage_upgrade_required()?,
-            xrun::client::services::daemon_upgrade_required()?,
-            xrun::client::services::daemon_upgrade_pending()?,
+            xrun::client::services::daemon_restart_required()?,
+            xrun::client::services::daemon_restart_pending()?,
         ))
     })
     .await??;
-    if !storage && !restart && !pending {
+    if !restart && !pending {
         return Ok(());
     }
     // Validate the replacement before interrupting an existing service.
-    let helper = if restart || pending {
-        check_helper().await?;
-        Some(helper()?)
-    } else {
-        None
-    };
+    check_helper().await?;
+    let helper = helper()?;
     if restart {
-        xrun::client::services::stop_daemon_for_upgrade().await?;
+        xrun::client::services::stop_daemon_for_restart().await?;
     }
-    tokio::task::spawn_blocking(xrun::client::services::prepare_storage_upgrade).await??;
-    if let Some(helper) = helper {
-        if !xrun::client::services::daemon_running()? {
-            start_service(&helper).await?;
-        }
-        xrun::client::services::finish_daemon_upgrade()?;
+    if !xrun::client::services::daemon_running()? {
+        start_service(&helper).await?;
     }
+    xrun::client::services::finish_daemon_restart()?;
     Ok(())
 }
 
@@ -159,7 +151,7 @@ async fn start_impl(helper: &std::path::Path) -> Result<()> {
     if mac::development()? {
         return mac::start_dev_daemon(helper, &xrun::client::services::data_dir()?).await;
     }
-    // Explicit Start migrates the legacy CLI LaunchAgent only after it has stopped.
+    // Explicit Start transfers a stopped CLI LaunchAgent to App ownership.
     mac::register_agent()?;
     // Preserve the existing registration if the App signature or approval fails.
     xrun::client::services::uninstall_daemon().await?;

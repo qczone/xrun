@@ -89,12 +89,7 @@ fn saved(
     sha256: String,
 ) -> Result<Saved> {
     Ok(Saved {
-        network: id
-            .network
-            .as_ref()
-            .context("joined network")?
-            .network_id
-            .clone(),
+        network: id.network.network_id.clone(),
         source: id.device_id.clone(),
         target: target.into(),
         ca_pin: crate::crypto::ca_spki_pin(&id.ca_pem)?,
@@ -108,7 +103,7 @@ fn saved(
     })
 }
 fn check(id: &Identity, target: &str, s: &Saved) -> Result<()> {
-    if s.network != id.network.as_ref().context("joined network")?.network_id
+    if s.network != id.network.network_id
         || s.source != id.device_id
         || s.target != target
         || s.ca_pin != crate::crypto::ca_spki_pin(&id.ca_pem)?

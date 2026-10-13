@@ -46,9 +46,7 @@ pub(super) struct Deployment {
     pub account_id: String,
     pub ownership: String,
     pub url: Option<String>,
-    #[serde(default)]
     pub status: DeploymentStatus,
-    #[serde(default)]
     pub region: super::Region,
 }
 

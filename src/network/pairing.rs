@@ -16,7 +16,7 @@ use std::time::Duration;
 
 use super::links::{discover_relay_ca, invitation_link, parse_link};
 use super::transport::authenticate;
-use super::{archive_legacy, authority, cache, current, observe, synchronize};
+use super::{authority, cache, current, observe, synchronize};
 
 #[derive(Serialize, Deserialize)]
 struct PairResponse {
@@ -153,23 +153,19 @@ pub(super) async fn join_with_key(
     } else {
         None
     };
-    if let Some(old) = &existing
-        && old.network.is_some()
-    {
+    if let Some(old) = &existing {
         if authority(old)?.network_id != invite.network {
             bail!(ErrorCode::NetworkMismatch.error("already joined to another network"))
         }
         current(old)?;
     }
-    let _lock = if existing.as_ref().is_some_and(|id| id.network.is_some()) {
+    let _lock = if existing.is_some() {
         None
     } else {
         Some(daemon::instance_lock()?)
     };
     let pending_path = dir.join("pending.toml");
-    let key = if let Some(old) = &existing
-        && old.network.is_some()
-    {
+    let key = if let Some(old) = &existing {
         old.key_pem.clone()
     } else if pending_path.exists() {
         let p: PendingIdentity = config::read(&pending_path)?;
@@ -233,7 +229,6 @@ pub(super) async fn join_with_key(
                 &invite.root_pin,
             )?;
             if let Some(old) = &existing
-                && old.network.is_some()
                 && old.device_id != pair.member.device_id
             {
                 bail!(ErrorCode::IdentityMismatch.error("pairing changed existing identity"))
@@ -249,14 +244,11 @@ pub(super) async fn join_with_key(
                     inviter_id: Some(invite.manager.clone()),
                     allow_inviter: pair.receipt.receipt.allow,
                 },
-                network: Some(NetworkIdentity {
+                network: NetworkIdentity {
                     network_id: invite.network.clone(),
                     manager_id: invite.manager.clone(),
-                }),
+                },
             };
-            if existing.as_ref().is_some_and(|i| i.network.is_none()) {
-                archive_legacy(&dir)?;
-            }
             cache()?.observe(&invite.network, &pair.roster)?;
             cache()?.observe_authority(
                 &invite.network,

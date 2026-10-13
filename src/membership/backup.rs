@@ -21,7 +21,7 @@ use std::{
 };
 use zeroize::{Zeroize, Zeroizing};
 
-const MAGIC: &[u8] = b"XRUNAUTH\x02";
+const MAGIC: &[u8] = b"XRUNAUTH\x01";
 const HEADER: usize = MAGIC.len() + 16 + 12;
 const MAX_ARCHIVE: usize = 32 * 1024 * 1024;
 const MAX_DATABASE: usize = 16 * 1024 * 1024;
@@ -272,7 +272,7 @@ pub(crate) fn export_at(
     snapshot.snapshot(&final_copy.path().join("manager"))?;
     let database = read_bounded(&final_copy.path().join("manager/manager.db"), MAX_DATABASE)?;
     let contents = Contents {
-        schema: 2,
+        schema: 1,
         identity,
         config: DaemonConfig::load_at(dir)?,
         root_pem: snapshot.ca_pem.clone(),
@@ -304,7 +304,7 @@ pub(crate) fn export_at(
     Ok(BackupInfo::new(&roster, transfer_to))
 }
 fn validate(contents: &Contents, directory: &Path) -> Result<Manager> {
-    if contents.schema != 2 {
+    if contents.schema != 1 {
         bail!(ErrorCode::InvalidConfig.error("unsupported authority archive schema"));
     }
     contents.config.validate()?;
@@ -340,11 +340,7 @@ fn validate(contents: &Contents, directory: &Path) -> Result<Manager> {
         &"manager",
         &sign(&contents.root_key, "key-check", &"manager")?,
     )?;
-    let network = contents
-        .identity
-        .network
-        .as_ref()
-        .context(ErrorCode::InvalidConfig.error("archive identity is not registered"))?;
+    let network = &contents.identity.network;
     if network.network_id != contents.roster.roster.network_id
         || crypto::cert_der(&contents.identity.ca_pem)? != crypto::cert_der(&contents.root_pem)?
     {
@@ -485,9 +481,7 @@ impl PreparedImport {
             (None, _) => contents.identity.clone(),
         };
         if let Some(previous) = &previous {
-            if previous.network.as_ref().map(|network| &network.network_id)
-                != Some(&contents.roster.roster.network_id)
-            {
+            if previous.network.network_id != contents.roster.roster.network_id {
                 bail!(
                     ErrorCode::NetworkMismatch
                         .error("refusing to replace another network's identity")
@@ -520,11 +514,7 @@ impl PreparedImport {
                 &crypto::renew_device_request(&identity.key_pem)?,
             )?
             .cert_pem;
-        identity
-            .network
-            .as_mut()
-            .context("missing network")?
-            .manager_id = identity.device_id.clone();
+        identity.network.manager_id = identity.device_id.clone();
         identity.addresses = roster.roster.relay_addresses.clone();
         crypto::verify_member_certificate(
             &identity.cert_pem,
@@ -631,9 +621,7 @@ pub(crate) fn installation_retired(
 }
 pub(crate) fn retire_at(dir: &Path, roster: &SignedRoster, identity: &Identity) -> Result<()> {
     roster.verify(&roster.roster.network_id)?;
-    if identity.network.as_ref().map(|network| &network.network_id)
-        != Some(&roster.roster.network_id)
-    {
+    if identity.network.network_id != roster.roster.network_id {
         bail!(
             ErrorCode::NetworkMismatch
                 .error("cannot retire authority using another network's roster")
@@ -684,10 +672,10 @@ mod tests {
                 inviter_id: None,
                 allow_inviter: false,
             },
-            network: Some(NetworkIdentity {
+            network: NetworkIdentity {
                 network_id: roster.roster.network_id.clone(),
                 manager_id: roster.roster.manager_id.clone(),
-            }),
+            },
         };
         config::write(&dir.join("identity.toml"), &identity)?;
         config::write(&dir.join("daemon.toml"), &DaemonConfig::default())?;
@@ -779,10 +767,10 @@ mod tests {
                 inviter_id: Some(identity.device_id.clone()),
                 allow_inviter: false,
             },
-            network: Some(NetworkIdentity {
+            network: NetworkIdentity {
                 network_id: pair.roster.roster.network_id.clone(),
                 manager_id: identity.device_id.clone(),
-            }),
+            },
         };
         config::write(&target.join("identity.toml"), &next)?;
         config::write(&target.join("daemon.toml"), &DaemonConfig::default())?;

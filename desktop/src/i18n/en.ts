@@ -488,8 +488,8 @@ export const en = {
     "Runs independently of the app and starts at login once installed",
   "settings.developmentServiceHint":
     "Started manually in development mode; keeps running after you quit the app",
-  "settings.legacyHint":
-    "Using a CLI-installed service. Stop and start it again to migrate to the app’s background service.",
+  "settings.cliServiceHint":
+    "Using a CLI-installed service. Stop and start it again to switch to the app’s background service.",
   "settings.removeService": "Remove background service",
   "settings.removeHint":
     "Stop tasks and disable service startup at login. Keep device identity and records.",

@@ -27,13 +27,17 @@ struct Network {
 }
 fn identity(
     device_id: String,
+    manager_id: &str,
     name: &str,
     root: &str,
     cert_pem: String,
     key_pem: String,
 ) -> Identity {
     Identity {
-        network: None,
+        network: xrun::testing::config::NetworkIdentity {
+            network_id: format!("net_{}", crypto::ca_spki_pin(root).unwrap()),
+            manager_id: manager_id.into(),
+        },
         device_id,
         name: name.into(),
         addresses: vec![],
@@ -54,13 +58,21 @@ fn network(dir: &std::path::Path, cfg: &ServerConfig) -> Result<Network> {
         crypto::load_or_create_server(cfg)?.ca_pem,
     )?;
     let root = manager.roster()?.ca_pem;
-    let manager_identity = identity(member.device_id, "manager1", &root, cert_pem, key_pem);
+    let manager_identity = identity(
+        member.device_id.clone(),
+        &member.device_id,
+        "manager1",
+        &root,
+        cert_pem,
+        key_pem,
+    );
     let mut members = vec![];
     for name in ["source1", "target1"] {
         let (key_pem, csr) = crypto::new_device_request()?;
         let pair = manager.pair(&manager.invite(false)?, name, &csr)?;
         members.push(identity(
             pair.member.device_id,
+            &manager_identity.device_id,
             name,
             &root,
             pair.cert_pem,
@@ -372,6 +384,7 @@ async fn authenticated_devices_behind_one_nat_do_not_share_a_source_quota() -> R
                 .pair(&network.manager.invite(false)?, &name, &csr)?;
             devices.push(identity(
                 paired.member.device_id,
+                &network.manager_identity.device_id,
                 &name,
                 &network.source.ca_pem,
                 paired.cert_pem,

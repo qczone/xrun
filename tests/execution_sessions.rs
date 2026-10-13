@@ -15,7 +15,7 @@ async fn submission_rejection_and_uncertainty_keep_distinct_exit_codes() -> Resu
         stop_daemon(&lab.source, &mut lab.source_daemon).await?;
         stop_daemon(&lab.target, &mut lab.daemon).await?;
         let cache = RosterCache::open(&lab.target.join(".xrun/roster.db"))?;
-        let network = &lab.target_identity.network.as_ref().unwrap().network_id;
+        let network = &lab.target_identity.network.network_id;
         let roster = cache.load(network)?;
         let mut control = relay_socket(
             Some(&lab.target_identity), &roster, &format!("/networks/{network}/control"),
@@ -130,7 +130,7 @@ async fn foreground_uses_one_session_and_recovers_without_resubmitting() -> Resu
         stop_daemon(&lab.source, &mut lab.source_daemon).await?;
         stop_daemon(&lab.target, &mut lab.daemon).await?;
         let cache = RosterCache::open(&lab.target.join(".xrun/roster.db"))?;
-        let network = &lab.target_identity.network.as_ref().unwrap().network_id;
+        let network = &lab.target_identity.network.network_id;
         let roster = cache.load(network)?;
         let mut control = relay_socket(
             Some(&lab.target_identity),
@@ -367,7 +367,7 @@ async fn differing_release_and_optional_metadata_do_not_prevent_a_negotiated_ope
     .await
     .context("negotiation fixture setup timed out")??;
     tokio::time::timeout(Duration::from_secs(15), async {
-        let network = &lab.target_identity.network.as_ref().unwrap().network_id;
+        let network = &lab.target_identity.network.network_id;
         let roster = RosterCache::open(&lab.target.join(".xrun/roster.db"))?.load(network)?;
         let mut control = relay_socket(
             Some(&lab.target_identity),
@@ -462,7 +462,7 @@ async fn pipelined_purpose_never_sends_execution_before_handshake_acceptance() -
         let mut lab = Lab::new().await?;
         stop_daemon(&lab.source, &mut lab.source_daemon).await?;
         stop_daemon(&lab.target, &mut lab.daemon).await?;
-        let network = &lab.target_identity.network.as_ref().unwrap().network_id;
+        let network = &lab.target_identity.network.network_id;
         let roster = RosterCache::open(&lab.target.join(".xrun/roster.db"))?.load(network)?;
         let mut control = relay_socket(Some(&lab.target_identity), &roster, &format!("/networks/{network}/control")).await?;
         let RelayMessage::HelloAck { generation } = control_message(&mut control).await? else { bail!("control acknowledgement") };

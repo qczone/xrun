@@ -264,29 +264,7 @@ pub(crate) async fn stop_daemon() -> Result<()> {
     if !config::instance_running(&dir.join("daemon.lock"))? {
         return Ok(());
     }
-    if crate::control::state(&dir)?.is_some() {
-        crate::control::request_shutdown(&dir).await?;
-    } else {
-        // Older daemons do not have the private stop channel. Unix SIGTERM still
-        // follows the same cleanup path; Windows task termination does not.
-        #[cfg(target_os = "macos")]
-        command(
-            "launchctl",
-            &[
-                "kill",
-                "SIGTERM",
-                &format!("gui/{}/com.xrun.daemon", unsafe { libc::getuid() }),
-            ],
-        )
-        .await?;
-        #[cfg(target_os = "linux")]
-        command("systemctl", &["--user", "stop", "xrun-daemon.service"]).await?;
-        #[cfg(windows)]
-        bail!(
-            ErrorCode::DaemonUpgradeRequired
-                .error("stop the old daemon before upgrading to the desktop app")
-        );
-    }
+    crate::control::request_shutdown(&dir).await?;
     tokio::time::timeout(Duration::from_secs(12), async {
         while config::instance_running(&dir.join("daemon.lock"))? {
             tokio::time::sleep(Duration::from_millis(100)).await;

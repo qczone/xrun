@@ -54,13 +54,8 @@ pub(super) fn recover_at(base: &Path, job: &Job) -> Result<bool> {
     let cp = Checkpoint::<State>::open(&base.join("job-transfers"), &job.job_id)?;
     let id: config::Identity = config::read(&config::network_dir_at(base)?.join("identity.toml"))?;
     Ok(cp.state.as_ref().is_some_and(|state| {
-        bound(
-            state,
-            job,
-            &id.network
-                .as_ref()
-                .map_or(String::new(), |n| n.network_id.clone()),
-        ) && std::fs::metadata(&cp.blob).is_ok_and(|m| m.is_file() && m.len() >= state.offset)
+        bound(state, job, &id.network.network_id)
+            && std::fs::metadata(&cp.blob).is_ok_and(|m| m.is_file() && m.len() >= state.offset)
     }))
 }
 pub(super) fn expire_at(base: &Path, store: &crate::store::JobStore) -> Result<()> {

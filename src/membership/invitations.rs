@@ -160,30 +160,4 @@ mod tests {
         assert_eq!(manager.roster()?.roster.members.len(), 2);
         Ok(())
     }
-    #[test]
-    fn membership_upgrade_preserves_authority_roster_and_existing_links() -> Result<()> {
-        let dir = tempfile::tempdir()?;
-        let (manager, _, _, _) = Manager::create(
-            dir.path(),
-            "manager1",
-            vec!["https://relay.example".into()],
-            String::new(),
-        )?;
-        let root = std::fs::read(dir.path().join("root.key"))?;
-        let roster = manager.roster()?;
-        let token = manager.invite(false)?;
-        drop(manager);
-        let db = rusqlite::Connection::open(dir.path().join("manager.db"))?;
-        db.execute_batch("BEGIN IMMEDIATE; ALTER TABLE invitations RENAME TO previous;
-          CREATE TABLE invitations(hash TEXT PRIMARY KEY,expires INTEGER NOT NULL,allow INTEGER NOT NULL);
-          INSERT INTO invitations SELECT hash,expires,allow FROM previous; DROP TABLE previous;
-          DROP TABLE freshness; PRAGMA user_version=1; COMMIT;")?;
-        drop(db);
-        let manager = Manager::open(dir.path())?;
-        assert_eq!(std::fs::read(dir.path().join("root.key"))?, root);
-        assert_eq!(manager.roster()?.roster, roster.roster);
-        let (_, csr) = crypto::new_device_request()?;
-        assert!(!manager.pair(&token, "member1", &csr)?.receipt.receipt.allow);
-        Ok(())
-    }
 }

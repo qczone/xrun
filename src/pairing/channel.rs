@@ -14,8 +14,8 @@ pub(crate) fn identities(
     key: &str,
 ) -> (Vec<u8>, Vec<u8>) {
     (
-        format!("xrun-pair-v5\0joiner\0{invitation}\0{origin}\0{locator}\0{key}").into_bytes(),
-        format!("xrun-pair-v5\0manager\0{invitation}\0{origin}\0{locator}\0{key}").into_bytes(),
+        format!("xrun-pair-v1\0joiner\0{invitation}\0{origin}\0{locator}\0{key}").into_bytes(),
+        format!("xrun-pair-v1\0manager\0{invitation}\0{origin}\0{locator}\0{key}").into_bytes(),
     )
 }
 
@@ -93,7 +93,7 @@ impl Channel {
         identities: &(Vec<u8>, Vec<u8>),
     ) -> Self {
         let transcript = serde_json::to_vec(&(
-            "xrun-pair-v5",
+            "xrun-pair-v1",
             &identities.0,
             &identities.1,
             client_message,

@@ -12,8 +12,7 @@ use xrun::testing::config::{self, DaemonConfig, Identity};
 async fn raw_handshake(home: &std::path::Path, invitation: &Value, malformed: bool) -> Result<()> {
     use xrun::testing::{crypto, membership::RosterCache, net, protocol::RelayMessage};
     let id: Identity = config::read(&home.join(".xrun/identity.toml"))?;
-    let roster = RosterCache::open(&home.join(".xrun/roster.db"))?
-        .load(&id.network.as_ref().unwrap().network_id)?;
+    let roster = RosterCache::open(&home.join(".xrun/roster.db"))?.load(&id.network.network_id)?;
     let address = format!("https://{}", invitation["address"].as_str().unwrap());
     let locator = &invitation["code"].as_str().unwrap()[..2];
     let mut ws = net::websocket_at(

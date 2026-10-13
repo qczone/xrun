@@ -256,7 +256,7 @@ pub(super) async fn deploy_with(
             ),
             (Some(state), Some(published)) => {
                 state.validate_ownership(published)?;
-                if published["migration_tag"] != "v1" && published["migration_tag"] != "v2" {
+                if published["migration_tag"] != "v1" {
                     bail!(
                         ErrorCode::VersionMismatch
                             .error("unsupported Cloudflare Durable Object migration tag")
@@ -301,13 +301,7 @@ pub(super) async fn deploy_with(
     }
     if published.is_none() {
         metadata["migrations"] =
-            json!({"new_tag":"v2", "new_sqlite_classes":["XrunRelay","XrunData"]});
-    } else if published
-        .as_ref()
-        .is_some_and(|worker| worker["migration_tag"] == "v1")
-    {
-        metadata["migrations"] =
-            json!({"old_tag":"v1", "new_tag":"v2", "new_sqlite_classes":["XrunData"]});
+            json!({"new_tag":"v1", "new_sqlite_classes":["XrunRelay","XrunData"]});
     }
     api.upload(&script, &metadata, &bundle.source).await?;
     api.json(

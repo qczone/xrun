@@ -21,12 +21,7 @@
     {
       "tag": "v1",
       "new_sqlite_classes": [
-        "XrunRelay"
-      ]
-    },
-    {
-      "tag": "v2",
-      "new_sqlite_classes": [
+        "XrunRelay",
         "XrunData"
       ]
     }

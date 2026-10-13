@@ -150,7 +150,7 @@ Package 工作流只生成 Actions 附件，使用 `gh workflow run package.yml 
 
 Release 分别提供六个下载文件、六份清单，以及共享的 `install.sh`、`install.ps1`、`LICENSE` 和 `SHA256SUMS`。Mac ZIP 内只有 `xrun.app`，Linux 压缩包内只有 `xrun`；README、文档、开发配置和安装脚本不混入压缩包。`docs/usage.md` 编译进 CLI，随程序发布，仓库和离线 `xrun doc` 使用同一份手册；更新后需要重新构建。文档测试验证无身份、无网络的帮助和章节查询，打包 smoke 检查内置手册。
 
-发布前同步根包、桌面 Rust 包、Cargo.lock 本地包版本、desktop/package.json 与 Tauri 版本，并重新构建 CLI / App / helper。同一发布版本不能分发不同协议；Cloudflare Worker 按声明的协议范围对接设备。协议、签名格式或数据库结构改变时，发布说明须明确兼容范围及迁移要求，具体规则见下文。
+发布前同步根包、桌面 Rust 包、Cargo.lock 本地包版本、desktop/package.json 与 Tauri 版本，并重新构建 CLI / App / helper。同一发布版本不能分发不同协议；Cloudflare Worker 按声明的协议范围对接设备。正式发布前直接维护当前格式，参与操作的端点统一更新；首次正式发布后的格式变更再明确升级规则，具体规则见下文。
 
 ## 真实 Cloudflare 集成测试
 
@@ -167,7 +167,7 @@ XRUN_TEST_CF_LINK_FILE=/绝对路径/私有地址文件 \
 
 正式发布前统一维护协议 1 和签名格式 1 的第一版基线，内部重构直接调整这一基线，不累加版本号，不维护历史 Job 消息或混合版本运行。外层传输和端到端握手均校验当前协议，`Session::send_request` 发送业务前再次检查；本机 IPC 同时核对发布号与协议编号。签名结构或编码调整必须同步双方及 `tests/fixtures/signatures.json`，禁止因字段顺序变化而无意改变签名字节。正式发布后，不兼容的通信格式和签名格式变化才提升对应版本并提供明确过渡方案。
 
-Linux CI 使用当前源码的 CLI、daemon 与 Worker，在 Rust 中转及 Cloudflare workerd 中验证加入、执行、统一 Job、文件传输、清单同步和撤销，不构建历史二进制。参与业务操作的端点统一更新；Job schema 4 与 submissions schema 2 的最新设计见 [统一 Job 存储](job-storage.md)。更旧的活动库和提交记录库自动备份并重建，不迁移记录；成员清单库不适用此策略。升级测试使用隔离 HOME 和合成 SQLite 数据，验证 WAL 备份、并发打开、失败回滚和桌面服务切换。
+Linux CI 使用当前源码的 CLI、daemon 与 Worker，在 Rust 中转及 Cloudflare workerd 中验证加入、执行、统一 Job、文件传输、清单同步和撤销，不构建历史二进制。数据库、管理备份及短码配对格式统一为版本 1，最新设计见 [统一 Job 存储](job-storage.md)。只维护当前结构，开发环境旧数据单独清理。隔离 HOME 的测试验证并发初始化、格式拒绝、管理身份交接和同版桌面服务替换。
 
 ## 性能测量
 

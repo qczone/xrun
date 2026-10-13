@@ -433,8 +433,8 @@ export const zh = {
   "settings.serviceState": "运行状态",
   "settings.serviceHint": "后台服务独立于 App 运行，安装后随用户登录启动",
   "settings.developmentServiceHint": "开发模式手动启动，退出 App 后仍继续运行",
-  "settings.legacyHint":
-    "当前使用 CLI 安装的服务。停止后再次启动，将迁移为 App 的后台服务。",
+  "settings.cliServiceHint":
+    "当前使用 CLI 安装的服务。停止后再次启动，将切换到 App 的后台服务。",
   "settings.removeService": "移除后台服务",
   "settings.removeHint": "停止任务并取消服务的登录启动，保留设备身份和记录",
   "settings.remove": "移除…",

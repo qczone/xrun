@@ -285,7 +285,6 @@ pub enum Request {
         follow: bool,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         /// Ask the endpoint to return only the final lines of the snapshot.
-        /// Older endpoints may ignore this optimization; callers still trim locally.
         tail: Option<usize>,
     },
     /// Wait for a task to become terminal.

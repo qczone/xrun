@@ -11,10 +11,7 @@ async fn traffic_cli_reports_network_or_own_device_without_charging_queries() ->
         assert!(report["device_id"].is_null());
         assert_eq!(report["complete"], true);
         assert!(report["totals"]["egress_bytes"].as_u64().unwrap() > 0);
-        assert_eq!(
-            report["network_id"],
-            lab.source_identity.network.as_ref().unwrap().network_id
-        );
+        assert_eq!(report["network_id"], lab.source_identity.network.network_id);
         let own = json(cli(&lab.target, &["traffic", "--period", "all", "--json"]).await);
         assert_eq!(own["device_id"], lab.target_identity.device_id);
         assert_eq!(own["devices"].as_array().unwrap().len(), 1);

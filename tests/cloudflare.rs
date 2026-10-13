@@ -178,7 +178,7 @@ async fn public_relay_executes_transfers_streams_and_rejects_route_takeover() ->
         println!("network creation, pairing, execution and job history: passed");
         let source: Identity = xrun::testing::config::read(&lab.source.join(".xrun/identity.toml"))?;
         let target: Identity = xrun::testing::config::read(&lab.target.join(".xrun/identity.toml"))?;
-        let network = &source.network.as_ref().context("network")?.network_id;
+        let network = &source.network.network_id;
         let roster = RosterCache::open(&lab.source.join(".xrun/roster.db"))?.load(network)?;
         let path = format!("/networks/{network}/control");
         let mut attacker = xrun::testing::net::websocket_at(&roster.roster.relay_addresses[0], &path, xrun::testing::crypto::relay_tls_config(&roster.roster.relay_ca_pem)?).await?;

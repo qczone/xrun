@@ -3,12 +3,7 @@ use anyhow::Result;
 use base64::{Engine, engine::general_purpose::STANDARD};
 use common::*;
 use std::time::Duration;
-use xrun::testing::{
-    config::{DaemonConfig, Identity},
-    membership::RosterCache,
-    protocol::{ForwardParams, Job, JobContext, JobDetails, JobState, now_ms},
-    store::JobStore,
-};
+use xrun::testing::{config::Identity, membership::RosterCache};
 
 #[tokio::test]
 async fn desktop_device_status_fixture() -> Result<()> {
@@ -115,7 +110,7 @@ async fn registration_permissions_migration_and_manager_offline_execution() -> R
         assert_eq!(invite["allow"], false);
         // The encrypted manager rejects disjoint protocols before consuming
         // an invitation, even if a relay accepts the outer connection.
-        let network=&lab.source_identity.network.as_ref().unwrap().network_id;
+        let network=&lab.source_identity.network.network_id;
         let roster=RosterCache::open(&lab.source.join(".xrun/roster.db"))?.load(network)?;
         let mut outer=common::relay_socket(None,&roster,
             &format!("/networks/{network}/connect/{}", lab.source_identity.device_id)).await?;
@@ -179,72 +174,12 @@ async fn registration_permissions_migration_and_manager_offline_execution() -> R
         }
         let denied = cli(&ordinary, &["invite"]).await;
         assert!(String::from_utf8_lossy(&denied.stderr).contains("NOT_MANAGER"));
-        // An old identity is archived; history/settings survive but old grants
-        // and all-member trust never silently carry over into the new network.
-        let migrated = lab.root.path().join("migrated");
-        let dir = migrated.join(".xrun");
-        std::fs::create_dir_all(&dir)?;
-        let mut old = lab.target_identity.clone();
-        old.network = None;
-        xrun::testing::config::write(&dir.join("identity.toml"), &old)?;
-        let old_cfg = DaemonConfig {
-            allow_from: vec!["01234567890123456789012345678901".into()],
-            deny_from: vec!["11234567890123456789012345678901".into()],
-            allow_all: true,
-            remote_access_paused: true,
-            pause_generation: 7,
-            ..Default::default()
-        };
-        xrun::testing::config::write(&dir.join("daemon.toml"), &old_cfg)?;
-        let history = JobStore::open(&dir.join("daemon.db"), true)?;
-        let mut job = Job::accepted("source", "target", &JobContext::new(&history.db_id), "hash".into(), JobDetails::Forward(ForwardParams { port: 8080 }));
-        job.request_id = "preserved-history".into();
-        job.state = JobState::Lost;
-        job.finished_at_ms = Some(now_ms());
-        history.insert(&job)?;
-        std::fs::write(dir.join("daemon.initialized"), b"2\n")?;
-        let allow = json(cli(&lab.source, &["invite", "--allow", "--json"]).await);
-        ok(cli(
-            &migrated,
-            &[
-                "join",
-                allow["link"].as_str().unwrap(),
-                "--name",
-                "migrated1",
-                "--allow-manager",
-                "--no-daemon",
-            ],
-        )
-        .await);
-        let policy: DaemonConfig = xrun::testing::config::read(&dir.join("daemon.toml"))?;
-        assert_eq!(
-            policy.allow_from,
-            vec![lab.source_identity.device_id.clone()]
-        );
-        assert!(policy.deny_from.is_empty());
-        assert!(!policy.allow_all);
-        assert!(policy.remote_access_paused);
-        assert_eq!(policy.pause_generation, 7);
-        let saved: Identity = xrun::testing::config::read(&dir.join("identity.previous.toml"))?;
-        assert_eq!(saved.device_id, old.device_id);
-        assert!(
-            xrun::testing::config::read::<Identity>(&dir.join("identity.toml"))?
-                .network
-                .is_some()
-        );
-        let db = rusqlite::Connection::open(dir.join("daemon.db"))?;
-        let count: i64 = db.query_row(
-            "SELECT COUNT(*) FROM jobs WHERE request_id='preserved-history'",
-            [],
-            |r| r.get(0),
-        )?;
-        assert_eq!(count, 1);
         // A missing local cache is an error; it cannot be silently recreated
         // from whatever older record an untrusted relay supplies.
         let cache_path = ordinary.join(".xrun/roster.db");
         let ordinary_id: Identity = xrun::testing::config::read(&ordinary.join(".xrun/identity.toml"))?;
         let cache = RosterCache::open(&cache_path)?;
-        let roster = cache.load(&ordinary_id.network.as_ref().unwrap().network_id)?;
+        let roster = cache.load(&ordinary_id.network.network_id)?;
         assert!(
             roster
                 .roster
@@ -320,7 +255,7 @@ async fn device_operations_connect_directly_while_info_still_queries_live_state(
             xrun::testing::config::read(&observer.join(".xrun/identity.toml"))?;
         stop_daemon(&lab.source, &mut lab.source_daemon).await?;
         let cache = RosterCache::open(&lab.target.join(".xrun/roster.db"))?;
-        let network = &lab.target_identity.network.as_ref().unwrap().network_id;
+        let network = &lab.target_identity.network.network_id;
         let roster = cache.load(network)?;
         let mut control = relay_socket(
             Some(&lab.target_identity),
@@ -474,7 +409,7 @@ async fn relay_rejects_revocations_and_status_synchronizes_signed_membership() -
             ],
         )
         .await);
-        let network = &lab.target_identity.network.as_ref().unwrap().network_id;
+        let network = &lab.target_identity.network.network_id;
         let cache = RosterCache::open(&observer.join(".xrun/roster.db"))?;
         let old = cache.load(network)?;
         stop_daemon(&lab.target, &mut lab.daemon).await?;

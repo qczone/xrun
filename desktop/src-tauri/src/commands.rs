@@ -1,6 +1,6 @@
 //! Tauri command adaptation and serialized local actions.
 use super::{
-    app::{Desktop, DesktopNavigation, Status, ensure_upgrade, local_status, record},
+    app::{Desktop, DesktopNavigation, Status, ensure_current_service, local_status, record},
     error::{self, CommandError},
     language::{LanguagePreference, LanguageSettings, LanguageState},
     platform, tray,
@@ -136,7 +136,7 @@ fn desktop_navigation(state: State<'_, Desktop>) -> Option<DesktopNavigation> {
 async fn devices<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
 ) -> Result<xrun::client::Status, CommandError> {
-    ensure_upgrade(&app)
+    ensure_current_service(&app)
         .await
         .map_err(CommandError::from_error)?;
     xrun::client::device_status()
@@ -160,7 +160,7 @@ async fn job_output<R: tauri::Runtime>(
     job: String,
     after: Option<u64>,
 ) -> Result<xrun::client::history::JobOutput, CommandError> {
-    ensure_upgrade(&app)
+    ensure_current_service(&app)
         .await
         .map_err(CommandError::from_error)?;
     tauri::async_runtime::spawn_blocking(move || xrun::client::history::output(&db_id, &job, after))
@@ -175,7 +175,7 @@ async fn activity_job<R: tauri::Runtime>(
     db_id: String,
     id: String,
 ) -> Result<xrun::protocol::Job, CommandError> {
-    ensure_upgrade(&app)
+    ensure_current_service(&app)
         .await
         .map_err(CommandError::from_error)?;
     tauri::async_runtime::spawn_blocking(move || xrun::client::history::job(&db_id, &id))
@@ -189,7 +189,7 @@ async fn activity_history<R: tauri::Runtime>(
     before: Option<String>,
     filter: String,
 ) -> Result<xrun::client::history::ActivityPage, CommandError> {
-    ensure_upgrade(&app)
+    ensure_current_service(&app)
         .await
         .map_err(CommandError::from_error)?;
     tauri::async_runtime::spawn_blocking(move || {
@@ -205,7 +205,7 @@ async fn activity_attachment<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
     id: String,
 ) -> Result<xrun::client::history::AttachmentPreview, CommandError> {
-    ensure_upgrade(&app)
+    ensure_current_service(&app)
         .await
         .map_err(CommandError::from_error)?;
     tauri::async_runtime::spawn_blocking(move || xrun::client::history::attachment(&id))
@@ -219,7 +219,7 @@ async fn save_activity_attachment<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
     id: String,
 ) -> Result<Option<String>, CommandError> {
-    ensure_upgrade(&app)
+    ensure_current_service(&app)
         .await
         .map_err(CommandError::from_error)?;
     let attachment_id = id.clone();
@@ -521,7 +521,7 @@ pub(super) fn register<R: tauri::Runtime>(builder: tauri::Builder<R>) -> tauri::
 
 #[cfg(test)]
 pub(crate) mod tests {
-    mod upgrade;
+    mod service;
     use super::*;
     use anyhow::Result;
     use serde_json::{Value, json};
@@ -597,6 +597,7 @@ pub(crate) mod tests {
                 std::fs::write(&source, include_str!("../tests/fixtures/dev-daemon.rs"))?;
                 let helper = std::env::current_exe()?.with_file_name("xrun");
                 let build = Command::new("rustc")
+                    .arg("--edition=2024")
                     .arg(source)
                     .arg("-o")
                     .arg(&helper)
@@ -622,7 +623,7 @@ pub(crate) mod tests {
                 );
                 assert_eq!(invoke(&window, "stop", json!({})), Ok(Value::Null));
                 assert!(!config::instance_running(&dir.join("daemon.lock"))?);
-                assert!(Identity::load()?.network.is_some());
+                assert!(!Identity::load()?.network.network_id.is_empty());
                 Ok(())
             },
         )
@@ -763,10 +764,10 @@ pub(crate) mod tests {
                 inviter_id: None,
                 allow_inviter: false,
             },
-            network: Some(NetworkIdentity {
+            network: NetworkIdentity {
                 network_id: roster.roster.network_id.clone(),
                 manager_id: roster.roster.manager_id.clone(),
-            }),
+            },
         };
         RosterCache::open(&dir.join("roster.db"))?.observe(&roster.roster.network_id, &roster)?;
         id.save()?;
@@ -1114,7 +1115,7 @@ pub(crate) mod tests {
                 );
                 let id = Identity::load()?;
                 assert_eq!(id.name, "member1");
-                let manager_id = &id.network.as_ref().unwrap().manager_id;
+                let manager_id = &id.network.manager_id;
                 assert_ne!(id.device_id, *manager_id);
                 assert_eq!(
                     DaemonConfig::load()?.allow_from.as_slice(),

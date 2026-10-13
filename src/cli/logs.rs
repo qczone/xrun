@@ -133,37 +133,3 @@ pub(super) async fn collect_logs(
         }
     }
 }
-pub(super) fn tail_events(events: Vec<LogEvent>, lines: usize) -> Vec<LogEvent> {
-    if lines == 0 {
-        return vec![];
-    }
-    let mut remaining = lines;
-    let mut first = true;
-    let mut result = vec![];
-    for mut event in events.into_iter().rev() {
-        let Ok(bytes) = STANDARD.decode(&event.data_base64) else {
-            continue;
-        };
-        let mut start = 0;
-        let mut done = false;
-        for i in (0..bytes.len()).rev() {
-            let skip = first && bytes[i] == b'\n';
-            first = false;
-            if bytes[i] == b'\n' && !skip {
-                if remaining <= 1 {
-                    start = i + 1;
-                    done = true;
-                    break;
-                }
-                remaining -= 1;
-            }
-        }
-        event.data_base64 = STANDARD.encode(&bytes[start..]);
-        result.push(event);
-        if done {
-            break;
-        }
-    }
-    result.reverse();
-    result
-}

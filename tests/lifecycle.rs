@@ -43,8 +43,7 @@ fn shorten_certificate(home: &Path, manager: &Path, days: i64) -> Result<String>
 }
 fn roster(home: &Path) -> Result<xrun::testing::membership::SignedRoster> {
     let id = identity(home)?;
-    RosterCache::open(&home.join(".xrun/roster.db"))?
-        .load(&id.network.context("network")?.network_id)
+    RosterCache::open(&home.join(".xrun/roster.db"))?.load(&id.network.network_id)
 }
 async fn version(source: &Path, target: &str) {
     let program = binary().to_string_lossy().into_owned();

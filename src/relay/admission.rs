@@ -7,9 +7,7 @@ use std::{path::PathBuf, sync::Mutex};
 struct OwnerState {
     network_id: String,
     manager_id: String,
-    #[serde(default)]
-    authority: Option<crate::membership::AuthorityState>,
-    #[serde(default)]
+    authority: crate::membership::AuthorityState,
     acknowledgements: std::collections::HashMap<String, (u64, u64, String)>,
 }
 pub(super) struct Admission {
@@ -28,11 +26,9 @@ impl Admission {
                     manager_id: owner.manager_id.clone(),
                 }
                 .validate()?;
-                if let Some(state) = &owner.authority {
-                    state.verify(&owner.network_id)?;
-                    if state.roster.roster.manager_id != owner.manager_id {
-                        bail!(ErrorCode::InvalidRelay.error("owner and authority differ"));
-                    }
+                owner.authority.verify(&owner.network_id)?;
+                if owner.authority.roster.roster.manager_id != owner.manager_id {
+                    bail!(ErrorCode::InvalidRelay.error("owner and authority differ"));
                 }
                 Some(owner)
             }
@@ -55,7 +51,7 @@ impl Admission {
             .lock()
             .unwrap()
             .as_ref()
-            .and_then(|owner| owner.authority.clone())
+            .map(|owner| owner.authority.clone())
     }
     pub(super) fn check(&self, network: &str, claiming: bool) -> Result<()> {
         match self.owner() {
@@ -76,24 +72,18 @@ impl Admission {
             if previous.network_id != state.roster.roster.network_id {
                 bail!(ErrorCode::RelayClaimed.error("cannot replace another network's owner"));
             }
-            if let Some(previous) = &previous.authority {
-                previous.roster.check_successor(&state.roster)?;
-                if previous.roster.roster.version == state.roster.roster.version
-                    && previous.lease.lease.issued_at_ms >= state.lease.lease.issued_at_ms
-                {
-                    return Ok(false);
-                }
-            } else if previous.manager_id != state.roster.roster.manager_id {
-                bail!(
-                    ErrorCode::RelayClaimed
-                        .error("the existing owner must publish its signed authority first")
-                );
+            let previous = &previous.authority;
+            previous.roster.check_successor(&state.roster)?;
+            if previous.roster.roster.version == state.roster.roster.version
+                && previous.lease.lease.issued_at_ms >= state.lease.lease.issued_at_ms
+            {
+                return Ok(false);
             }
         }
         let next = OwnerState {
             network_id: state.roster.roster.network_id.clone(),
             manager_id: state.roster.roster.manager_id.clone(),
-            authority: Some(state.clone()),
+            authority: state.clone(),
             acknowledgements: saved
                 .as_ref()
                 .map(|owner| owner.acknowledgements.clone())
@@ -138,10 +128,7 @@ impl Admission {
         let owner = saved
             .as_mut()
             .context(ErrorCode::InvalidAck.error("authority missing"))?;
-        let state = owner
-            .authority
-            .as_ref()
-            .context(ErrorCode::InvalidAck.error("authority missing"))?;
+        let state = &owner.authority;
         let roster = &state.roster.roster;
         if generation < roster.authority_generation
             || (generation == roster.authority_generation && version < roster.version)
@@ -174,9 +161,7 @@ impl Admission {
         let Some(owner) = saved.as_ref() else {
             return Ok(Vec::new());
         };
-        let Some(state) = owner.authority.as_ref() else {
-            return Ok(Vec::new());
-        };
+        let state = &owner.authority;
         let binding = (
             state.roster.roster.authority_generation,
             state.roster.roster.version,

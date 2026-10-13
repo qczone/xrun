@@ -128,10 +128,10 @@ mod tests {
                         inviter_id: None,
                         allow_inviter: false,
                     },
-                    network: Some(NetworkIdentity {
+                    network: NetworkIdentity {
                         network_id: roster.roster.network_id.clone(),
                         manager_id: roster.roster.manager_id.clone(),
-                    }),
+                    },
                 };
                 config::write(&dir.join("identity.toml"), &identity)?;
                 RosterCache::open(&dir.join("roster.db"))?

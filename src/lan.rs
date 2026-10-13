@@ -152,7 +152,7 @@ pub(crate) async fn connect(
     .await;
     let (mut ws, cert) =
         tokio::time::timeout(Duration::from_secs(3), secure::client(outer, id, target)).await??;
-    let network = &id.network.as_ref().context("joined network")?.network_id;
+    let network = &id.network.network_id;
     tokio::time::timeout(
         Duration::from_secs(3),
         secure::exchange_client(

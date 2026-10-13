@@ -25,7 +25,6 @@ struct Endpoint {
     address: String,
     token: String,
     version: String,
-    #[serde(default)]
     protocol: u32,
 }
 pub(crate) fn version_matches(dir: &Path) -> Result<Option<bool>> {

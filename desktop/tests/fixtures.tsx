@@ -50,7 +50,7 @@ export async function fixture(
       joined,
       device_id: "self",
       name: "mac1",
-      version: "0.1.0-rc.8",
+      version: "0.1.0-rc.9",
       daemon_running: true,
       daemon_connected: true,
       remote_access_paused: false,
@@ -69,7 +69,7 @@ export async function fixture(
     service: {
       app_at_login: false,
       installed: true,
-      legacy_installed: false,
+      cli_service_installed: false,
       approval_required: false,
       development: false,
     },

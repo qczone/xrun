@@ -10,7 +10,7 @@ pub(super) struct Desktop {
     pub(super) navigation: Mutex<Option<DesktopNavigation>>,
     pub(super) cloudflare_cancel: Mutex<Option<tokio::sync::oneshot::Sender<()>>>,
     pub(super) cloudflare_authorization: Mutex<Option<String>>,
-    upgrade: tokio::sync::OnceCell<()>,
+    service_prepared: tokio::sync::OnceCell<()>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
@@ -43,15 +43,15 @@ pub(super) fn navigate<R: tauri::Runtime>(app: &tauri::AppHandle<R>, page: Deskt
     tray::present(app);
 }
 
-pub(super) async fn ensure_upgrade<R: tauri::Runtime>(
+pub(super) async fn ensure_current_service<R: tauri::Runtime>(
     app: &tauri::AppHandle<R>,
 ) -> anyhow::Result<()> {
     let state = app.state::<Desktop>();
     state
-        .upgrade
+        .service_prepared
         .get_or_try_init(|| async {
             let _guard = state.action.lock().await;
-            platform::prepare_upgrade().await
+            platform::prepare_service().await
         })
         .await?;
     Ok(())
@@ -71,7 +71,7 @@ pub(super) fn local_status<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> anyh
     let snapshot = xrun::client::local_snapshot()?;
     let mut local = snapshot.local;
     let service = platform::status()?;
-    local.daemon_installed = service.installed || service.legacy_installed;
+    local.daemon_installed = service.installed || service.cli_service_installed;
     let error = match snapshot.network_error {
         Some(xrun::protocol::Data::Error { code, message }) => Some(CommandError { code, message }),
         _ => app.state::<Desktop>().error.lock().unwrap().clone(),
@@ -115,10 +115,10 @@ pub(super) fn app_builder<R: tauri::Runtime>(
             tray::build(app)?;
             #[cfg(target_os = "macos")]
             let _ = record(app.handle(), platform::install_cli());
-            let upgrade_handle = app.handle().clone();
+            let service_handle = app.handle().clone();
             tauri::async_runtime::spawn(async move {
-                if let Err(error) = ensure_upgrade(&upgrade_handle).await {
-                    let _ = record::<(), _>(&upgrade_handle, Err(error));
+                if let Err(error) = ensure_current_service(&service_handle).await {
+                    let _ = record::<(), _>(&service_handle, Err(error));
                 }
             });
             let handle = app.handle().clone();

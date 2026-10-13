@@ -146,8 +146,8 @@ export function NetworkSettings({
                   : t("service.start")}
           </button>
         </div>
-        {service?.legacy_installed && !service.development && (
-          <p className="inline-notice">{t("settings.legacyHint")}</p>
+        {service?.cli_service_installed && !service.development && (
+          <p className="inline-notice">{t("settings.cliServiceHint")}</p>
         )}
         <div className="setting-row">
           <span>
@@ -156,7 +156,7 @@ export function NetworkSettings({
               {t(
                 service?.development
                   ? "network.development"
-                  : service?.legacy_installed
+                  : service?.cli_service_installed
                     ? "network.cliService"
                     : local?.daemon_installed
                       ? "network.appService"

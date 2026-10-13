@@ -137,7 +137,6 @@ pub(super) async fn token_with_prompt(
     }
     let directory = state::directory()?;
     let _lock = state::lock(&directory, "credentials")?;
-    cleanup_legacy(&directory).await?;
     let client_id = client_id()?;
     let remember = remembered(&directory)?;
     if remember {
@@ -213,7 +212,6 @@ pub(super) async fn login_with_prompt(
     }
     finish_temporary(Ok(())).await?;
     logout_saved(&directory).await?;
-    cleanup_legacy(&directory).await?;
     authorize_with_prompt(&directory, &client_id()?, remember, no_browser, prompt).await
 }
 async fn revoke_credentials(
@@ -305,26 +303,10 @@ fn save_temporary(mut credentials: Credentials) {
         }
     });
 }
-// Only used to retire the old plaintext format, never to authenticate an operation.
-async fn cleanup_legacy(directory: &Path) -> Result<()> {
-    let path = directory.join("credentials.toml");
-    if path.exists() {
-        let source = std::fs::read_to_string(&path)?;
-        let old: Credentials = toml::from_str(&source).map_err(|_| {
-            ErrorCode::InvalidConfig
-                .error("invalid legacy Cloudflare login; revoke it in Cloudflare")
-        })?;
-        revoke_credentials(&http()?, REVOKE, &old).await?;
-        std::fs::remove_file(&path)?;
-        config::sync_parent(&path)?;
-    }
-    Ok(())
-}
 pub(crate) async fn logout() -> Result<()> {
     let directory = state::directory()?;
     let _lock = state::lock(&directory, "credentials")?;
     finish_temporary(Ok(())).await?;
-    cleanup_legacy(&directory).await?;
     logout_saved(&directory).await
 }
 async fn logout_saved(directory: &Path) -> Result<()> {

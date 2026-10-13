@@ -120,10 +120,10 @@ async fn pairing_response_does_not_wait_for_unrelated_slow_peers() -> Result<()>
                 inviter_id: None,
                 allow_inviter: false,
             },
-            network: Some(NetworkIdentity {
+            network: NetworkIdentity {
                 network_id: pair.roster.roster.network_id.clone(),
                 manager_id: pair.roster.roster.manager_id.clone(),
-            }),
+            },
         });
     }
     let roster = manager.roster()?;

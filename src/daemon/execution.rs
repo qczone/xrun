@@ -632,10 +632,10 @@ mod tests {
                         inviter_id: None,
                         allow_inviter: false,
                     },
-                    network: Some(NetworkIdentity {
+                    network: NetworkIdentity {
                         network_id: roster.roster.network_id.clone(),
                         manager_id: roster.roster.manager_id,
-                    }),
+                    },
                 };
                 DaemonConfig {
                     allow_from: vec![id.device_id.clone()],

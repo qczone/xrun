@@ -12,7 +12,7 @@ async fn screenshot_download_checks_metadata_integrity_errors_and_local_destinat
         let mut lab = Lab::new().await?;
         stop_daemon(&lab.target, &mut lab.daemon).await?;
         let cache = RosterCache::open(&lab.target.join(".xrun/roster.db"))?;
-        let network = &lab.target_identity.network.as_ref().unwrap().network_id;
+        let network = &lab.target_identity.network.network_id;
         let roster = cache.load(network)?;
         let mut control = relay_socket(
             Some(&lab.target_identity),
