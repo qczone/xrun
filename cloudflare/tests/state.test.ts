@@ -7,7 +7,7 @@ test("restored roles require their own complete fields and reject malformed budg
     id: crypto.randomUUID(),
     network: "probe",
     ip: "unknown",
-    protocol: 5,
+    protocol: 1,
   };
   const binding = {
     target: `dev_${"a".repeat(32)}`,
@@ -34,7 +34,7 @@ test("restored roles require their own complete fields and reject malformed budg
     ...live,
     cachedSince,
   });
-  expect(attachment({ ...live, cachedSince, protocol: 1 })).toBeUndefined();
+  expect(attachment({ ...live, cachedSince, protocol: 2 })).toBeUndefined();
   expect(attachment({ ...live, cachedSince, anonymous: true })).toBeUndefined();
   const { protocol: _protocol, cachedSince: _cached, ...legacy } = live;
   expect(attachment(legacy)).toBeUndefined();

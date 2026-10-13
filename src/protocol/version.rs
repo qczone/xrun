@@ -1,12 +1,12 @@
-//! Release-independent protocol negotiation. Semantic additions require a new version.
+//! Single pre-release protocol baseline; version incompatible changes after release.
 use crate::error::ErrorCode;
 use anyhow::{Result, bail};
 use serde::{Deserialize, Serialize};
 
 /// The single pre-release wire protocol. Older releases must upgrade all components.
-pub const PROTOCOL: u32 = 5;
-/// Signature format version; changing serialized signed records requires a new format.
-pub const SIGNATURE_FORMAT: u32 = 2;
+pub const PROTOCOL: u32 = 1;
+/// Signature baseline; version incompatible signed records after the first release.
+pub const SIGNATURE_FORMAT: u32 = 1;
 
 /// Inclusive implemented protocol range, exchanged before any operation.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -17,7 +17,7 @@ pub struct ProtocolRange {
     pub max: u32,
 }
 impl ProtocolRange {
-    /// Only protocol 5 is implemented.
+    /// Only the current protocol 1 baseline is implemented.
     pub const CURRENT: Self = Self {
         min: PROTOCOL,
         max: PROTOCOL,
@@ -32,10 +32,9 @@ impl ProtocolRange {
             || peer.min > peer.max
             || selected < self.min.max(peer.min)
         {
-            bail!(
-                ErrorCode::VersionMismatch
-                    .error("protocol 5 required; upgrade peers and relay together")
-            );
+            bail!(ErrorCode::VersionMismatch.error(format!(
+                "protocol {PROTOCOL} required; upgrade peers and relay together"
+            )));
         }
         Ok(selected)
     }

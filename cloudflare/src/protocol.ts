@@ -1,7 +1,7 @@
 /** Release-independent wire contract. Keep aligned with Rust protocol/version.rs. */
-export const PROTOCOL = { min: 5, max: 5 } as const;
+export const PROTOCOL = { min: 1, max: 1 } as const;
 export const PROTOCOL_HEADER = `${PROTOCOL.min}-${PROTOCOL.max}`;
-export const SIGNATURE_FORMAT = 2;
+export const SIGNATURE_FORMAT = 1;
 export interface ProtocolRange {
   min: number;
   max: number;
@@ -18,7 +18,9 @@ function valid(range: ProtocolRange): boolean {
 export function negotiate(local: ProtocolRange, peer: ProtocolRange): number {
   const selected = Math.min(local.max, peer.max);
   if (!valid(local) || !valid(peer) || selected < Math.max(local.min, peer.min))
-    throw new Error("Protocol 5 required; upgrade peers and relay together");
+    throw new Error(
+      `Protocol ${PROTOCOL.max} required; upgrade peers and relay together`,
+    );
   return selected;
 }
 export function parseRange(value: string | null): ProtocolRange {

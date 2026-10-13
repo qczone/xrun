@@ -54,7 +54,7 @@ export async function fixture() {
       { name: "ECDSA", hash: "SHA-256" },
       key,
       new TextEncoder().encode(
-        `xrun/sig-v2/${domain}\0${JSON.stringify(binding)}`,
+        `xrun/sig-v1/${domain}\0${JSON.stringify(binding)}`,
       ),
     );
     const der = formatter.toAsnSignature(alg, raw);

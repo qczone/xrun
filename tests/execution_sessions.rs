@@ -403,7 +403,7 @@ async fn differing_release_and_optional_metadata_do_not_prevent_a_negotiated_ope
             net::send(
                 &mut socket,
                 &serde_json::json!({
-                    "version":"future-release", "protocol":{"min":5,"max":5}, "digest":roster_digest(&roster)?, "roster":null, "lease":null,
+                    "version":"future-release", "protocol":{"min":1,"max":1}, "digest":roster_digest(&roster)?, "roster":null, "lease":null,
                     "diagnostic":"safe optional metadata",
                 }),
             )
@@ -411,8 +411,8 @@ async fn differing_release_and_optional_metadata_do_not_prevent_a_negotiated_ope
             net::send(
                 &mut socket,
                 &serde_json::json!({
-                    "type":"ready", "version":"future-release", "protocol":{"min":5,"max":5},
-                    "selected_protocol":5, "device_id":lab.target_identity.device_id,
+                    "type":"ready", "version":"future-release", "protocol":{"min":1,"max":1},
+                    "selected_protocol":1, "device_id":lab.target_identity.device_id,
                     "db_id":"test-db", "default_cwd":lab.target.to_string_lossy(),
                     "diagnostic":"safe optional metadata",
                 }),
@@ -487,7 +487,7 @@ async fn pipelined_purpose_never_sends_execution_before_handshake_acceptance() -
                     let response = if failure == "denied" {
                         Data::Error { code: "PERMISSION_DENIED".into(), message: "not allowed".into() }
                     } else {
-                        Data::Ready { version: "future-release".into(), protocol: xrun::protocol::ProtocolRange::CURRENT, selected_protocol: if failure == "ready-protocol" { 1 } else { xrun::protocol::PROTOCOL }, device_id: if failure == "ready-identity" { lab.source_identity.device_id.clone() } else { lab.target_identity.device_id.clone() }, db_id: "test-db".into(), default_cwd: lab.target.to_string_lossy().into() }
+                        Data::Ready { version: "future-release".into(), protocol: xrun::protocol::ProtocolRange::CURRENT, selected_protocol: if failure == "ready-protocol" { future } else { xrun::protocol::PROTOCOL }, device_id: if failure == "ready-identity" { lab.source_identity.device_id.clone() } else { lab.target_identity.device_id.clone() }, db_id: "test-db".into(), default_cwd: lab.target.to_string_lossy().into() }
                     };
                     net::send(&mut ws, &response).await?;
                 }

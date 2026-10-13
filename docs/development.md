@@ -149,9 +149,9 @@ XRUN_TEST_CF_LINK_FILE=/绝对路径/私有地址文件 \
 
 ## 版本与协议
 
-正式发布前直接更新业务协议与表结构，不维护历史 Job 消息、旧表迁移或混合版本运行。外层传输仍协商能力范围，发送端通过 `Request::minimum_protocol` 与 `Session::send_request` 检查协商结果，接收端也检查；这不是历史业务接口的兼容承诺。改变签名结构或编码时，必须明确新的签名格式，禁止因修改字段顺序而无意改变签名字节。固定测试向量位于 `tests/fixtures/signatures.json`，Rust 与 Cloudflare 的测试共同约束它。
+正式发布前统一维护协议 1 和签名格式 1 的第一版基线，内部重构直接调整这一基线，不累加版本号，不维护历史 Job 消息或混合版本运行。外层传输和端到端握手均校验当前协议，`Session::send_request` 发送业务前再次检查；本机 IPC 同时核对发布号与协议编号。签名结构或编码调整必须同步双方及 `tests/fixtures/signatures.json`，禁止因字段顺序变化而无意改变签名字节。正式发布后，不兼容的通信格式和签名格式变化才提升对应版本并提供明确过渡方案。
 
-Linux CI 使用当前源码的 CLI、daemon 与 Worker，在 Rust 中转及 Cloudflare workerd 中验证加入、执行、统一 Job、文件传输、清单同步和撤销，不构建历史二进制。参与业务操作的端点统一更新；daemon 与 submissions schema 2 的最新设计见 [统一 Job 存储](job-storage.md)。更旧的活动库和提交记录库自动备份并重建，不迁移记录；成员清单库不适用此策略。升级测试使用隔离 HOME 和合成 SQLite 数据，验证 WAL 备份、并发打开、失败回滚和桌面服务切换。
+Linux CI 使用当前源码的 CLI、daemon 与 Worker，在 Rust 中转及 Cloudflare workerd 中验证加入、执行、统一 Job、文件传输、清单同步和撤销，不构建历史二进制。参与业务操作的端点统一更新；Job schema 4 与 submissions schema 2 的最新设计见 [统一 Job 存储](job-storage.md)。更旧的活动库和提交记录库自动备份并重建，不迁移记录；成员清单库不适用此策略。升级测试使用隔离 HOME 和合成 SQLite 数据，验证 WAL 备份、并发打开、失败回滚和桌面服务切换。
 
 ## 性能测量
 

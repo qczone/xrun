@@ -1,4 +1,4 @@
-//! Local bandwidth policy; protocol 5 endpoints understand both bounded codecs.
+//! Local bandwidth policy; protocol 1 endpoints understand both bounded codecs.
 use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, clap::ValueEnum)]
 #[serde(rename_all = "snake_case")]

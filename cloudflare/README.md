@@ -43,16 +43,15 @@ bun run --cwd cloudflare deploy --name xrun-relay
 
 Cloudflare 使用公共 HTTPS 证书，内部继续使用网络自己的双向 TLS。
 端点与 Worker 按协议范围协商；发布号用于诊断。部署写入代码支持的
-`XRUN_PROTOCOL_MIN` / `XRUN_PROTOCOL_MAX`。协议 1 和独立签名格式 1 从
-beta.4 开始，旧 beta 需要重新组网。
+`XRUN_PROTOCOL_MIN` / `XRUN_PROTOCOL_MAX`。当前统一为协议 1 和签名格式 1
+的第一版基线；正式发布前直接调整基线，不维护历史 beta/rc 的混合版本运行。
 
-beta.5 支持协议 1–2，签名格式不变。协议 2 允许已认证来源显式声明缓存空闲；
+当前协议允许已认证来源显式声明缓存空闲；
 每网络最多 8 个会话，每个已认证来源最多 4 个，匿名来源按 IP 最多 4 个。普通连接最多占 7 个，最后 1 个仅供已用根私钥证明的管理设备来源使用；匿名配对不能使用该预留名额。满额时只回收归还的空闲缓存，来源额度满时只回收该来源自己的缓存。重新激活必须
 先获中转确认，正在执行或仅仅没有输出的会话不会被回收。协商版本与空闲
-标记随 WebSocket 附件保存，休眠恢复后继续生效；新版 daemon 连接协议 1
-中转时不保留空闲缓存。
+标记随 WebSocket 附件保存，休眠恢复后继续生效。
 
-当前支持协议 1–4。协议 3 增加中转归属探测与管理设备认领，新的创建流程要求协议 3；
+中转归属探测与管理设备认领也使用当前协议 1；
 已有管理设备连接尚未绑定的中转时也会自动完成签名认领，普通成员不能抢占绑定。
 
 ## 流量统计
@@ -110,4 +109,4 @@ Worker。清理后再次部署请换一个名称。
 [WebCrypto](https://developers.cloudflare.com/workers/runtime-apis/web-crypto/)、
 [DO migration](https://developers.cloudflare.com/durable-objects/reference/durable-object-class-migrations-legacy/)。
 
-短码接入要求协议 4。管理设备在已认证控制连接登记一次性公开编号；`/.well-known/xrun/pair/<编号>` 将受限的二进制 PAKE 帧接通该管理设备。DO 保存公开编号、邀请 ID 和过期时间，休眠恢复保留配对类型及控制代次绑定。秘密和验证预算归管理设备，中转不接收接入码秘密或可离线枚举的秘密摘要。
+短码接入使用当前协议 1。管理设备在已认证控制连接登记一次性公开编号；`/.well-known/xrun/pair/<编号>` 将受限的二进制 PAKE 帧接通该管理设备。DO 保存公开编号、邀请 ID 和过期时间，休眠恢复保留配对类型及控制代次绑定。秘密和验证预算归管理设备，中转不接收接入码秘密或可离线枚举的秘密摘要。

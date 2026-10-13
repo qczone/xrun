@@ -40,6 +40,9 @@ async function measure(
   protocol = PROTOCOL,
   sharded = false,
 ) {
+  // Historical benchmark refs can predate relay ownership. The current
+  // sharded relay always requires a claim, even with protocol baseline 1.
+  const requiresClaim = sharded || protocol.max >= 3;
   const build = await Bun.build({
     entrypoints: [entry],
     target: "browser",
@@ -105,7 +108,7 @@ async function measure(
       });
       return socket;
     }
-    if (protocol.max >= 3) {
+    if (requiresClaim) {
       const path = `/networks/${network.network}/claim`;
       const socket = await open(path);
       const challenge = await socket.json();
@@ -148,7 +151,7 @@ async function measure(
     }
     const namespace = await runtime.getDurableObjectNamespace("NETWORKS");
     const object = namespace.get(
-      namespace.idFromName(protocol.max >= 3 ? "relay" : network.network),
+      namespace.idFromName(requiresClaim ? "relay" : network.network),
     );
     const metrics = async () =>
       (await object.fetch("https://test/test/metrics")).json() as Promise<{

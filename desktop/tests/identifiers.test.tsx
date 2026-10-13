@@ -20,7 +20,7 @@ test("compact device IDs distinguish matching prefixes while copying and grantin
     admin: false,
     os: "windows",
     arch: "aarch64",
-    daemon_version: "0.1.0-rc.6",
+    daemon_version: "0.1.0-rc.7",
   }));
   const { calls } = await fixture({
     devices: () => ({ devices: members, server_error: null }),
@@ -45,7 +45,7 @@ test("compact device IDs distinguish matching prefixes while copying and grantin
   expect(within(list).getByText("build-2")).toBeTruthy();
   openMemberActions("build-2");
   expect(
-    screen.getByText("0.1.0-rc.6", { selector: ".device-facts dd" }),
+    screen.getByText("0.1.0-rc.7", { selector: ".device-facts dd" }),
   ).toBeTruthy();
   expect(calls.some((call) => call.command === "copy_identifier")).toBe(false);
   fireEvent.click(screen.getByRole("button", { name: "复制设备 ID" }));
@@ -77,7 +77,7 @@ test("cached device information is shown when the relay query fails after reopen
           admin: false,
           os: "windows",
           arch: "x86_64",
-          daemon_version: "0.1.0-rc.6",
+          daemon_version: "0.1.0-rc.7",
           last_seen: 1000,
         },
       ],
