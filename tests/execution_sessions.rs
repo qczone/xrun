@@ -356,10 +356,17 @@ fn main() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn differing_release_and_optional_metadata_do_not_prevent_a_negotiated_operation()
 -> Result<()> {
-    tokio::time::timeout(Duration::from_secs(15), async {
+    // Parallel Windows labs share relay startup and launch several processes.
+    // Keep that setup separate from the deadline for the negotiated operation.
+    let lab = tokio::time::timeout(Duration::from_secs(45), async {
         let mut lab = Lab::new().await?;
         stop_daemon(&lab.source, &mut lab.source_daemon).await?;
         stop_daemon(&lab.target, &mut lab.daemon).await?;
+        Ok::<_, anyhow::Error>(lab)
+    })
+    .await
+    .context("negotiation fixture setup timed out")??;
+    tokio::time::timeout(Duration::from_secs(15), async {
         let network = &lab.target_identity.network.as_ref().unwrap().network_id;
         let roster = RosterCache::open(&lab.target.join(".xrun/roster.db"))?.load(network)?;
         let mut control = relay_socket(
@@ -444,7 +451,8 @@ async fn differing_release_and_optional_metadata_do_not_prevent_a_negotiated_ope
         tokio::try_join!(peer, caller)?;
         Ok::<_, anyhow::Error>(())
     })
-    .await?
+    .await
+    .context("negotiated operation timed out")?
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
