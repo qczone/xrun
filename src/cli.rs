@@ -42,7 +42,10 @@ pub(crate) async fn run() -> i32 {
         if !explicit {
             args.insert(position, "run".into())
         }
-        let cli = DeviceCli::parse_from(args);
+        let cli = match parse::<DeviceCli>(args) {
+            Ok(cli) => cli,
+            Err(code) => return code,
+        };
         let json = cli.json;
         let file = matches!(
             &cli.command,
@@ -62,13 +65,40 @@ pub(crate) async fn run() -> i32 {
             }
         };
     }
-    let cli = LocalCli::parse_from(args);
+    let cli = match parse::<LocalCli>(args) {
+        Ok(cli) => cli,
+        Err(code) => return code,
+    };
     let json = cli.json;
     match Box::pin(local::run(cli)).await {
         Ok(code) => code,
         Err(e) => {
             diagnostic(json, &e);
+            if crate::error::is(&e, crate::error::ErrorCode::OAuthCancelled) {
+                return 130;
+            }
             125
         }
     }
+}
+
+fn parse<T: Parser>(args: Vec<String>) -> Result<T, i32> {
+    let json = args
+        .iter()
+        .take_while(|arg| arg.as_str() != "--")
+        .any(|arg| arg == "--json");
+    T::try_parse_from(args).map_err(|error| {
+        let code = error.exit_code();
+        if json && error.use_stderr() {
+            diagnostic(
+                true,
+                &crate::error::ErrorCode::InvalidRequest
+                    .error(error.to_string())
+                    .into(),
+            );
+        } else {
+            let _ = error.print();
+        }
+        code
+    })
 }

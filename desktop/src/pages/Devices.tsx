@@ -216,7 +216,7 @@ export function Devices({ active, paused, status, members, feedback }: Props) {
             <Icon name="shield" />
             {t(
               manager
-                ? "devices.managerProtected"
+                ? "devices.managerAccessHint"
                 : status?.local.remote_access_paused
                   ? "devices.pausedHint"
                   : status?.local.allow_all

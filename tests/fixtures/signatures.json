@@ -6,7 +6,7 @@
     "max": 1
   },
   "root_pem": "-----BEGIN CERTIFICATE-----\nMIIBSTCB8KADAgECAgEBMAoGCCqGSM49BAMCMBwxGjAYBgNVBAMTEXhydW4gbmV0\nd29yayByb290MB4XDTI1MDEwMTAwMDAwMFoXDTQ1MDEwMTAwMDAwMFowHDEaMBgG\nA1UEAxMReHJ1biBuZXR3b3JrIHJvb3QwWTATBgcqhkjOPQIBBggqhkjOPQMBBwNC\nAAQh/9j5V5kiUPkhpCUPgi3R0OWhYfwyyMvcmySWh6q5P92VQmq2v+hcRc7HYB18\nOdhFoVDRl7Hl+AdL7Wvmu2Z3oyMwITAPBgNVHRMBAf8EBTADAQH/MA4GA1UdDwEB\n/wQEAwICBDAKBggqhkjOPQQDAgNIADBFAiATfPYsO9Tv6vvZemJcYVAf8exQQAD8\nTmN01Ldkk8118wIhAJ1bGOeIzWaqbrpFsy7iZ/tKwSODSfq7UVMlVstUiYXl\n-----END CERTIFICATE-----",
-  "member_pem": "-----BEGIN CERTIFICATE-----\nMIIBnTCCAUSgAwIBAgIBAjAKBggqhkjOPQQDAjAcMRowGAYDVQQDExF4cnVuIG5l\ndHdvcmsgcm9vdDAeFw0yNTAxMDEwMDAwMDBaFw00NTAxMDEwMDAwMDBaMC8xLTAr\nBgNVBAMMJGRldl8wMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMjBZMBMG\nByqGSM49AgEGCCqGSM49AwEHA0IABCA1WeQGGSLHKlEFOuI4mUcFjzwVJPVHyouR\npkZ2IQMb8laZizHvSdaXrvjwwmXub6x4axemUOlASN6iANFQpyWjZDBiMA4GA1Ud\nDwEB/wQEAwIHgDAdBgNVHSUEFjAUBggrBgEFBQcDAQYIKwYBBQUHAwIwMQYDVR0R\nBCowKIImZDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAyLnhydW4wCgYI\nKoZIzj0EAwIDRwAwRAIgR9Z0vadXiXlD25/KncXxUVe3eidIYbkaooMM6y7/chcC\nIFTRgw6DaXfzlY2OV7P9gg1QQCMDdUuJH0Dz1l455yf7\n-----END CERTIFICATE-----",
+  "member_pem": "-----BEGIN CERTIFICATE-----\nMIIBmTCCAUCgAwIBAgIBAjAKBggqhkjOPQQDAjAcMRowGAYDVQQDExF4cnVuIG5l\ndHdvcmsgcm9vdDAeFw0yNTAxMDEwMDAwMDBaFw00NTAxMDEwMDAwMDBaMCsxKTAn\nBgNVBAMTIDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAyMFkwEwYHKoZI\nzj0CAQYIKoZIzj0DAQcDQgAEIDVZ5AYZIscqUQU64jiZRwWPPBUk9UfKi5GmRnYh\nAxvyVpmLMe9J1peu+PDCZe5vrHhrF6ZQ6UBI3qIA0VCnJaNkMGIwDgYDVR0PAQH/\nBAQDAgeAMB0GA1UdJQQWMBQGCCsGAQUFBwMCBggrBgEFBQcDATAxBgNVHREEKjAo\ngiZkMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDIueHJ1bjAKBggqhkjO\nPQQDAgNHADBEAiAu6hbYMt7VpsTzjz1OACvJeZ78nKfE7vy7GVCIqFcnuAIgOZ1F\nPjvM88IQ9gP1LLKNBavZnpKqC6MIwAkCNPoM02Q=\n-----END CERTIFICATE-----",
   "root_private_key_pem": "-----BEGIN PRIVATE KEY-----\nMIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQgMz0qXsIEmOUCfVVe\nOPxd2XmspYzavqRenZ/S4Lbd95mhRANCAAQh/9j5V5kiUPkhpCUPgi3R0OWhYfwy\nyMvcmySWh6q5P92VQmq2v+hcRc7HYB18OdhFoVDRl7Hl+AdL7Wvmu2Z3\n-----END PRIVATE KEY-----\n",
   "member_private_key_pem": "-----BEGIN PRIVATE KEY-----\nMIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQg5r/OGT7VLd92recf\nxhRpiyoEwnbgOWSc6jY9buDWzzuhRANCAAQgNVnkBhkixypRBTriOJlHBY88FST1\nR8qLkaZGdiEDG/JWmYsx70nWl6748MJl7m+seGsXplDpQEjeogDRUKcl\n-----END PRIVATE KEY-----\n",
   "records": {
@@ -15,17 +15,17 @@
         {
           "network_id": "net_tpu5dixsnflzdsjdpxsawsx26olu3ci5zf65zgmubc4xebk6co5q",
           "version": 7,
-          "manager_id": "dev_00000000000000000000000000000001",
+          "manager_id": "00000000000000000000000000000001",
           "authority_generation": 1,
           "members": [
             {
-              "device_id": "dev_00000000000000000000000000000001",
+              "device_id": "00000000000000000000000000000001",
               "name": "manager",
               "key_fp": "9be9d1a2f2695791c9237de40b4afaf3974d891dc97ddc999408b972055e13bb",
               "revoked": false
             },
             {
-              "device_id": "dev_00000000000000000000000000000002",
+              "device_id": "00000000000000000000000000000002",
               "name": "member",
               "key_fp": "daf892b377896e8c9def0ddfa1ef239ed4b36fb0035ab0f33352b3ab0677c163",
               "revoked": false
@@ -38,60 +38,60 @@
         },
         "19d6355e1fbefc03eff9631120e75e1936a95f5a8576e9afdc89c4e25427574b"
       ],
-      "payload_utf8": "xrun/sig-v1/roster\u0000[{\"network_id\":\"net_tpu5dixsnflzdsjdpxsawsx26olu3ci5zf65zgmubc4xebk6co5q\",\"version\":7,\"manager_id\":\"dev_00000000000000000000000000000001\",\"authority_generation\":1,\"members\":[{\"device_id\":\"dev_00000000000000000000000000000001\",\"name\":\"manager\",\"key_fp\":\"9be9d1a2f2695791c9237de40b4afaf3974d891dc97ddc999408b972055e13bb\",\"revoked\":false},{\"device_id\":\"dev_00000000000000000000000000000002\",\"name\":\"member\",\"key_fp\":\"daf892b377896e8c9def0ddfa1ef239ed4b36fb0035ab0f33352b3ab0677c163\",\"revoked\":false}],\"relay_addresses\":[\"https://relay.example.com\"],\"relay_ca_pem\":\"\"},\"19d6355e1fbefc03eff9631120e75e1936a95f5a8576e9afdc89c4e25427574b\"]",
-      "signature": "MEUCIAhdr8DDyA9KFfGV4YEHYloJj2mrYg9nSAr77ppT1KyXAiEAi18Aabdd46hkxnGhO6tnZPoIcIACbAQhlRaP3hgMdVA=",
+      "payload_utf8": "xrun/sig-v1/roster\u0000[{\"network_id\":\"net_tpu5dixsnflzdsjdpxsawsx26olu3ci5zf65zgmubc4xebk6co5q\",\"version\":7,\"manager_id\":\"00000000000000000000000000000001\",\"authority_generation\":1,\"members\":[{\"device_id\":\"00000000000000000000000000000001\",\"name\":\"manager\",\"key_fp\":\"9be9d1a2f2695791c9237de40b4afaf3974d891dc97ddc999408b972055e13bb\",\"revoked\":false},{\"device_id\":\"00000000000000000000000000000002\",\"name\":\"member\",\"key_fp\":\"daf892b377896e8c9def0ddfa1ef239ed4b36fb0035ab0f33352b3ab0677c163\",\"revoked\":false}],\"relay_addresses\":[\"https://relay.example.com\"],\"relay_ca_pem\":\"\"},\"19d6355e1fbefc03eff9631120e75e1936a95f5a8576e9afdc89c4e25427574b\"]",
+      "signature": "MEQCIGf2AoS5Opxk3s+4S8yPLPWbdAyp6WLW1MnKLgqcYmQ3AiB+R7oGyITDYQMZgTyvXQIrNpIpfLCU2NMcj4Vqh6aVLg==",
       "signer": "root"
     },
     "pairing": {
       "value": {
         "network_id": "net_tpu5dixsnflzdsjdpxsawsx26olu3ci5zf65zgmubc4xebk6co5q",
-        "manager_id": "dev_00000000000000000000000000000001",
-        "device_id": "dev_00000000000000000000000000000002",
+        "manager_id": "00000000000000000000000000000001",
+        "device_id": "00000000000000000000000000000002",
         "allow": true
       },
-      "payload_utf8": "xrun/sig-v1/pairing\u0000{\"network_id\":\"net_tpu5dixsnflzdsjdpxsawsx26olu3ci5zf65zgmubc4xebk6co5q\",\"manager_id\":\"dev_00000000000000000000000000000001\",\"device_id\":\"dev_00000000000000000000000000000002\",\"allow\":true}",
-      "signature": "MEYCIQDdlj4HYR1nia8Aj3qx7GDq7jyKbPET6HLJ0kpHNru0TwIhAI70ymDQZQ+wjHYUc6n7IjzvMwCd9QfrpX3SAchYkQ/q",
+      "payload_utf8": "xrun/sig-v1/pairing\u0000{\"network_id\":\"net_tpu5dixsnflzdsjdpxsawsx26olu3ci5zf65zgmubc4xebk6co5q\",\"manager_id\":\"00000000000000000000000000000001\",\"device_id\":\"00000000000000000000000000000002\",\"allow\":true}",
+      "signature": "MEQCIHBaZ/MGsLjCVeHHQGzHdy0NdB2EHmCOM+zbclzhVYHgAiBT5MMMwzvCHwRBZ5NFc5TQqsEWwTNa9qeg6/3cMcED3w==",
       "signer": "root"
     },
     "roster-ack": {
       "value": {
-        "device_id": "dev_00000000000000000000000000000002",
-        "hash": "4e2d8aad9aa8d8ed67f9bcdabad033833400c0a3047241b49bbb4bfeea6178d7",
+        "device_id": "00000000000000000000000000000002",
+        "hash": "d62997104522ca294dd65888f4f48b8c627ccd86cea468c5fbb959ac8ed1b139",
         "network": "net_tpu5dixsnflzdsjdpxsawsx26olu3ci5zf65zgmubc4xebk6co5q",
         "version": 7
       },
-      "payload_utf8": "xrun/sig-v1/roster-ack\u0000{\"device_id\":\"dev_00000000000000000000000000000002\",\"hash\":\"4e2d8aad9aa8d8ed67f9bcdabad033833400c0a3047241b49bbb4bfeea6178d7\",\"network\":\"net_tpu5dixsnflzdsjdpxsawsx26olu3ci5zf65zgmubc4xebk6co5q\",\"version\":7}",
-      "signature": "MEQCIEgzl85TNI1wbKWC6Nr74CaTQtGMu93BheaZzwOrRhUPAiA2Lk0pCOuWcpp388qNCjt2O0N5UmYtCW5o0C7fYhYQpQ==",
+      "payload_utf8": "xrun/sig-v1/roster-ack\u0000{\"device_id\":\"00000000000000000000000000000002\",\"hash\":\"d62997104522ca294dd65888f4f48b8c627ccd86cea468c5fbb959ac8ed1b139\",\"network\":\"net_tpu5dixsnflzdsjdpxsawsx26olu3ci5zf65zgmubc4xebk6co5q\",\"version\":7}",
+      "signature": "MEUCIQCbIYALOt5RvmZ3v6uedvz9orOxg5Eh36Wxs3vuE4oYRwIgDnz+gNk73VS5XEkyq6cRF7XWAng2p82eBILForr8Ux8=",
       "signer": "member"
     },
     "relay-proof": {
       "value": {
         "network": "net_tpu5dixsnflzdsjdpxsawsx26olu3ci5zf65zgmubc4xebk6co5q",
-        "device": "dev_00000000000000000000000000000002",
+        "device": "00000000000000000000000000000002",
         "path": "/networks/net_tpu5dixsnflzdsjdpxsawsx26olu3ci5zf65zgmubc4xebk6co5q/control",
         "nonce": "fixed-vector-challenge",
         "authority_generation": 1
       },
-      "payload_utf8": "xrun/sig-v1/relay-proof\u0000{\"network\":\"net_tpu5dixsnflzdsjdpxsawsx26olu3ci5zf65zgmubc4xebk6co5q\",\"device\":\"dev_00000000000000000000000000000002\",\"path\":\"/networks/net_tpu5dixsnflzdsjdpxsawsx26olu3ci5zf65zgmubc4xebk6co5q/control\",\"nonce\":\"fixed-vector-challenge\",\"authority_generation\":1}",
-      "signature": "MEQCIDu/DFLRk+D7uDkC+qGqhmxSKekfkzqwUzWeUsaU71jVAiB09wh2NjrSU8JLEu1F5utTZeWR68788YEBRNwzJcwegw==",
+      "payload_utf8": "xrun/sig-v1/relay-proof\u0000{\"network\":\"net_tpu5dixsnflzdsjdpxsawsx26olu3ci5zf65zgmubc4xebk6co5q\",\"device\":\"00000000000000000000000000000002\",\"path\":\"/networks/net_tpu5dixsnflzdsjdpxsawsx26olu3ci5zf65zgmubc4xebk6co5q/control\",\"nonce\":\"fixed-vector-challenge\",\"authority_generation\":1}",
+      "signature": "MEUCIET88YG3+z4ykq+tHDu/6RHhaDEw7QYBDZW64RdQV/cRAiEAorNfYwF5ZfIOP8J0yiX8G8XppZ3N3wDxdED1LgQia2o=",
       "signer": "member"
     },
     "relay-manager": {
       "value": {
         "network": "net_tpu5dixsnflzdsjdpxsawsx26olu3ci5zf65zgmubc4xebk6co5q",
-        "device": "dev_00000000000000000000000000000002",
+        "device": "00000000000000000000000000000002",
         "path": "/networks/net_tpu5dixsnflzdsjdpxsawsx26olu3ci5zf65zgmubc4xebk6co5q/control",
         "nonce": "fixed-vector-challenge",
         "authority_generation": 1
       },
-      "payload_utf8": "xrun/sig-v1/relay-manager\u0000{\"network\":\"net_tpu5dixsnflzdsjdpxsawsx26olu3ci5zf65zgmubc4xebk6co5q\",\"device\":\"dev_00000000000000000000000000000002\",\"path\":\"/networks/net_tpu5dixsnflzdsjdpxsawsx26olu3ci5zf65zgmubc4xebk6co5q/control\",\"nonce\":\"fixed-vector-challenge\",\"authority_generation\":1}",
-      "signature": "MEUCIQDmklDoijXFNX4RXo3qvMqiRvn5wIDxcmptCFWwjPIz0AIgGV+M07SryDLMwPFNfL9DxUXAAtcSDsGRJSpexAZga9U=",
+      "payload_utf8": "xrun/sig-v1/relay-manager\u0000{\"network\":\"net_tpu5dixsnflzdsjdpxsawsx26olu3ci5zf65zgmubc4xebk6co5q\",\"device\":\"00000000000000000000000000000002\",\"path\":\"/networks/net_tpu5dixsnflzdsjdpxsawsx26olu3ci5zf65zgmubc4xebk6co5q/control\",\"nonce\":\"fixed-vector-challenge\",\"authority_generation\":1}",
+      "signature": "MEUCIH4m5fkPzA8h9JrBHCLr2kWVWjTgDuyV5kPeabCMGTrEAiEAnH59Kd6L9QM069i0lMa3IG8emJpfSl9K9LmwRn9+SPY=",
       "signer": "root"
     },
     "key-check": {
       "value": "manager",
       "payload_utf8": "xrun/sig-v1/key-check\u0000\"manager\"",
-      "signature": "MEQCIGoG0sFEojZr5yXZkb1LbEYFG7ajKzSaJnJUTwuFRLA3AiAexm0UyQ/Hvy5Tefw33kE70Px9eB34zAy9q5LyptEU7Q==",
+      "signature": "MEQCIEv0YdfRD6pzX/hHYiBtgIj77zGBeDUx7PeLwz7Qx0gZAiBzCAAhfIiVK+5+72JDb5I6imLw4K3pTm2VbPrWpGRzUw==",
       "signer": "root"
     }
   }

@@ -4,6 +4,66 @@ import { fixture, openMemberActions } from "./fixtures";
 import type { Device } from "../src/api";
 import { emit } from "@tauri-apps/api/event";
 
+test("managers grant individual incoming access with explicit consent and keep blanket access disabled", async () => {
+  const { page, calls, status, poll } = await fixture();
+  status.network!.is_manager = true;
+  await poll();
+  await page("设备");
+  const input = screen.getByLabelText(
+    '允许 <img id="injected" src=x onerror=alert(1)> 访问本机',
+  ) as HTMLInputElement;
+  expect(input.disabled).toBe(false);
+  expect(input.checked).toBe(false);
+  fireEvent.click(input);
+  const dialog = document.getElementById("confirm") as HTMLDialogElement;
+  expect(dialog.textContent).toContain("网络管理身份");
+  await act(async () => dialog.close("ok"));
+  expect(calls.find((call) => call.command === "permission")?.args).toEqual({
+    device: "unsafe-label",
+    allow: true,
+  });
+  expect(input.checked).toBe(true);
+  await waitFor(() => expect(input.disabled).toBe(false));
+  fireEvent.click(input);
+  await waitFor(() => expect(input.checked).toBe(false));
+  await page("设置");
+  fireEvent.click(screen.getByText("网络与服务", { selector: "summary span" }));
+  expect(
+    (screen.getByLabelText("允许全体成员访问本机") as HTMLInputElement)
+      .disabled,
+  ).toBe(true);
+  await screen.findByText("管理设备需在设备列表逐台授权。", {
+    selector: "small",
+  });
+});
+
+test("members can open command, file and screenshot actions for an online manager", async () => {
+  const device: Device = {
+    device_id: "manager",
+    name: "manager1",
+    admin: true,
+    revoked: false,
+    online: true,
+    os: "macos",
+  };
+  const { page } = await fixture({
+    devices: () => ({ devices: [device], server_error: null }),
+  });
+  await page("设备");
+  openMemberActions("manager1");
+  for (const name of ["执行命令", "传输文件", "截图"]) {
+    expect(
+      (screen.getByRole("button", { name }) as HTMLButtonElement).disabled,
+    ).toBe(false);
+  }
+  fireEvent.click(screen.getByRole("button", { name: "截图" }));
+  await screen.findByRole("dialog", { name: "截图 · manager1" });
+  expect(
+    (screen.getByRole("button", { name: "截图并保存" }) as HTMLButtonElement)
+      .disabled,
+  ).toBe(false);
+});
+
 test("native window hiding stops status and device polling and showing refreshes immediately", async () => {
   const { page, calls, poll } = await fixture();
   await page("设备");

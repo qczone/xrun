@@ -31,6 +31,7 @@ export function useOperationController(
     page: DesktopPage;
     title: PlainMessageKey;
     detail: string;
+    code?: string;
   } | null>(null);
   const [toast, setToast] = useState<PlainMessageKey | null>(null);
   useEffect(() => {
@@ -62,16 +63,19 @@ export function useOperationController(
         errorCode(e) === "SOURCE_NOT_ALLOWED"
           ? "remote.accessDenied"
           : (context.name === "create_network" ||
-                context.name === "deploy_cloudflare") &&
+                context.name === "create_cloudflare_network") &&
               errorCode(e) === "RELAY_CLAIMED"
             ? "action.relayClaimed"
-            : errorCode(e) === "SERVICE_START_FAILED"
-              ? context.name === "create_network" ||
-                context.name === "deploy_cloudflare"
-                ? "action.createdServiceFailed"
-                : "action.joinedServiceFailed"
-              : context.title);
-      setError({ page: origin, title, detail });
+            : context.name === "create_cloudflare_network" &&
+                errorCode(e) === "NETWORK_CREATED_CLEANUP_FAILED"
+              ? "cloudflare.createdCleanupFailed"
+              : errorCode(e) === "SERVICE_START_FAILED"
+                ? context.name === "create_network" ||
+                  context.name === "create_cloudflare_network"
+                  ? "action.createdServiceFailed"
+                  : "action.joinedServiceFailed"
+                : context.title);
+      setError({ page: origin, title, detail, code: errorCode(e) });
     } finally {
       await refreshStatus();
       interactionState.current.busy = false;

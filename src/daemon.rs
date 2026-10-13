@@ -295,14 +295,23 @@ impl Runtime {
     fn allow(&self, source: &str) -> Result<()> {
         self.membership(source)?;
         let current = self.members.require_fresh(&self.network_id, now_ms())?;
-        if crate::membership::backup::holds_authority(&config::device_dir()?)? {
+        let manager = current.roster.roster.manager_id == self.id.device_id;
+        let directory = config::device_dir()?;
+        if crate::membership::backup::holds_authority(&directory)?
+            && (!manager
+                || crate::membership::backup::authority_obsolete(&directory, &current.roster)?)
+        {
             bail!(
                 ErrorCode::ManagerProtected
                     .error("retire the local authority before allowing remote operations")
             );
         }
-        current.roster.require_business_target(&self.id.device_id)?;
-        self.config()?.check_access(source)
+        let policy = self.config()?;
+        if manager {
+            policy.check_manager_access(source)
+        } else {
+            policy.check_access(source)
+        }
     }
     fn check_session(&self, source: &str, generation: u64) -> Result<()> {
         if self.stopping.load(Ordering::SeqCst) {
@@ -360,7 +369,6 @@ pub async fn run() -> Result<()> {
         network::manager(&id)?.invalidate_codes()?;
         config::update_daemon_config(&dir, |cfg| {
             cfg.allow_all = false;
-            cfg.allow_from.clear();
             Ok(())
         })?;
     }

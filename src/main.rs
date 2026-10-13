@@ -5,9 +5,16 @@
 
 #[tokio::main]
 async fn main() {
-    tracing_subscriber::fmt()
+    let subscriber = tracing_subscriber::fmt()
         .with_writer(std::io::stderr)
-        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
-        .init();
+        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env());
+    if std::env::args()
+        .take_while(|arg| arg != "--")
+        .any(|arg| arg == "--json")
+    {
+        subscriber.json().init();
+    } else {
+        subscriber.init();
+    }
     std::process::exit(xrun::runtime::cli().await);
 }

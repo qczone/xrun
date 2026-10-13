@@ -103,25 +103,17 @@ pub(crate) fn verify<T: Serialize>(
     })
 }
 pub fn device_name(id: &str) -> Result<String> {
-    if !valid_id(id) {
+    if !crate::protocol::valid_device_id(id) {
         bail!(ErrorCode::InvalidDeviceId.error("expected an immutable device ID"))
     }
-    Ok(format!("d{}.xrun", &id[4..]))
-}
-fn valid_id(id: &str) -> bool {
-    id.strip_prefix("dev_").is_some_and(|suffix| {
-        suffix.len() == 32
-            && suffix
-                .bytes()
-                .all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase())
-    })
+    Ok(format!("d{id}.xrun"))
 }
 impl SignedRoster {
-    /// A root-key holder handles membership only, never incoming user operations.
-    pub fn require_business_target(&self, device: &str) -> Result<()> {
+    /// Managers accept individually trusted sources, never a blanket member grant.
+    pub fn require_bulk_access_target(&self, device: &str) -> Result<()> {
         if self.roster.manager_id == device {
             bail!(ErrorCode::ManagerProtected.error(
-                "manager devices reject remote commands, files, screenshots and forwarding; migrate management first"
+                "manager devices require individual allow-from grants; access for all members is disabled"
             ));
         }
         Ok(())
@@ -172,7 +164,7 @@ impl SignedRoster {
         let mut keys = HashSet::new();
         let mut names = HashSet::new();
         for member in &roster.members {
-            if !valid_id(&member.device_id)
+            if !crate::protocol::valid_device_id(&member.device_id)
                 || !valid_name(&member.name)
                 || member.key_fp.len() != 64
                 || !member.key_fp.bytes().all(|b| b.is_ascii_hexdigit())

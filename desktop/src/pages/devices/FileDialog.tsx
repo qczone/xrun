@@ -56,8 +56,7 @@ export function FileDialog({
       setBusy(false);
     }
   };
-  const disabled =
-    busy || otherBusy || !device.online || device.revoked || !!device.admin;
+  const disabled = busy || otherBusy || !device.online || device.revoked;
   return (
     <dialog
       ref={dialog}

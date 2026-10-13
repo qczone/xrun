@@ -21,15 +21,11 @@ pub struct RelayOwner {
 impl RelayOwner {
     pub(crate) fn validate(&self) -> Result<()> {
         let network = self.network_id.strip_prefix("net_").unwrap_or_default();
-        let manager = self.manager_id.strip_prefix("dev_").unwrap_or_default();
         if network.len() != 52
             || !network
                 .bytes()
                 .all(|b| b.is_ascii_lowercase() || matches!(b, b'2'..=b'7'))
-            || manager.len() != 32
-            || !manager
-                .bytes()
-                .all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
+            || !super::valid_device_id(&self.manager_id)
         {
             bail!(ErrorCode::InvalidRelay.error("invalid persisted relay owner"));
         }

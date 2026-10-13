@@ -568,9 +568,17 @@ pub const RESERVED: &[&str] = &[
     "forward",
     "help",
 ];
-/// Validate the lowercase, 1–32 character, nonreserved device name contract.
+/// Validate an immutable device ID: 32 lowercase hexadecimal characters, without a prefix.
+pub fn valid_device_id(value: &str) -> bool {
+    value.len() == 32
+        && value
+            .bytes()
+            .all(|byte| matches!(byte, b'0'..=b'9' | b'a'..=b'f'))
+}
+/// Validate the lowercase, 1–32 character name contract, excluding commands and device IDs.
 pub fn valid_name(name: &str) -> bool {
     !RESERVED.contains(&name)
+        && !valid_device_id(name)
         && (1..=32).contains(&name.len())
         && name.as_bytes()[0].is_ascii_lowercase()
         && name

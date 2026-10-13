@@ -9,6 +9,83 @@ use xrun::{
     testing::config::{self, DaemonConfig},
 };
 
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn manager_accepts_only_individual_grants_and_keeps_them_after_restart() -> Result<()> {
+    let mut lab = Lab::new().await?;
+    let program = binary().to_string_lossy().into_owned();
+    let execute = ["source1", "--", program.as_str(), "--version"];
+    let refused = cli(&lab.target, &execute).await;
+    assert_eq!(refused.status.code(), Some(125));
+    assert!(String::from_utf8_lossy(&refused.stderr).contains("SOURCE_NOT_ALLOWED"));
+    let refused = cli(&lab.source, &["allow-from", "--all", "--json"]).await;
+    assert_eq!(json_error(refused)?["code"], "MANAGER_PROTECTED");
+    let granted = json(cli(&lab.source, &["allow-from", "target1", "--json"]).await);
+    assert_eq!(granted["allowed"], true);
+    assert_eq!(
+        ok(cli(&lab.target, &execute).await).trim(),
+        format!("xrun {}", xrun::protocol::VERSION)
+    );
+    let source = lab.target.join("owned-input.txt");
+    let remote = lab.source.join("owned-received.txt");
+    let downloaded = lab.target.join("owned-download.txt");
+    std::fs::write(&source, b"owned manager transfer fixture")?;
+    ok(cli(
+        &lab.target,
+        &[
+            "source1",
+            "push",
+            &source.to_string_lossy(),
+            &remote.to_string_lossy(),
+        ],
+    )
+    .await);
+    ok(cli(
+        &lab.target,
+        &[
+            "source1",
+            "pull",
+            &remote.to_string_lossy(),
+            &downloaded.to_string_lossy(),
+        ],
+    )
+    .await);
+    assert_eq!(std::fs::read(&downloaded)?, std::fs::read(&source)?);
+    ok(cli(&lab.source, &["daemon", "stop"]).await);
+    assert!(
+        tokio::time::timeout(Duration::from_secs(10), lab.source_daemon.wait())
+            .await??
+            .success()
+    );
+    lab.source_daemon = logged(&lab.source, &["daemon"], "manager-restarted")?.spawn()?;
+    online(&lab.source, "source1").await?;
+    let policy: DaemonConfig = config::read(&lab.source.join(".xrun/daemon.toml"))?;
+    assert!(policy.allow_from.contains(&lab.target_identity.device_id));
+    assert!(!policy.allow_all);
+    assert_eq!(
+        ok(cli(&lab.target, &execute).await).trim(),
+        format!("xrun {}", xrun::protocol::VERSION)
+    );
+    ok(cli(&lab.source, &["daemon", "pause"]).await);
+    let paused = cli(&lab.target, &execute).await;
+    assert!(String::from_utf8_lossy(&paused.stderr).contains("ACCESS_PAUSED"));
+    ok(cli(&lab.source, &["daemon", "resume"]).await);
+    assert_eq!(
+        ok(cli(&lab.target, &execute).await).trim(),
+        format!("xrun {}", xrun::protocol::VERSION)
+    );
+    ok(cli(&lab.source, &["deny-from", "target1"]).await);
+    let denied = cli(&lab.target, &execute).await;
+    assert!(String::from_utf8_lossy(&denied.stderr).contains("SOURCE_NOT_ALLOWED"));
+    let refused = cli(&lab.target, &["invite", "--json"]).await;
+    assert_eq!(json_error(refused)?["code"], "NOT_MANAGER");
+    Ok(())
+}
+
+fn json_error(output: std::process::Output) -> Result<Value> {
+    assert!(!output.status.success());
+    Ok(serde_json::from_slice(&output.stderr)?)
+}
+
 #[tokio::test]
 async fn desktop_operation_fixture() -> Result<()> {
     let Ok(source) = std::env::var("XRUN_DESKTOP_OPERATION") else {
@@ -127,15 +204,13 @@ async fn connection_grants_only_the_verified_manager_and_respects_declined_conse
         assert!(!manager_policy.allow_from.contains(&member_id.into()));
         let mut daemon = logged(&home, &["daemon"], name)?.spawn()?;
         online(&manager_home, name).await?;
-        // A manual all-members policy and stale individual grants must not
-        // expose the manager's root key through incoming business operations.
+        // A blanket policy cannot grant incoming access to a manager.
         let mut stale = manager_policy;
         stale.allow_all = true;
-        stale.allow_from.push(member_id.into());
         config::write(&manager_home.join(".xrun/daemon.toml"), &stale)?;
         let denied = cli(&home, &["mac-pro", "--", "unused"]).await;
         assert_eq!(denied.status.code(), Some(125));
-        assert!(String::from_utf8_lossy(&denied.stderr).contains("MANAGER_PROTECTED"));
+        assert!(String::from_utf8_lossy(&denied.stderr).contains("SOURCE_NOT_ALLOWED"));
         let denied = cli(&manager_home, &["allow-from", "--all"]).await;
         assert_eq!(denied.status.code(), Some(125));
         assert!(String::from_utf8_lossy(&denied.stderr).contains("MANAGER_PROTECTED"));

@@ -45,6 +45,28 @@
   color: var(--muted);
   font-size: 12px;
 }
+.deployment-progress {
+  margin-top: 16px;
+}
+.deployment-progress .setup-advanced {
+  margin-top: 10px;
+}
+.deployment-steps {
+  display: grid;
+  gap: 6px;
+  padding: 0;
+  list-style: none;
+  color: var(--muted);
+}
+.deployment-steps li {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+}
+.deployment-steps li span:last-child {
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
 .network-setup .hero-actions .primary {
   flex: 1;
 }

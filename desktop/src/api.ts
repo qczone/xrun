@@ -302,7 +302,7 @@ export type PendingOperation =
   | "revoke"
   | "cloudflare_accounts"
   | "logout_cloudflare"
-  | "deploy_cloudflare"
+  | "create_cloudflare_network"
   | "remote_submit"
   | "remote_cancel";
 
@@ -322,6 +322,58 @@ export interface RelayDeployment {
   name: string;
   account_id: string;
   link: string;
+  region?: string;
+}
+
+export type DeploymentStage =
+  | "authorization"
+  | "authorization_received"
+  | "token_exchange"
+  | "accounts"
+  | "account_selection"
+  | "subdomain"
+  | "worker_check"
+  | "worker_upload"
+  | "address_activation"
+  | "deployed"
+  | "relay_check"
+  | "network_creation"
+  | "service_start"
+  | "service_connection"
+  | "authorization_cleanup"
+  | "complete";
+export interface DeploymentProgress {
+  event: "deployment_progress";
+  operation_id: string;
+  provider: string;
+  operation: string;
+  sequence: number;
+  timestamp_ms: number;
+  stage: DeploymentStage;
+  status:
+    "running" | "waiting" | "completed" | "failed" | "warning" | "cancelled";
+  elapsed_ms: number;
+  stage_elapsed_ms: number;
+  deployment?: RelayDeployment;
+  error?: { code: string; message: string };
+}
+
+async function withDeploymentProgress<T>(
+  run: (progressId: string) => Promise<T>,
+  onProgress?: (progress: DeploymentProgress) => void,
+): Promise<T> {
+  const progressId = crypto.randomUUID();
+  const unlisten = await listen<DeploymentProgress>(
+    "xrun-deployment-progress",
+    ({ payload }) => {
+      if (payload.operation_id === progressId) onProgress?.(payload);
+    },
+  );
+  try {
+    return await run(progressId);
+  } finally {
+    unlisten();
+  }
 }
 export interface RemoteCommand {
   request_id: string;
@@ -372,16 +424,24 @@ export const api = {
     onAuthorization: () => void,
     reauthorize = false,
     remember = false,
+    onProgress?: (progress: DeploymentProgress) => void,
+    finishTemporary = false,
   ) => {
     const unlisten = await listen<string>(
       "xrun-cloudflare-authorization",
       onAuthorization,
     );
     try {
-      return await invoke<CloudflareAccount[] | null>("cloudflare_accounts", {
-        reauthorize,
-        remember,
-      });
+      return await withDeploymentProgress(
+        (progressId) =>
+          invoke<CloudflareAccount[] | null>("cloudflare_accounts", {
+            reauthorize,
+            remember,
+            progressId,
+            finishTemporary,
+          }),
+        onProgress,
+      );
     } finally {
       unlisten();
     }
@@ -390,12 +450,34 @@ export const api = {
     invoke<void>("cancel_cloudflare_authorization"),
   openCloudflareAuthorization: () =>
     invoke<void>("open_cloudflare_authorization"),
-  deployCloudflare: (name: string, account: string, region = "auto") =>
-    invoke<RelayDeployment>("deploy_cloudflare", { name, account, region }),
+  createCloudflareNetwork: (
+    workerName: string,
+    account: string,
+    deviceName: string,
+    region: string,
+    resume: boolean,
+    onProgress: (progress: DeploymentProgress) => void,
+  ) =>
+    withDeploymentProgress(
+      (progressId) =>
+        invoke<RelayDeployment | null>("create_cloudflare_network", {
+          workerName,
+          account,
+          deviceName,
+          region,
+          resume,
+          progressId,
+        }),
+      onProgress,
+    ),
   cloudflareRelays: () => invoke<RelayDeployment[]>("cloudflare_relays"),
   cloudflareRememberedLogin: () =>
     invoke<boolean>("cloudflare_remembered_login"),
-  logoutCloudflare: () => invoke<void>("logout_cloudflare"),
+  logoutCloudflare: (onProgress?: (progress: DeploymentProgress) => void) =>
+    withDeploymentProgress(
+      (progressId) => invoke<void>("logout_cloudflare", { progressId }),
+      onProgress,
+    ),
   remoteSubmit: (device: string, command: RemoteCommand) =>
     invoke<CommandJob>("remote_submit", { device, command }),
   chooseScreenshotDestination: (format: ScreenshotFormat) =>

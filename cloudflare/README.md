@@ -17,10 +17,12 @@ xrun relay deploy --provider cloudflare --name xrun-relay
 在浏览器登录 Cloudflare 并授权 xrun，CLI 直接上传内置的预编译 Worker。
 支持 macOS、Windows 和 Linux，用户不需要源码、Bun、Node.js、Wrangler 或编译环境。
 多账号可通过 `--account <账号 ID>` 选择；同名重复部署保留域名和 DO 数据。
-`xrun relay login --provider cloudflare` 可提前授权，`xrun relay logout --provider cloudflare` 撤销本地登录且保留中转。
+临时授权直接随 `deploy` 完成并撤销；单独 `login` 默认只验证授权。管理设备可显式 `relay login --provider cloudflare --remember`，以便重复维护。`relay logout --provider cloudflare` 撤销登录且保留中转。
 `xrun relay deploy --provider cloudflare --dry-run --json` 只检查包内产物。
 `xrun relay link --provider cloudflare --name xrun-relay` 从本机记录查看部署地址，不联网。
-部署记录与登录凭据在私有 `~/.xrun/cloudflare/` 中，应保留以便更新。
+部署记录位于私有 `~/.xrun/cloudflare/`，保留记录可更新或恢复同一个 Worker；记住登录的凭据只保存于系统凭据库。
+
+CLI 显示分阶段进度；`--json` 使用 stdout 最终结果、stderr 逐行 JSON 事件。`--no-browser` 提供浏览器授权地址供人或 AI 接力，仍等待同机回调。中转保存后检查真实协议连接，再报告 `ready`；连接检查失败保留部署和地址。`relay check --provider cloudflare --name xrun-relay --json` 可只读重试检查。具体事件和部分成功规则见 [部署进度与自动化](../docs/usage.md#部署进度与自动化)。
 
 ## 开发者源码部署
 

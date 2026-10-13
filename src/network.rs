@@ -5,6 +5,7 @@ mod links;
 mod metadata;
 mod pairing;
 mod peers;
+mod probe;
 mod traffic;
 mod transport;
 pub(crate) use traffic::traffic;
@@ -19,6 +20,7 @@ pub(crate) use peers::{
     cached_device_list, connected_devices, device, device_list, local_device, refresh_one,
     synchronize,
 };
+pub(crate) use probe::check;
 pub(crate) use transport::authenticate;
 pub(crate) use transport::authenticate_read_only;
 pub(crate) use transport::latest_authority;

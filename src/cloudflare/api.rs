@@ -1,3 +1,4 @@
+use crate::deployment::{self, DeploymentStage};
 use crate::error::ErrorCode;
 use anyhow::{Context, Result, bail};
 use reqwest::{Client, Method, StatusCode};
@@ -15,6 +16,7 @@ impl Api {
         Ok(Self {
             client: Client::builder()
                 .redirect(reqwest::redirect::Policy::none())
+                .connect_timeout(Duration::from_secs(10))
                 .timeout(Duration::from_secs(90))
                 .build()?,
             origin: "https://api.cloudflare.com/client/v4".into(),
@@ -86,6 +88,32 @@ impl Api {
     }
 
     async fn request(
+        &self,
+        method: Method,
+        path: &str,
+        body: Option<Value>,
+        upload: Option<(String, String)>,
+        missing_subdomain_ok: bool,
+    ) -> Result<Option<Value>> {
+        let stage = if path.starts_with("/accounts?") {
+            DeploymentStage::Accounts
+        } else if path.ends_with("/workers/subdomain") {
+            DeploymentStage::Subdomain
+        } else if path.ends_with("/subdomain") {
+            DeploymentStage::AddressActivation
+        } else if upload.is_some() {
+            DeploymentStage::WorkerUpload
+        } else {
+            DeploymentStage::WorkerCheck
+        };
+        deployment::step(
+            stage,
+            self.request_inner(method, path, body, upload, missing_subdomain_ok),
+        )
+        .await
+    }
+
+    async fn request_inner(
         &self,
         method: Method,
         path: &str,

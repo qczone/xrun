@@ -2,7 +2,7 @@ import type { Job, Status } from "./api";
 import { formatLocale, t } from "./i18n";
 
 export function compactIdentifier(value: string) {
-  const identifier = value.replace(/^(dev_|net_)/, "");
+  const identifier = value.replace(/^net_/, "");
   return identifier.length > 12
     ? `${identifier.slice(0, 8)}…${identifier.slice(-4)}`
     : identifier;

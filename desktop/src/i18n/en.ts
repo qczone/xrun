@@ -285,7 +285,7 @@ export const en = {
   "setup.creating": "Creating…",
   "invite.confirmTitle": "Invite and request access?",
   "invite.confirmMessage":
-    "The joining owner can allow this manager to access their device. Managers reject incoming operations.",
+    "The joining owner can allow this manager to access their device. Reverse access requires an individual grant here.",
   "invite.confirm": "Create invitation with access",
   "invite.failed":
     "Could not create an invitation. Check your connection and retry.",
@@ -296,7 +296,7 @@ export const en = {
   "invite.registrationHint":
     "Invitations register members without granting access by default. Existing access-for-all policies still apply.",
   "invite.allowAllHint":
-    "Managers handle membership only and reject incoming operations.",
+    "Grant access to this device individually in the device list.",
   "invite.generate": "Create access code",
   "invite.generating": "Creating…",
   "invite.connectFirst":
@@ -331,7 +331,8 @@ export const en = {
     "Could not refresh devices. Showing the last known list.",
   "devices.pausedHint":
     "Remote access is paused. These permissions apply again when you resume access.",
-  "devices.managerProtected": "Managers reject incoming operations.",
+  "devices.managerAccessHint":
+    "Managers require individual grants in the device list.",
   "devices.direction": "Other devices → This device",
   "devices.permissionHint":
     "Allowed devices can run commands, transfer files and take screenshots here. Accessing them needs their permission.",
@@ -363,6 +364,8 @@ export const en = {
   "devices.revoked": "Revoked",
   "devices.allowNamed": "Allow {name} to access this device",
   "devices.allowTitle": "Allow {name} to access this device?",
+  "devices.allowManagerMessage":
+    "This device can operate this machine and access its network management identity. Authorize a trusted device.",
   "devices.allowMessage":
     "This device can run commands, transfer files and take screenshots as your user. Only allow devices you trust.",
   "devices.allowConfirm": "Allow access",
@@ -554,7 +557,7 @@ export const en = {
   "operation.export_authority": "Encrypting backup…",
   "operation.restore_authority": "Restoring identity…",
   "operation.retire_authority": "Completing handover…",
-  "operation.deploy_cloudflare": "Creating network…",
+  "operation.create_cloudflare_network": "Creating network…",
   "operation.remote_submit": "Submitting command…",
   "operation.remote_cancel": "Requesting cancellation…",
   "action.connectFailed":
@@ -649,6 +652,30 @@ export const en = {
     "Could not create the network. Check the details and retry.",
   "cloudflare.deployedHint":
     "Relay deployed. Retry to continue creating the network.",
+  "cloudflare.resumeRelay": "Use a saved relay",
+  "cloudflare.newRelay": "Create a new relay",
+  "cloudflare.nameConflict":
+    "This name is already in use. Choose another name.",
+  "cloudflare.createdCleanupFailed":
+    "Network created. Authorization cleanup is incomplete.",
+  "deployment.authorization": "Waiting for browser authorization",
+  "deployment.authorization_received": "Authorization returned",
+  "deployment.token_exchange": "Verifying authorization",
+  "deployment.accounts": "Reading accounts",
+  "deployment.account_selection": "Select an account",
+  "deployment.subdomain": "Preparing the domain",
+  "deployment.worker_check": "Checking the relay",
+  "deployment.worker_upload": "Deploying the relay",
+  "deployment.address_activation": "Enabling the address",
+  "deployment.deployed": "Relay deployed",
+  "deployment.relay_check": "Checking connectivity",
+  "deployment.network_creation": "Creating the network",
+  "deployment.service_start": "Starting the service",
+  "deployment.service_connection": "Connecting to the relay",
+  "deployment.authorization_cleanup": "Revoking authorization",
+  "deployment.complete": "Complete",
+  "deployment.details": "Progress details",
+  "deployment.elapsed": "{seconds} s",
   "cloudflare.copyLink": "Copy deployment link",
   "cloudflare.copyNamed": "Copy deployment link for {name}",
   "cloudflare.copyFailed": "Could not copy the deployment link. Retry.",

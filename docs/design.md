@@ -100,7 +100,7 @@ CLI 收完结果和 `Complete` 后显式归还连接；本机中断、错误、�
 
 ### 2.3 网络身份与成员清单
 
-网络 ID 为 `net_<网络根公钥 SHA-256 指纹的 base32>`。首次创建或注册生成随机 `dev_` 设备 ID；任务、授权和去重使用 ID，名称仅用于选择设备。更换地址和续期不改变 ID。
+网络 ID 为 `net_<网络根公钥 SHA-256 指纹的 base32>`。首次创建或注册生成不带前缀的随机 32 位小写十六进制设备 ID（UUID v4）；任务、授权和去重使用 ID，名称仅用于选择设备。更换地址和续期不改变 ID。
 
 管理设备签名的完整清单包含：网络 ID、递增版本、管理设备 ID、递增管理代次、成员 ID/名称/公钥指纹/撤销状态、中转地址和中转 CA。权限不放进清单。
 
@@ -175,6 +175,8 @@ App 的本机状态栏和网络设置从已验证的本地成员清单读取管�
 | 本机存储与输出 | 数据库、参数和日志可能包含敏感内容；远端输出原样透传，终端控制字符与 AI 提示注入由使用方处理 |
 
 中转可见网络 ID、网络根证书、连接时出示的成员证书（设备 ID、公钥与有效期）、来源 IP、在线连接、时间和流量。设备名称、撤销记录、主机名、用户名、默认目录和回执均通过端到端连接交换，中转无法读取。邀请 Token 只在已验证管理设备的端到端配对通道内发送；程序、参数、环境值、输入、输出、文件与截图内容经设备间 TLS 加密。权限仍由目标自己判断。
+
+管理设备与普通成员共用本机访问策略。管理设备仅接受 `allow_from` 的逐来源授权，`deny_from` 和暂停优先；`allow_all` 不授予管理设备访问权，重启保留逐来源规则。过时或交接后尚未清理的根密钥持有者继续拒绝业务操作。远程授权不授予独立的成员管理角色，但被授权者以管理设备当前用户运行时能读取管理密钥。
 
 每个网络只有一个当前管理设备。`network backup` 用 Argon2id（32 MiB、3 次、单线程）派生密钥，再以 AES-256-GCM 加密完整设备身份、叶私钥、根私钥和证书、SQLite 一致快照与本机配置。密码从隐藏提示或 `--password-stdin` 输入，不进入 argv；不备份 IPC 随机凭证、短码内存秘密或 Cloudflare 凭据。单包限 32 MiB，数据库限 16 MiB；固定文件名单不接受归档路径。
 
@@ -359,6 +361,7 @@ xrun <设备> start [执行选项] -- <程序> [程序参数…]
 | `xrun relay deploy --provider cloudflare [--name 名称] [--account 账号]` | 浏览器授权后上传内置 Worker，输出部署链接 |
 | `xrun relay deploy --provider local [--port N] [--addr 主机:端口] [--no-detect]` | 在 Linux 安装中转服务，输出网络部署链接 |
 | `xrun relay link --provider <cloudflare\|local> [--name 名称]` | 查看部署链接，Cloudflare 从私有部署记录读取 |
+| `xrun relay check --provider <cloudflare\|local> [--name 名称]` | 检查本机保存地址的传输和中转协议，不认领网络、不重新授权或部署 |
 | `xrun relay remove --provider <cloudflare\|local> [--name 名称] [--purge]` | 本地卸载服务并保留数据；Cloudflare 必须显式 `--purge`，永久删除 Worker 和 DO 数据 |
 | `xrun relay login --provider cloudflare [--remember]`、`xrun relay logout --provider cloudflare` | 授权、撤销 Cloudflare 登录，保留已部署中转 |
 | `xrun relay run --provider local` | 前台运行本地 Linux 中转 |

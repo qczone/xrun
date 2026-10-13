@@ -151,7 +151,7 @@ export function DeviceMenu({
           {t("remote.open")}
         </button>
         <button
-          disabled={busy || device.revoked || !device.online || !!device.admin}
+          disabled={busy || device.revoked || !device.online}
           onClick={() => {
             close();
             captureScreen();
@@ -161,7 +161,7 @@ export function DeviceMenu({
           {t("capture.open")}
         </button>
         <button
-          disabled={busy || device.revoked || !device.online || !!device.admin}
+          disabled={busy || device.revoked || !device.online}
           onClick={() => {
             close();
             transferFile();

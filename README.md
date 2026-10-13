@@ -61,7 +61,7 @@ xrun linux1 forward 8080:3000
 
 CLI、设备后台服务和 Linux Rust 中转使用同一个二进制。运行发布包不需要安装 Rust、Node.js 或 Bun。
 
-部署 Cloudflare 中转可运行 `xrun relay deploy --provider cloudflare --name xrun-relay`，在浏览器授权后，CLI 直接上传包内的 Worker，无需源码、Wrangler 或编译环境。命令返回完整中转地址，供 App 或 `xrun connect` 创建网络使用。桌面端也可在“新建网络”直接授权、部署并创建。
+部署 Cloudflare 中转可运行 `xrun relay deploy --provider cloudflare --name xrun-relay`，在浏览器授权后，CLI 直接上传包内的 Worker，无需源码、Wrangler 或编译环境。命令返回完整中转地址，供 App 或 `xrun connect` 创建网络使用。桌面端也可在“新建网络”直接授权、部署并创建；授权返回会打开 App，并显示各阶段进度。AI 可用 `--no-browser --json` 接力授权，部署中断后通过 `relay check` 和本机保存的中转继续。[部署进度与自动化](docs/usage.md#部署进度与自动化)。
 
 [Release](https://github.com/qczone/xrun/releases) 提供各平台的独立下载文件、安装脚本和校验清单。[查看安装说明](docs/usage.md#安装)。三个平台均支持命令安装，自动识别架构、校验指定版本及 SHA-256，并返回 JSON 结果，详见 [自动安装](docs/usage.md#ai-和命令行自动安装)。
 

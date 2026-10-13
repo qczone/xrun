@@ -31,6 +31,7 @@ mod streaming;
 mod transfer;
 
 mod database;
+mod deployment;
 mod ipc;
 mod pool;
 mod session;

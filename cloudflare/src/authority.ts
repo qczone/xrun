@@ -119,7 +119,8 @@ export async function verifyAuthority(
       typeof m.device_id !== "string" ||
       !DEVICE.test(m.device_id) ||
       typeof m.name !== "string" ||
-        !/^[a-z][a-z0-9-]{0,31}$/.test(m.name) ||
+      !/^[a-z][a-z0-9-]{0,31}$/.test(m.name) ||
+      DEVICE.test(m.name) ||
       typeof m.key_fp !== "string" ||
       !/^[a-f0-9]{64}$/.test(m.key_fp) ||
       typeof m.revoked !== "boolean" ||

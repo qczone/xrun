@@ -26,7 +26,7 @@ export interface Proof {
   authority_generation: number;
   authority: AuthorityState | null;
 }
-export const DEVICE = /^dev_[a-f0-9]{32}$/;
+export const DEVICE = /^[a-f0-9]{32}$/;
 const MAX_CERTIFICATE_PEM_BYTES = 8192;
 const MAX_ENCODED_SIGNATURE_CHARS = 128;
 const knownExtensions = new Set([
@@ -169,8 +169,7 @@ export async function verifyProof(
     !member
       .getExtension(SubjectAlternativeNameExtension)
       ?.names.items.some(
-        (name) =>
-          name.type === "dns" && name.value === `d${device.slice(4)}.xrun`,
+        (name) => name.type === "dns" && name.value === `d${device}.xrun`,
       ) ||
     member.subjectName.getField("CN").length !== 1 ||
     member.subjectName.getField("CN")[0] !== value.device_id ||

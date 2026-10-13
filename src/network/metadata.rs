@@ -77,7 +77,7 @@ mod tests {
         let directory = tempfile::tempdir()?;
         let path = directory.path().join("device-info.db");
         let mut device = Device {
-            device_id: "dev_9db79d9bfad74bfe9c2fc01bc6fc79e1".into(),
+            device_id: "9db79d9bfad74bfe9c2fc01bc6fc79e1".into(),
             name: "pc1".into(),
             online: true,
             admin: false,

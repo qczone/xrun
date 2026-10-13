@@ -3,6 +3,7 @@ use axum::{Json, body::Body, http::Request};
 use serde_json::json;
 use std::collections::HashMap;
 use tower::ServiceExt;
+static TEMPORARY_TEST: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
 #[tokio::test]
 async fn cancelling_desktop_authorization_releases_its_callback_listener() -> Result<()> {
@@ -270,9 +271,15 @@ fn expired() -> Credentials {
 #[tokio::test]
 async fn temporary_tokens_are_revoked_on_failed_operations_and_old_timers_cannot_revoke_new_sessions()
 -> Result<()> {
+    let _serial = TEMPORARY_TEST.lock().await;
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
     let endpoint = format!("http://{}/revoke", listener.local_addr()?);
-    let router = Router::new().route("/revoke", axum::routing::post(|| async { StatusCode::OK }));
+    let router = Router::new()
+        .route("/revoke", axum::routing::post(|| async { StatusCode::OK }))
+        .route(
+            "/failed",
+            axum::routing::post(|| async { StatusCode::SERVICE_UNAVAILABLE }),
+        );
     let task = tokio::spawn(async move { axum::serve(listener, router).await });
     *temporary().lock().unwrap() = Some(("new-session".into(), expired()));
     finish_temporary_at(Some("old-session"), &http()?, &endpoint, Ok(())).await?;
@@ -283,7 +290,115 @@ async fn temporary_tokens_are_revoked_on_failed_operations_and_old_timers_cannot
     let result = finish_temporary_at(Some("new-session"), &http()?, &endpoint, result).await;
     assert!(crate::error::is(&result.unwrap_err(), ErrorCode::HttpError));
     assert!(temporary().lock().unwrap().is_none());
+    let mut credentials = expired();
+    credentials.expires_at = now() + 120;
+    *temporary().lock().unwrap() = Some(("cleanup-retry".into(), credentials));
+    let events = Arc::new(Mutex::new(Vec::new()));
+    let received = events.clone();
+    let reporter = crate::deployment::DeploymentReporter::new(
+        "owned-test".into(),
+        "cloudflare",
+        "deploy",
+        move |event| {
+            received.lock().unwrap().push(event);
+        },
+    );
+    let result: Result<()> = Err(ErrorCode::ConnectTimeout
+        .error("owned connection fixture failed")
+        .into());
+    let result = reporter
+        .scope(finish_temporary_at(
+            Some("cleanup-retry"),
+            &http()?,
+            &endpoint.replace("/revoke", "/failed"),
+            result,
+        ))
+        .await;
+    assert!(crate::error::is(
+        &result.unwrap_err(),
+        ErrorCode::ConnectTimeout
+    ));
+    assert_eq!(
+        temporary().lock().unwrap().as_ref().unwrap().1.expires_at,
+        0
+    );
+    assert!(
+        events
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|event| event.status == crate::deployment::ProgressStatus::Warning)
+    );
+    finish_temporary_at(Some("cleanup-retry"), &http()?, &endpoint, Ok(())).await?;
+    assert!(temporary().lock().unwrap().is_none());
     task.abort();
+    Ok(())
+}
+
+#[tokio::test]
+async fn token_exchange_starts_before_idle_callback_connections_close() -> Result<()> {
+    let _serial = TEMPORARY_TEST.lock().await;
+    let directory = tempfile::tempdir()?;
+    let callback = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
+    let callback_address = callback.local_addr()?;
+    let provider = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
+    let endpoint = format!("http://{}/token", provider.local_addr()?);
+    let called = Arc::new(tokio::sync::Notify::new());
+    let noticed = called.clone();
+    let router = Router::new().route("/token", axum::routing::post(move || {
+        let noticed = noticed.clone();
+        async move {
+            noticed.notify_one();
+            Json(json!({"access_token":"owned-test-access", "expires_in":3600, "token_type":"Bearer"}))
+        }
+    }));
+    let serving = tokio::spawn(async move { axum::serve(provider, router).await });
+    let (prompted, wait_prompt) = oneshot::channel();
+    let prompt_sender = Mutex::new(Some(prompted));
+    let path = directory.path().to_path_buf();
+    let task = tokio::spawn(async move {
+        let prompt = |url: &str| {
+            prompt_sender
+                .lock()
+                .unwrap()
+                .take()
+                .unwrap()
+                .send(url.to_owned())
+                .unwrap();
+        };
+        authorize_with_listener_at(
+            &path,
+            "0123456789abcdef0123456789abcdef",
+            false,
+            true,
+            Some(&prompt),
+            callback,
+            &endpoint,
+        )
+        .await
+    });
+    let prompt = Url::parse(&wait_prompt.await?)?;
+    let fields: HashMap<_, _> = prompt.query_pairs().into_owned().collect();
+    // A browser can preconnect without sending a second HTTP request.
+    let idle = tokio::net::TcpStream::connect(callback_address).await?;
+    let mut callback = Url::parse(&format!("http://{callback_address}/oauth/callback"))?;
+    callback.query_pairs_mut().extend_pairs([
+        ("state", fields["state"].as_str()),
+        ("code", "owned-test-code"),
+    ]);
+    reqwest::Client::new()
+        .get(callback)
+        .send()
+        .await?
+        .error_for_status()?;
+    tokio::time::timeout(Duration::from_secs(2), called.notified()).await?;
+    drop(idle);
+    assert_eq!(
+        tokio::time::timeout(Duration::from_secs(5), task).await???,
+        "owned-test-access"
+    );
+    temporary().lock().unwrap().take();
+    serving.abort();
     Ok(())
 }
 

@@ -112,7 +112,7 @@ export async function fixture() {
   ) {
     const name = `member${sequence++}`;
     const keys = await crypto.subtle.generateKey(alg, true, ["sign", "verify"]);
-    const device = `dev_${crypto.randomUUID().replaceAll("-", "")}`;
+    const device = crypto.randomUUID().replaceAll("-", "");
     const cert = await X509CertificateGenerator.create({
       serialNumber: "02",
       subject: `CN=${device}`,
@@ -132,7 +132,7 @@ export async function fixture() {
           ExtendedKeyUsage.clientAuth,
         ]),
         new SubjectAlternativeNameExtension([
-          { type: "dns", value: options.san ?? `d${device.slice(4)}.xrun` },
+          { type: "dns", value: options.san ?? `d${device}.xrun` },
         ]),
       ],
     });

@@ -128,6 +128,20 @@ export async function fixture(
       calls.push({ command, args });
       if (handlers[command]) {
         const value = handlers[command](args);
+        if (command === "create_cloudflare_network")
+          return Promise.resolve(value).then((relay) => {
+            if (relay) {
+              status.local.joined = true;
+              status.network = {
+                network_id: "created-network",
+                manager_id: "self",
+                manager_name: status.local.name || "manager1",
+                is_manager: true,
+                relay_addresses: ["https://relay.example"],
+              };
+            }
+            return relay;
+          });
         return command === "activity_history"
           ? Promise.resolve(value).then(remember)
           : value;

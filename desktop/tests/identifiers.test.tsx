@@ -7,8 +7,8 @@ import {
   openMemberActions,
 } from "./fixtures";
 
-const firstId = "dev_9db79d9bfad74bfe9c2fc01bc6fc79e1";
-const secondId = "dev_9db79d9bfad74bfe9c2fc01bc6fc79e2";
+const firstId = "9db79d9bfad74bfe9c2fc01bc6fc79e1";
+const secondId = "9db79d9bfad74bfe9c2fc01bc6fc79e2";
 const networkId = "net_mdqe34dt4yiq7gwnwxv3hyclztl2g6v5yf4bvktmplnh2jmquxza";
 
 test("compact device IDs distinguish matching prefixes while copying and granting use the full ID", async () => {

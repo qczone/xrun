@@ -210,6 +210,33 @@ async fn status_text_distinguishes_unjoined_paused_revoked_and_unavailable_devic
     let status = ok(cli(&lab.source, &["status"]).await);
     assert!(status.contains("local: source1") && status.contains("daemon: running"));
     assert!(status.contains("relay-connected"));
+    assert!(xrun::protocol::valid_device_id(
+        &lab.source_identity.device_id
+    ));
+    assert!(xrun::protocol::valid_device_id(
+        &lab.target_identity.device_id
+    ));
+    assert!(status.contains(&lab.source_identity.device_id));
+    assert!(status.contains(&lab.target_identity.device_id));
+    assert!(!status.contains("dev_"));
+    let state = json(cli(&lab.source, &["status", "--json"]).await);
+    assert_eq!(state["local"]["device_id"], lab.source_identity.device_id);
+    let selected = json(
+        cli(
+            &lab.source,
+            &[&lab.target_identity.device_id, "info", "--json"],
+        )
+        .await,
+    );
+    assert_eq!(selected["device_id"], lab.target_identity.device_id);
+    let permitted = json(
+        cli(
+            &lab.source,
+            &["allow-from", &lab.target_identity.device_id, "--json"],
+        )
+        .await,
+    );
+    assert_eq!(permitted["source_device_id"], lab.target_identity.device_id);
     let denied = cli(&lab.source, &["allow-from", "--all", "--json"]).await;
     assert!(!denied.status.success());
     assert_eq!(

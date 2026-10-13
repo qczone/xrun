@@ -135,13 +135,7 @@ export function ScreenshotDialog({
         <p className="field-help">{t("capture.hint")}</p>
         <button
           className="primary"
-          disabled={
-            busy ||
-            otherBusy ||
-            !device.online ||
-            device.revoked ||
-            !!device.admin
-          }
+          disabled={busy || otherBusy || !device.online || device.revoked}
         >
           {t(busy ? "capture.capturing" : "capture.save")}
         </button>

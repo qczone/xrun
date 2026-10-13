@@ -1,10 +1,12 @@
 //! OAuth callbacks preserve provider failures without exposing callback secrets.
+mod page;
 use crate::error::{CodedError, ErrorCode};
 use axum::{
     extract::{Query, State},
-    http::StatusCode,
-    response::{Html, IntoResponse},
+    http::{HeaderMap, StatusCode, header},
+    response::{IntoResponse, Response},
 };
+use page::{PageState, page};
 use std::{
     collections::HashMap,
     sync::{Arc, Mutex},
@@ -56,9 +58,19 @@ pub(super) struct Callback {
 pub(super) async fn receive(
     State(callback): State<Arc<Callback>>,
     Query(query): Query<HashMap<String, String>>,
+    headers: HeaderMap,
 ) -> impl IntoResponse {
+    let chinese = headers
+        .get(header::ACCEPT_LANGUAGE)
+        .and_then(|value| value.to_str().ok())
+        .is_some_and(|value| value.trim().to_ascii_lowercase().starts_with("zh"));
     if query.get("state") != Some(&callback.state) {
-        return (StatusCode::BAD_REQUEST, page("Invalid login state."));
+        return response(
+            StatusCode::BAD_REQUEST,
+            PageState::Invalid,
+            chinese,
+            Some("Invalid login state."),
+        );
     }
     let code = if query.contains_key("error") {
         Err(failure(&query))
@@ -68,17 +80,36 @@ pub(super) async fn receive(
     {
         Ok(code.clone())
     } else {
-        return (StatusCode::BAD_REQUEST, page("Missing authorization code."));
+        return response(
+            StatusCode::BAD_REQUEST,
+            PageState::Invalid,
+            chinese,
+            Some("Missing authorization code."),
+        );
     };
-    let message = match &code {
-        Ok(_) => "Authorization code received. Return to xrun to finish deployment.".to_owned(),
-        Err(error) => format!("{error}. Return to xrun."),
+    let detail = code.as_ref().err().map(ToString::to_string);
+    let state = if code.is_ok() {
+        PageState::Received
+    } else {
+        PageState::Declined
     };
     let Some(sender) = callback.sender.lock().expect("callback lock").take() else {
-        return (StatusCode::GONE, page("This login has already completed."));
+        return response(StatusCode::GONE, PageState::Finished, chinese, None);
     };
     let _ = sender.send(code);
-    (StatusCode::OK, page(&message))
+    response(StatusCode::OK, state, chinese, detail.as_deref())
+}
+
+fn response(status: StatusCode, state: PageState, chinese: bool, detail: Option<&str>) -> Response {
+    (
+        status,
+        [
+            (header::CACHE_CONTROL, "no-store"),
+            (header::REFERRER_POLICY, "no-referrer"),
+        ],
+        page(state, chinese, detail),
+    )
+        .into_response()
 }
 
 fn failure(query: &HashMap<String, String>) -> CodedError {
@@ -138,22 +169,6 @@ fn failure(query: &HashMap<String, String>) -> CodedError {
             .take(2048)
             .collect::<String>(),
     )
-}
-
-fn page(message: &str) -> Html<String> {
-    let escaped = message
-        .replace('&', "&amp;")
-        .replace('<', "&lt;")
-        .replace('>', "&gt;")
-        .replace('"', "&quot;")
-        .replace('\'', "&#39;");
-    Html(format!(
-        concat!(
-            "<!doctype html><meta name=referrer content=no-referrer><title>xrun</title>",
-            "<script>history.replaceState(null,'','/')</script><p>{}</p>"
-        ),
-        escaped
-    ))
 }
 
 #[cfg(test)]

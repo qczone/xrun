@@ -98,7 +98,9 @@ pub(super) async fn run(cli: LocalCli) -> Result<i32> {
                     println!("{}", invitation.link);
                 }
             });
-            invitation_notice(allow);
+            if !json {
+                invitation_notice(allow);
+            }
         }
         Local::AllowFrom(args) => permission(args, true, json).await?,
         Local::DenyFrom(args) => permission(args, false, json).await?,
@@ -383,20 +385,25 @@ async fn up(
     let invitation = crate::client::invite_link(allow).await?;
     print(
         json,
-        &serde_json::json!({"device_id":id.device_id,"network_id":id.network_id,"link":invitation.link,"addresses":id.relay_addresses,"allow":allow}),
+        &serde_json::json!({
+            "device_id":id.device_id, "network_id":id.network_id, "link":invitation.link,
+            "addresses":id.relay_addresses, "allow":allow, "expires_in":invitation.expires_in,
+        }),
         || {
             println!("manager: {} ({})", id.name, id.device_id);
             println!("xrun join '{}'", invitation.link);
         },
     );
-    invitation_notice(allow);
+    if !json {
+        invitation_notice(allow);
+    }
     Ok(())
 }
 fn invitation_notice(allow: bool) {
     eprintln!("[xrun] invitation is a secret, valid once for 10 minutes");
     if allow {
         eprintln!(
-            "[xrun] --allow grants mutual command execution as the device's user; share only with a trusted device"
+            "[xrun] --allow requests manager access to the joining device; its owner must confirm"
         );
     }
 }

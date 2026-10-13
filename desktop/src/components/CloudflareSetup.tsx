@@ -1,8 +1,10 @@
-import { useRef, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { api, type CloudflareAccount, type RelayDeployment } from "../api";
 import { useOperations } from "../app/useOperations";
 import { t } from "../i18n";
 import { errorText } from "../errors";
+import { useDeploymentProgress } from "../app/useDeploymentProgress";
+import { DeploymentProgress } from "./DeploymentProgress";
 import { ErrorNotice } from "./ErrorNotice";
 import { Select } from "./Select";
 
@@ -30,9 +32,55 @@ export function CloudflareSetup({
     "idle" | "accounts" | "authorization" | "deploying" | "connecting"
   >("idle");
   const submitting = useRef(false);
+  const progress = useDeploymentProgress();
+  const [savedRelays, setSavedRelays] = useState<RelayDeployment[]>([]);
+  const [savedError, setSavedError] = useState<string | null>(null);
+  const [nameConflict, setNameConflict] = useState(false);
+  const advanced = useRef<HTMLDetailsElement>(null);
+  useEffect(() => {
+    let active = true;
+    void api
+      .cloudflareRelays()
+      .then((relays) => {
+        if (active) setSavedRelays(relays || []);
+      })
+      .catch((error) => {
+        if (active) setSavedError(errorText(error));
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
+  useEffect(() => {
+    if (error?.code === "ALREADY_EXISTS") {
+      setNameConflict(true);
+      if (advanced.current) advanced.current.open = true;
+    }
+  }, [error]);
+  const receiveProgress = (event: Parameters<typeof progress.receive>[0]) => {
+    progress.receive(event);
+    if (event.stage === "authorization_received") setPhase("accounts");
+    if (
+      event.status === "failed" &&
+      event.error &&
+      [
+        "authorization",
+        "authorization_received",
+        "token_exchange",
+        "accounts",
+      ].includes(event.stage)
+    )
+      setAuthorizationError(errorText(event.error));
+    if (event.error?.code === "ALREADY_EXISTS") {
+      setNameConflict(true);
+      if (advanced.current) advanced.current.open = true;
+    }
+    if (event.deployment) setDeployment(event.deployment);
+  };
   const reauthorize = async () => {
     if (busy || submitting.current) return;
     setAuthorizationError(null);
+    progress.start();
     await operate(
       async () => {
         setPhase("accounts");
@@ -40,6 +88,8 @@ export function CloudflareSetup({
           const available = await api.cloudflareAccounts(
             () => setPhase("authorization"),
             true,
+            false,
+            receiveProgress,
           );
           if (available) {
             setAccounts(available);
@@ -56,14 +106,18 @@ export function CloudflareSetup({
     if (busy || submitting.current) return;
     submitting.current = true;
     setAuthorizationError(null);
+    progress.start();
     const success = await operate(
       async () => {
         try {
           let selectedAccount = account;
           if (!deployment && !accounts) {
             setPhase("accounts");
-            const available = await api.cloudflareAccounts(() =>
-              setPhase("authorization"),
+            const available = await api.cloudflareAccounts(
+              () => setPhase("authorization"),
+              false,
+              false,
+              receiveProgress,
             );
             if (!available) return false;
             setAccounts(available);
@@ -72,28 +126,24 @@ export function CloudflareSetup({
             setAccount(selectedAccount);
           }
           if (!deployment && !selectedAccount) return false;
-          let relay = deployment;
-          if (!relay) {
-            setPhase("deploying");
-            relay = await api.deployCloudflare(
-              workerName.trim(),
-              selectedAccount,
-              relayRegion,
-            );
-            setDeployment(relay);
-          }
-          setPhase("connecting");
-          await api.action({
-            command: "connect",
-            args: { link: relay.link, name: name.trim(), allowManager: false },
-          });
+          setPhase(deployment ? "connecting" : "deploying");
+          const relay = await api.createCloudflareNetwork(
+            deployment?.name || workerName.trim(),
+            deployment?.account_id || selectedAccount,
+            name.trim(),
+            relayRegion,
+            !!deployment,
+            receiveProgress,
+          );
+          if (!relay) return false;
+          setDeployment(relay);
           onCreated();
           return true;
         } finally {
           setPhase("idle");
         }
       },
-      { name: "deploy_cloudflare", title: "cloudflare.createFailed" },
+      { name: "create_cloudflare_network", title: "cloudflare.createFailed" },
     );
     if (success === undefined) onRetry();
     submitting.current = false;
@@ -110,8 +160,43 @@ export function CloudflareSetup({
         }}
       >
         {nameField}
+        {savedError && (
+          <ErrorNotice
+            title={t("cloudflare.listFailed")}
+            detail={savedError}
+            dismiss={() => setSavedError(null)}
+          />
+        )}
+        {!deployment && savedRelays.length > 0 && (
+          <>
+            <label htmlFor="saved-cloudflare-relay">
+              {t("cloudflare.resumeRelay")}
+            </label>
+            <Select
+              id="saved-cloudflare-relay"
+              value=""
+              fullWidth
+              disabled={busy}
+              options={[
+                { value: "", label: t("cloudflare.newRelay") },
+                ...savedRelays.map((relay) => ({
+                  value: relay.name,
+                  label: relay.name,
+                })),
+              ]}
+              onChange={(value) => {
+                const saved = savedRelays.find((relay) => relay.name === value);
+                if (saved) {
+                  setDeployment(saved);
+                  setWorkerName(saved.name);
+                  setAccount(saved.account_id);
+                }
+              }}
+            />
+          </>
+        )}
         {!deployment && (
-          <details className="setup-advanced">
+          <details className="setup-advanced" ref={advanced}>
             <summary>{t("cloudflare.advanced")}</summary>
             <label htmlFor="worker-name">{t("cloudflare.workerName")}</label>
             <input
@@ -128,6 +213,7 @@ export function CloudflareSetup({
               disabled={busy}
               onChange={(event) => {
                 setWorkerName(event.target.value);
+                setNameConflict(false);
               }}
             />
             <label htmlFor="relay-region">{t("cloudflare.region")}</label>
@@ -158,6 +244,9 @@ export function CloudflareSetup({
               }))}
             />
             <p className="setup-help">{t("cloudflare.regionHint")}</p>
+            {nameConflict && (
+              <p className="setup-help">{t("cloudflare.nameConflict")}</p>
+            )}
           </details>
         )}
         {!deployment && (accounts || error) && (
@@ -198,6 +287,13 @@ export function CloudflareSetup({
             <button
               type="button"
               disabled={busy}
+              onClick={() => setDeployment(null)}
+            >
+              {t("cloudflare.newRelay")}
+            </button>
+            <button
+              type="button"
+              disabled={busy}
               onClick={async () => {
                 const copied = await operate(
                   async () => {
@@ -213,7 +309,14 @@ export function CloudflareSetup({
             </button>
           </div>
         )}
-        {phase !== "idle" && (
+        {busy && (
+          <DeploymentProgress
+            current={progress.current}
+            events={progress.events}
+            seconds={progress.seconds}
+          />
+        )}
+        {phase !== "idle" && !progress.current && (
           <p role="status" className="setup-help">
             {t(`cloudflare.${phase}`)}
           </p>
@@ -225,7 +328,8 @@ export function CloudflareSetup({
             dismiss={() => setAuthorizationError(null)}
           />
         )}
-        {phase === "authorization" && (
+        {(progress.current?.stage === "authorization" ||
+          (!progress.events.length && phase === "authorization")) && (
           <div className="hero-actions">
             <button
               type="button"

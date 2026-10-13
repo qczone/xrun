@@ -299,7 +299,7 @@ mod tests {
         );
         assert!(
             restored
-                .claim(&owner.network_id, &format!("dev_{}", "c".repeat(32)), true)
+                .claim(&owner.network_id, &"c".repeat(32), true)
                 .is_err()
         );
         assert!(

@@ -175,7 +175,7 @@ async fn registration_permissions_migration_and_manager_offline_execution() -> R
             )
             .await;
             assert_eq!(output.status.code(), Some(125));
-            assert!(String::from_utf8_lossy(&output.stderr).contains(if target == "source1" { "MANAGER_PROTECTED" } else { "SOURCE_NOT_ALLOWED" }));
+            assert!(String::from_utf8_lossy(&output.stderr).contains("SOURCE_NOT_ALLOWED"));
         }
         let denied = cli(&ordinary, &["invite"]).await;
         assert!(String::from_utf8_lossy(&denied.stderr).contains("NOT_MANAGER"));
@@ -188,8 +188,8 @@ async fn registration_permissions_migration_and_manager_offline_execution() -> R
         old.network = None;
         xrun::testing::config::write(&dir.join("identity.toml"), &old)?;
         let old_cfg = DaemonConfig {
-            allow_from: vec!["dev_01234567890123456789012345678901".into()],
-            deny_from: vec!["dev_11234567890123456789012345678901".into()],
+            allow_from: vec!["01234567890123456789012345678901".into()],
+            deny_from: vec!["11234567890123456789012345678901".into()],
             allow_all: true,
             remote_access_paused: true,
             pause_generation: 7,

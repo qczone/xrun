@@ -10,7 +10,7 @@ test("restored roles require their own complete fields and reject malformed budg
     protocol: 1,
   };
   const binding = {
-    target: `dev_${"a".repeat(32)}`,
+    target: "a".repeat(32),
     generation: "b".repeat(32),
     sid: "c".repeat(32),
     authorityGeneration: 1,
@@ -20,7 +20,7 @@ test("restored roles require their own complete fields and reject malformed budg
     ...binding,
     role: "source",
     anonymous: false,
-    source: `dev_${"d".repeat(32)}`,
+    source: "d".repeat(32),
     management: false,
     cachedSince: null,
     peer: crypto.randomUUID(),

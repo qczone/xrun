@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="%%LANG%%">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="referrer" content="no-referrer">
+  <meta name="color-scheme" content="light dark">
+  <title>%%TITLE%% · xrun</title>
+  <style>
+    :root {
+      font: 15px/1.7 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      color: #242a26; background: #f4f5f2; color-scheme: light dark;
+      --card: #fff; --muted: #727b74; --line: #e7ebe5;
+      --accent: #16765d; --tint: #eef7f1; --error: #b44b40; --error-tint: #fdf2ee;
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; min-height: 100vh; min-height: 100dvh; display: grid; place-items: center; padding: 24px; }
+    main { width: min(440px, 100%); padding: 36px; background: var(--card); border: 1px solid var(--line);
+      border-radius: 20px; box-shadow: 0 12px 48px #182d2010; }
+    header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 40px; }
+    .brand { display: flex; }
+    .brand svg { width: 94px; height: 31px; }
+    .brand g[fill] { fill: currentColor; }
+    .provider { font-size: 12px; color: var(--muted); padding: 3px 9px; border: 1px solid var(--line); border-radius: 6px; }
+    .status-icon { width: 52px; height: 52px; border-radius: 15px; display: grid; place-items: center;
+      color: var(--accent); background: var(--tint); margin-bottom: 22px; }
+    .status-icon svg { width: 24px; height: 24px; fill: none; stroke: currentColor; stroke-width: 1.8;
+      stroke-linecap: round; stroke-linejoin: round; }
+    .failure-icon { display: none; }
+    [data-state="failed"] .status-icon { color: var(--error); background: var(--error-tint); }
+    [data-state="failed"] .return-icon { display: none; }
+    [data-state="failed"] .failure-icon { display: block; }
+    h1 { font-size: 25px; line-height: 1.4; letter-spacing: -.6px; font-weight: 600; margin: 0 0 10px; }
+    p { color: var(--muted); margin: 0; overflow-wrap: anywhere; }
+    details { margin-top: 24px; border-top: 1px solid var(--line); padding-top: 18px; font-size: 13px; }
+    summary { cursor: pointer; color: var(--muted); }
+    summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 4px; border-radius: 3px; }
+    pre { margin: 12px 0 0; font: 12px/1.7 ui-monospace, SFMono-Regular, Consolas, monospace;
+      white-space: pre-wrap; overflow-wrap: anywhere; max-height: 240px; overflow: auto; }
+    footer { margin-top: 32px; padding-top: 20px; border-top: 1px solid var(--line);
+      color: var(--muted); font-size: 12px; display: flex; align-items: center; gap: 7px; }
+    footer svg { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 1.4; }
+    @media (max-width: 380px) { body { padding: 16px; } main { padding: 28px 24px; } h1 { font-size: 23px; } }
+    @media (prefers-color-scheme: dark) {
+      :root { color: #e6ece6; background: #171b18; --card: #202621; --muted: #a1aba1; --line: #333d34;
+        --accent: #6ed6b5; --tint: #243b30; --error: #f3a99b; --error-tint: #392a25; }
+    }
+  </style>
+  <script>history.replaceState(null, '', '/')</script>
+</head>
+<body>
+  <main data-state="%%STATE%%">
+    <header><div class="brand">%%BRAND%%</div><span class="provider">Cloudflare</span></header>
+    <div class="status-icon" aria-hidden="true">
+      <svg class="return-icon" viewBox="0 0 24 24"><path d="M8 5H4v14h4M13 8l-4 4 4 4M9 12h11"/></svg>
+      <svg class="failure-icon" viewBox="0 0 24 24"><path d="M12 8v5m0 3v.01"/><circle cx="12" cy="12" r="9"/></svg>
+    </div>
+    <h1>%%TITLE%%</h1>
+    <p>%%MESSAGE%%</p>
+    %%DETAILS%%
+    <footer><svg viewBox="0 0 16 16" aria-hidden="true"><rect x="2.5" y="3" width="11" height="10" rx="2"/>
+      <path d="m6 6 4 4m0-4-4 4"/></svg><span>%%FOOTER%%</span></footer>
+  </main>
+</body>
+</html>

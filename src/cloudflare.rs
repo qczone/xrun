@@ -2,7 +2,7 @@
 mod api;
 pub(crate) mod auth;
 mod bundle;
-mod deploy;
+pub(crate) mod deploy;
 mod manage;
 mod region;
 pub use region::Region;

@@ -131,6 +131,17 @@ impl DaemonConfig {
         }
         Ok(())
     }
+    pub fn check_manager_access(&self, source: &str) -> Result<()> {
+        self.check_access(source)?;
+        if !self.allow_from.iter().any(|id| id == source) {
+            bail!(
+                ErrorCode::SourceNotAllowed.error(
+                    "manager devices require an individual allow-from grant for this source"
+                )
+            );
+        }
+        Ok(())
+    }
     fn set_permission(&mut self, device_id: &str, allow: bool) {
         self.allow_from.retain(|id| id != device_id);
         self.deny_from.retain(|id| id != device_id);
@@ -530,12 +541,15 @@ mod tests {
         assert!(cfg.check_access("future").is_err());
         cfg.allow_all = true;
         assert!(cfg.check_access("future").is_ok());
+        assert!(cfg.check_manager_access("future").is_err());
+        assert!(cfg.check_manager_access("known").is_ok());
         cfg.set_permission("future", false);
         assert!(cfg.check_access("future").is_err());
         cfg.allow_all = false;
         assert!(cfg.check_access("known").is_ok());
         cfg.set_permission("future", true);
         assert!(cfg.check_access("future").is_ok());
+        assert!(cfg.check_manager_access("future").is_ok());
         cfg.set_paused(true)?;
         let generation = cfg.pause_generation;
         let reloaded: DaemonConfig = toml::from_str(&toml::to_string(&cfg)?)?;

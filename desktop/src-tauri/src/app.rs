@@ -194,6 +194,7 @@ pub(crate) mod tests {
                 "background",
                 "foreground",
                 "joined",
+                "authorization-return",
                 "bundled",
                 "self-check",
                 "self-check-mismatch",
@@ -292,6 +293,7 @@ pub(crate) mod tests {
             let joined = scenario == "joined";
             let background = scenario == "background";
             let bundled = scenario == "bundled";
+            let returning = scenario == "authorization-return";
             if joined {
                 seed(&relay_config(&config::home_dir()?)?)?;
             }
@@ -375,7 +377,21 @@ pub(crate) mod tests {
                         app.run_on_main_thread(move || {
                             let window = handle.get_webview_window("main").unwrap();
                             assert!(!window.is_visible().unwrap());
-                            select(&handle, "service");
+                            if returning {
+                                super::super::super::connection::progress(
+                                    &handle,
+                                    Some("owned-native-return".into()),
+                                    "cloudflare_accounts",
+                                )
+                                .report(
+                                    xrun::client::relay::DeploymentStage::AuthorizationReceived,
+                                    xrun::client::relay::ProgressStatus::Completed,
+                                    0,
+                                    Default::default(),
+                                );
+                            } else {
+                                select(&handle, "service");
+                            }
                         })
                         .unwrap();
                         tokio::time::timeout(Duration::from_secs(5), async {

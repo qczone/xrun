@@ -308,6 +308,15 @@ pub(super) enum RelayCommand {
         #[arg(long)]
         name: Option<String>,
     },
+    /// Check a saved relay without authorizing, redeploying or creating a network
+    Check {
+        /// Provider of the previously deployed relay.
+        #[arg(long, value_enum)]
+        provider: RelayProvider,
+        /// Saved Cloudflare Worker name (default: xrun-relay).
+        #[arg(long)]
+        name: Option<String>,
+    },
     /// Remove a relay deployment
     Remove {
         #[arg(long, value_enum)]
@@ -601,14 +610,12 @@ fn expect_hash(value: &str) -> std::result::Result<String, String> {
     }
 }
 fn device_selector(value: &str) -> std::result::Result<String, String> {
+    let id = value.to_ascii_lowercase();
+    if valid_device_id(&id) {
+        return Ok(id);
+    }
     if valid_name(value) {
         return Ok(value.into());
-    }
-    if let Some(id) = value.strip_prefix("dev_")
-        && id.len() == 32
-        && id.bytes().all(|b| b.is_ascii_hexdigit())
-    {
-        return Ok(format!("dev_{}", id.to_ascii_lowercase()));
     }
     Err("expected a device name or device ID".into())
 }
@@ -635,8 +642,10 @@ mod tests {
 
     #[test]
     fn selectors_hashes_and_environment_preserve_values_and_reject_ambiguous_input() {
-        let id = format!("dev_{}", "AB".repeat(16));
+        let id = "AB".repeat(16);
         assert_eq!(device_selector(&id).unwrap(), id.to_ascii_lowercase());
+        assert!(!valid_name(&id.to_ascii_lowercase()));
+        assert!(valid_name(&"x".repeat(32)));
         assert_eq!(device_selector("mac1").unwrap(), "mac1");
         for invalid in [
             "",
@@ -644,6 +653,7 @@ mod tests {
             "Mac 1",
             "dev_123",
             "dev_gggggggggggggggggggggggggggggggg",
+            &format!("dev_{}", "a".repeat(32)),
         ] {
             assert!(device_selector(invalid).is_err(), "{invalid}");
         }

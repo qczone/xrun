@@ -5,6 +5,8 @@ import { errorText } from "../errors";
 import { relayHost } from "../format";
 import { t } from "../i18n";
 import { ErrorNotice } from "./ErrorNotice";
+import { useDeploymentProgress } from "../app/useDeploymentProgress";
+import { DeploymentProgress } from "./DeploymentProgress";
 
 export function CloudflareRelays({
   networkId,
@@ -19,6 +21,8 @@ export function CloudflareRelays({
   const [revision, setRevision] = useState(0);
   const [remember, setRemember] = useState(false);
   const [authorizing, setAuthorizing] = useState(false);
+  const [loggingOut, setLoggingOut] = useState(false);
+  const progress = useDeploymentProgress();
   useEffect(() => {
     let active = true;
     void api
@@ -74,15 +78,15 @@ export function CloudflareRelays({
                 const result = await operate(
                   async () => {
                     setAuthorizing(true);
+                    progress.start();
                     try {
-                      const available = await api.cloudflareAccounts(
+                      return await api.cloudflareAccounts(
                         () => {},
                         true,
                         remember,
+                        progress.receive,
+                        !remember,
                       );
-                      if (available && !remember)
-                        await api.cancelCloudflareAuthorization();
-                      return available;
                     } finally {
                       setAuthorizing(false);
                     }
@@ -106,8 +110,14 @@ export function CloudflareRelays({
                 if (
                   await operate(
                     async () => {
-                      await api.logoutCloudflare();
-                      return true;
+                      setLoggingOut(true);
+                      progress.start();
+                      try {
+                        await api.logoutCloudflare(progress.receive);
+                        return true;
+                      } finally {
+                        setLoggingOut(false);
+                      }
                     },
                     {
                       name: "logout_cloudflare",
@@ -123,30 +133,41 @@ export function CloudflareRelays({
             >
               {t("cloudflare.logout")}
             </button>
-            {authorizing && (
-              <button
-                onClick={() =>
-                  void api
-                    .openCloudflareAuthorization()
-                    .catch((error) => setError(errorText(error)))
-                }
-              >
-                {t("cloudflare.openBrowser")}
-              </button>
-            )}
-            {authorizing && (
-              <button
-                onClick={() =>
-                  void api
-                    .cancelCloudflareAuthorization()
-                    .catch((error) => setError(errorText(error)))
-                }
-              >
-                {t("cloudflare.cancel")}
-              </button>
-            )}
+            {authorizing &&
+              (progress.current?.stage === "authorization" ||
+                !progress.events.length) && (
+                <button
+                  onClick={() =>
+                    void api
+                      .openCloudflareAuthorization()
+                      .catch((error) => setError(errorText(error)))
+                  }
+                >
+                  {t("cloudflare.openBrowser")}
+                </button>
+              )}
+            {authorizing &&
+              (progress.current?.stage === "authorization" ||
+                !progress.events.length) && (
+                <button
+                  onClick={() =>
+                    void api
+                      .cancelCloudflareAuthorization()
+                      .catch((error) => setError(errorText(error)))
+                  }
+                >
+                  {t("cloudflare.cancel")}
+                </button>
+              )}
           </div>
         </>
+      )}
+      {(authorizing || loggingOut) && (
+        <DeploymentProgress
+          current={progress.current}
+          events={progress.events}
+          seconds={progress.seconds}
+        />
       )}
       {error && (
         <ErrorNotice

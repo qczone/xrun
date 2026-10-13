@@ -60,7 +60,7 @@ impl Manager {
         let key_pem = root_key.serialize_pem();
         let (device_key, csr) = crypto::new_device_request()?;
         let member = Member {
-            device_id: format!("dev_{}", uuid::Uuid::new_v4().simple()),
+            device_id: uuid::Uuid::new_v4().simple().to_string(),
             name: name.into(),
             key_fp: crypto::csr_key(&csr)?,
             revoked: false,
@@ -194,7 +194,7 @@ impl Manager {
                 .optional()?
                 .context(ErrorCode::InvalidToken.error("invitation expired or was consumed"))?;
             let member = Member {
-                device_id: format!("dev_{}", uuid::Uuid::new_v4().simple()),
+                device_id: uuid::Uuid::new_v4().simple().to_string(),
                 name: name.into(),
                 key_fp: fp,
                 revoked: false,

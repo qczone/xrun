@@ -1,6 +1,7 @@
 mod callback;
 mod vault;
 use super::state;
+use crate::deployment::{self, DeploymentStage, ProgressDetails, ProgressStatus};
 use crate::{config, error::ErrorCode};
 use anyhow::{Context, Result, bail};
 use axum::{Router, http::StatusCode, routing::get};
@@ -64,6 +65,7 @@ pub(super) fn configured() -> bool {
 fn http() -> Result<reqwest::Client> {
     Ok(reqwest::Client::builder()
         .redirect(reqwest::redirect::Policy::none())
+        .connect_timeout(Duration::from_secs(10))
         .timeout(Duration::from_secs(30))
         .build()?)
 }
@@ -260,11 +262,23 @@ async fn finish_temporary_at<T>(
     let current = temporary()
         .lock()
         .unwrap()
-        .as_ref()
+        .as_mut()
         .filter(|(stamp, _)| expected.is_none_or(|expected| expected == stamp))
-        .cloned();
+        .map(|(stamp, credentials)| {
+            credentials.expires_at = 0; // Retiring credentials must never be reused by a later operation.
+            (stamp.clone(), credentials.clone())
+        });
     if let Some((stamp, credentials)) = current {
-        if let Err(error) = revoke_credentials(client, endpoint, &credentials).await {
+        if let Err(error) = deployment::step(
+            DeploymentStage::AuthorizationCleanup,
+            revoke_credentials(client, endpoint, &credentials),
+        )
+        .await
+        {
+            if result.is_err() {
+                deployment::warning(DeploymentStage::AuthorizationCleanup, &error);
+                return result;
+            }
             return Err(error.context(if result.is_ok() {
                 "operation completed; temporary authorization revocation is unconfirmed"
             } else {
@@ -327,7 +341,11 @@ async fn logout_saved(directory: &Path) -> Result<()> {
 
 async fn revoke_saved(store: &impl Vault, client: &reqwest::Client, endpoint: &str) -> Result<()> {
     if let Some(credentials) = store.load()? {
-        revoke_credentials(client, endpoint, &credentials).await?;
+        deployment::step(
+            DeploymentStage::AuthorizationCleanup,
+            revoke_credentials(client, endpoint, &credentials),
+        )
+        .await?;
     }
     store.delete()
 }
@@ -350,6 +368,18 @@ impl Credentials {
 }
 
 async fn exchange(
+    client: &reqwest::Client,
+    endpoint: &str,
+    fields: &[(&str, &str)],
+) -> Result<Option<Tokens>> {
+    deployment::step(
+        DeploymentStage::TokenExchange,
+        exchange_inner(client, endpoint, fields),
+    )
+    .await
+}
+
+async fn exchange_inner(
     client: &reqwest::Client,
     endpoint: &str,
     fields: &[(&str, &str)],
@@ -483,11 +513,11 @@ async fn authorize_with_prompt(
     let _pending = PendingLogin(stamp);
     tokio::select! {
         biased;
-        _ = cancelled => {
+        Ok(()) = cancelled => {
             // Cancellation only drops the OAuth flow. It cannot abort a Worker
             // upload that started after this guard was retired.
             logout_saved(directory).await?;
-            finish_temporary(Err(ErrorCode::Unauthenticated.error("Cloudflare authorization cancelled").into())).await
+            finish_temporary(Err(ErrorCode::OAuthCancelled.error("Cloudflare authorization cancelled").into())).await
         },
         result = authorize_with_listener(directory, client_id, remember, no_browser, prompt, listener) => result,
     }
@@ -500,6 +530,21 @@ async fn authorize_with_listener(
     no_browser: bool,
     prompt: Option<&(dyn Fn(&str) + Send + Sync)>,
     listener: tokio::net::TcpListener,
+) -> Result<String> {
+    authorize_with_listener_at(
+        directory, client_id, remember, no_browser, prompt, listener, TOKEN,
+    )
+    .await
+}
+
+async fn authorize_with_listener_at(
+    directory: &Path,
+    client_id: &str,
+    remember: bool,
+    no_browser: bool,
+    prompt: Option<&(dyn Fn(&str) + Send + Sync)>,
+    listener: tokio::net::TcpListener,
+    token_endpoint: &str,
 ) -> Result<String> {
     let authorization =
         Authorization::new(format!("http://{}/oauth/callback", listener.local_addr()?))?;
@@ -521,9 +566,17 @@ async fn authorize_with_listener(
     });
     let _server_guard = CallbackServer(server.abort_handle());
     let url = authorization.url(client_id, remember)?;
+    deployment::report(
+        DeploymentStage::Authorization,
+        ProgressStatus::Waiting,
+        ProgressDetails {
+            authorization_url: Some(url.to_string()),
+            ..Default::default()
+        },
+    );
     if let Some(prompt) = prompt {
         prompt(url.as_str());
-    } else {
+    } else if !deployment::active() {
         eprintln!("[xrun] Authorize xrun with Cloudflare: {url}");
     }
     if !no_browser {
@@ -533,23 +586,44 @@ async fn authorize_with_listener(
         code = receiver => code.context("Cloudflare login callback closed")
             .and_then(|code| code.map_err(anyhow::Error::new)),
         _ = tokio::time::sleep(Duration::from_secs(300)) => Err(ErrorCode::ConnectTimeout.error("Cloudflare login timed out").into()),
-        _ = tokio::signal::ctrl_c() => Err(ErrorCode::Unauthenticated.error("Cloudflare login cancelled").into()),
+        _ = tokio::signal::ctrl_c() => Err(ErrorCode::OAuthCancelled.error("Cloudflare login cancelled").into()),
     };
+    pending().lock().unwrap().take();
+    deployment::report(
+        DeploymentStage::AuthorizationReceived,
+        if result.is_ok() {
+            ProgressStatus::Completed
+        } else {
+            ProgressStatus::Failed
+        },
+        result
+            .as_ref()
+            .err()
+            .map_or_else(ProgressDetails::default, |error| ProgressDetails {
+                error: Some(crate::protocol::Data::error(error)),
+                ..Default::default()
+            }),
+    );
     let _ = shutdown.send(());
-    if tokio::time::timeout(Duration::from_secs(3), &mut server)
+    let exchange = async {
+        let code = result?;
+        exchange(
+            &http()?,
+            token_endpoint,
+            &authorization.exchange_fields(client_id, &code),
+        )
         .await
-        .is_err()
-    {
-        server.abort();
-    }
-    let code = result?;
-    let tokens = exchange(
-        &http()?,
-        TOKEN,
-        &authorization.exchange_fields(client_id, &code),
-    )
-    .await?
-    .context(
+    };
+    let close = async {
+        if tokio::time::timeout(Duration::from_secs(3), &mut server)
+            .await
+            .is_err()
+        {
+            server.abort();
+        }
+    };
+    let (tokens, ()) = tokio::join!(exchange, close);
+    let tokens = tokens?.context(
         ErrorCode::Unauthenticated.error("Cloudflare authorization code expired; retry login"),
     )?;
     let credentials = Credentials {
@@ -620,7 +694,7 @@ fn open_browser(url: &str) {
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null());
-    if command.spawn().is_err() {
+    if command.spawn().is_err() && !deployment::active() {
         eprintln!("[xrun] Open the authorization address in your browser.");
     }
 }

@@ -9,6 +9,7 @@ use std::time::Duration;
 
 use super::args::{RelayCommand, RelayProvider};
 use super::support::*;
+mod progress;
 
 fn require_provider(actual: RelayProvider, expected: RelayProvider, command: &str) -> Result<()> {
     if actual != expected {
@@ -24,6 +25,79 @@ fn require_provider(actual: RelayProvider, expected: RelayProvider, command: &st
 }
 
 pub(super) async fn manage(operation: RelayCommand, json: bool) -> Result<()> {
+    let reporter = progress::reporter(&operation, json)?;
+    let deployment_result = json
+        && matches!(
+            &operation,
+            RelayCommand::Deploy {
+                provider: RelayProvider::Cloudflare,
+                dry_run: false,
+                ..
+            }
+        );
+    let cancellable = matches!(
+        &operation,
+        RelayCommand::Deploy {
+            provider: RelayProvider::Cloudflare,
+            dry_run: false,
+            ..
+        } | RelayCommand::Login {
+            provider: RelayProvider::Cloudflare,
+            ..
+        } | RelayCommand::Logout {
+            provider: RelayProvider::Cloudflare
+        } | RelayCommand::Remove {
+            provider: RelayProvider::Cloudflare,
+            ..
+        } | RelayCommand::Check {
+            provider: RelayProvider::Cloudflare,
+            ..
+        }
+    );
+    reporter
+        .scope(async {
+            let result = if cancellable {
+                tokio::select! {
+                    result = manage_operation(operation, json) => result,
+                    Ok(()) = tokio::signal::ctrl_c() => {
+                        let cancelled = || ErrorCode::OAuthCancelled.error(
+                            "relay operation cancelled; saved deployments can be resumed with the same --name");
+                        let cleanup = crate::cloudflare::auth::finish_temporary::<()>(Err(cancelled().into()));
+                        tokio::select! {
+                            result = cleanup => result,
+                            Ok(()) = tokio::signal::ctrl_c() => Err(cancelled().into()),
+                        }
+                    }
+                }
+            } else { manage_operation(operation, json).await };
+            if deployment_result {
+                progress::deployment_result(result.as_ref().err())?;
+            }
+            reporter.report(
+                crate::deployment::DeploymentStage::Complete,
+                if result.is_ok() {
+                    crate::deployment::ProgressStatus::Completed
+                } else if result
+                    .as_ref()
+                    .err()
+                    .is_some_and(|error| crate::error::is(error, ErrorCode::OAuthCancelled))
+                {
+                    crate::deployment::ProgressStatus::Cancelled
+                } else {
+                    crate::deployment::ProgressStatus::Failed
+                },
+                0,
+                crate::deployment::ProgressDetails {
+                    error: result.as_ref().err().map(crate::protocol::Data::error),
+                    ..Default::default()
+                },
+            );
+            result
+        })
+        .await
+}
+
+async fn manage_operation(operation: RelayCommand, json: bool) -> Result<()> {
     match operation {
         RelayCommand::Deploy {
             provider,
@@ -57,10 +131,10 @@ pub(super) async fn manage(operation: RelayCommand, json: bool) -> Result<()> {
                 } else {
                     let relay =
                         crate::cloudflare::deploy(name, account, no_browser, region).await?;
-                    print(json, &relay, || {
+                    if !json {
                         println!("relay: {}", relay.link);
                         println!("xrun up --relay '{}'", relay.link);
-                    });
+                    }
                 }
             }
             RelayProvider::Local => {
@@ -100,6 +174,33 @@ pub(super) async fn manage(operation: RelayCommand, json: bool) -> Result<()> {
                 json,
                 &serde_json::json!({"provider":"cloudflare", "authenticated":false}),
                 || println!("Cloudflare logout complete"),
+            );
+        }
+        RelayCommand::Check { provider, name } => {
+            let link = match provider {
+                RelayProvider::Cloudflare => {
+                    crate::cloudflare::link(name.as_deref().unwrap_or("xrun-relay"))?.link
+                }
+                RelayProvider::Local => {
+                    if name.is_some() {
+                        bail!(
+                            ErrorCode::InvalidRequest
+                                .error("--name requires --provider cloudflare")
+                        );
+                    }
+                    require_linux()?;
+                    crate::relay::deployment_link(&ServerConfig::load()?)?
+                }
+            };
+            crate::client::relay::check_relay(&link).await?;
+            let provider = match provider {
+                RelayProvider::Cloudflare => "cloudflare",
+                RelayProvider::Local => "local",
+            };
+            print(
+                json,
+                &serde_json::json!({"provider":provider,"ready":true,"link":link}),
+                || println!("relay ready: {link}"),
             );
         }
         RelayCommand::Run { provider } => {
@@ -252,10 +353,15 @@ async fn deploy_local(
     }
     cfg.save()?;
     let link = crate::relay::deployment_link(&cfg)?;
-    service::install("server").await?;
-    if before.is_some_and(|old| old.port != cfg.port || old.addresses != cfg.addresses) {
-        service::restart("server").await?;
-    }
+    crate::deployment::step(crate::deployment::DeploymentStage::ServiceStart, async {
+        service::install("server").await?;
+        if before.is_some_and(|old| old.port != cfg.port || old.addresses != cfg.addresses) {
+            service::restart("server").await?;
+        }
+        Ok(())
+    })
+    .await?;
+    crate::client::relay::check_relay(&link).await?;
     print(
         json,
         &serde_json::json!({"provider":"local","link":link,"addresses":crate::relay::addresses(&cfg)?}),
@@ -264,6 +370,8 @@ async fn deploy_local(
             println!("xrun up --relay '{link}'");
         },
     );
-    eprintln!("[xrun] allow inbound TCP {}", cfg.port);
+    if !json {
+        eprintln!("[xrun] allow inbound TCP {}", cfg.port);
+    }
     Ok(())
 }

@@ -9,6 +9,56 @@ use axum::{
 use tower::ServiceExt;
 
 #[tokio::test]
+async fn received_callback_is_localized_and_never_claims_deployment_success() -> Result<()> {
+    let (sender, receiver) = oneshot::channel();
+    let router = Router::new()
+        .route("/oauth/callback", get(receive))
+        .with_state(Arc::new(Callback {
+            state: "owned-state".into(),
+            sender: Mutex::new(Some(sender)),
+        }));
+    let response = router
+        .oneshot(
+            Request::builder()
+                .uri("/oauth/callback?state=owned-state&code=owned-code")
+                .header("accept-language", "zh-CN,zh;q=0.9,en;q=0.8")
+                .body(Body::empty())?,
+        )
+        .await?;
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(response.headers()[header::CACHE_CONTROL], "no-store");
+    assert_eq!(receiver.await??, "owned-code");
+    let body = String::from_utf8(to_bytes(response.into_body(), 16384).await?.to_vec())?;
+    assert!(body.contains("授权已返回"));
+    assert!(body.contains("可以关闭此页"));
+    assert!(!body.contains("网络已创建"));
+    assert!(!body.contains("owned-code"));
+    assert!(!body.contains("owned-state"));
+    if let Some(directory) = std::env::var_os("XRUN_CALLBACK_PREVIEW_DIR") {
+        let directory = std::path::PathBuf::from(directory);
+        std::fs::write(directory.join("received-zh.html"), body)?;
+        for (name, state, chinese) in [
+            ("received-en", PageState::Received, false),
+            ("declined-zh", PageState::Declined, true),
+            ("declined-en", PageState::Declined, false),
+            ("invalid-zh", PageState::Invalid, true),
+            ("finished-zh", PageState::Finished, true),
+        ] {
+            let detail = if matches!(state, PageState::Declined) {
+                Some("OAUTH_INVALID_SCOPE: Cloudflare permissions need updating.")
+            } else {
+                None
+            };
+            std::fs::write(
+                directory.join(format!("{name}.html")),
+                page(state, chinese, detail).0,
+            )?;
+        }
+    }
+    Ok(())
+}
+
+#[tokio::test]
 async fn occupied_callback_ports_are_skipped_and_exhaustion_is_reported() -> Result<()> {
     let first = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
     let second = tokio::net::TcpListener::bind("127.0.0.1:0").await?;

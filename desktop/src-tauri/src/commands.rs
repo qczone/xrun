@@ -501,7 +501,7 @@ pub(super) fn register<R: tauri::Runtime>(builder: tauri::Builder<R>) -> tauri::
             super::connection::logout_cloudflare,
             super::connection::cancel_cloudflare_authorization,
             super::connection::open_cloudflare_authorization,
-            super::connection::deploy_cloudflare,
+            super::connection::create_cloudflare_network,
             super::connection::cloudflare_relays,
             super::remote::remote_submit,
             super::remote::remote_screenshot,
@@ -798,7 +798,7 @@ pub(crate) mod tests {
                 seed(&relay_config(&root)?)?;
                 let mut cfg = DaemonConfig::load()?;
                 cfg.env.insert("KEEP_ME".into(), "unchanged".into());
-                cfg.allow_from.push(format!("dev_{}", "1".repeat(32)));
+                cfg.allow_from.push("1".repeat(32));
                 cfg.save()?;
                 let (app, window) = build_app();
                 let execution =
@@ -869,7 +869,7 @@ pub(crate) mod tests {
             // grant rejection is covered separately and cannot be bypassed here.
             std::fs::remove_dir_all(dir.join("manager"))?;
             let (_app, window) = build_app();
-            let peer = format!("dev_{}", "a".repeat(32));
+            let peer = "a".repeat(32);
             assert_eq!(
                 invoke(&window, "permission", json!({"device":peer,"allow":true})),
                 Ok(Value::Null)

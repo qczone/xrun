@@ -189,7 +189,7 @@ pub async fn revoke(device: &str) -> Result<Revocation> {
 pub async fn set_all_permissions(allow: bool) -> Result<()> {
     if allow {
         let id = Identity::load()?;
-        crate::network::current(&id)?.require_business_target(&id.device_id)?;
+        crate::network::current(&id)?.require_bulk_access_target(&id.device_id)?;
     }
     config::update_all_permissions(allow)?;
     crate::control::refresh_access().await
@@ -207,17 +207,16 @@ pub async fn pause_access(paused: bool) -> Result<()> {
 /// verified roster. Reload errors leave the configuration saved. No job is canceled.
 pub async fn set_permission(value: &str, allow: bool) -> Result<Permission> {
     let id = Identity::load()?;
-    if allow {
-        crate::network::current(&id)?.require_business_target(&id.device_id)?;
-    }
-    let device_id = if let Some(key) = value.strip_prefix("dev_") {
-        if key.len() != 32 || !key.bytes().all(|b| b.is_ascii_hexdigit()) {
+    let id_value = value.to_ascii_lowercase();
+    let device_id = if crate::protocol::valid_device_id(&id_value) {
+        id_value
+    } else {
+        if !crate::protocol::valid_name(value) {
             bail!(
-                ErrorCode::InvalidDeviceId.error("expected dev_ followed by 32 hexadecimal digits")
+                ErrorCode::InvalidDeviceId
+                    .error("expected a device name or a 32-digit hexadecimal device ID")
             );
         }
-        value.to_string()
-    } else {
         let device: Device = net::http(
             &id,
             reqwest::Method::GET,

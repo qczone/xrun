@@ -132,6 +132,30 @@ xrun daemon
 
 显式命令 `up --relay`、`join` 仍可使用：`up` 创建网络并立即生成邀请，`join` 仅接受成员邀请。`join --allow-manager` 可在加入时添加单向授权。
 
+## 部署进度与自动化
+
+Cloudflare 授权回到本机回调页时，桌面 App 自动切回前台。回调只表示授权码收到，之后仍需验证授权、读取账户、部署并检查中转。桌面分别显示这些阶段、累计耗时和可展开的阶段耗时。网络创建与临时授权撤销并行，服务连接也有明确的检查和超时；授权清理失败不会重新创建网络或覆盖连接错误。
+
+桌面可选择本机已保存的中转继续创建网络，重试连接时不再次上传 Worker。名称被其他 Worker 占用时展开名称输入，不覆盖未知的远端资源。服务启动失败保留已创建的身份，使用本机启动服务入口重试。
+
+CLI 的普通模式在 stderr 显示阶段与耗时，stdout 保留最终地址和下一步命令。机器模式使用：
+
+```bash
+xrun relay deploy --provider cloudflare --name xrun-relay --no-browser --json
+xrun relay check --provider cloudflare --name xrun-relay --json
+xrun relay link --provider cloudflare --name xrun-relay --json
+```
+
+`--json` 下 stdout 仅用于最终 JSON，成功或已保存中转时返回一条结果；创建前失败的错误从 stderr 返回。stderr 是逐行 JSON 的进度和错误，启用 `RUST_LOG` 后诊断日志也为 JSON。进度事件的 `event` 为 `deployment_progress`，包含 `operation_id`、`sequence`、`timestamp_ms`、`stage`、`status`、`elapsed_ms` 和 `stage_elapsed_ms`。等待授权时提供 `authorization_url`，需要选账号时提供 `accounts`，中转保存后提供 `deployment` 与 `next_command` 参数数组；AI 应根据阶段和错误码操作，而不是分析提示文案。授权码、访问令牌、刷新令牌和 PKCE verifier 不出现在这些事件中。
+
+`--no-browser` 仅关闭自动打开浏览器，命令继续等待授权，默认最长 5 分钟；授权页必须在执行命令的同一台机器打开。AI 可将 `authorization_url` 交给人完成授权并继续读取进度。无人值守部署可通过 `CLOUDFLARE_API_TOKEN` 提供用户配置的 API Token，并用 `--account` 或 `CLOUDFLARE_ACCOUNT_ID` 明确账户。JSON 模式不会进入终端账户选择；多个账户未指定时返回 `INTERACTIVE_REQUIRED`。
+
+部署结果包含 `deployed`、`ready`、`authorization_cleanup` 和 `next_command`。Worker 已保存但连接检查或授权清理失败时，stdout 仍返回已创建中转、`ready` 状态及 `error`，退出码保持非零；不要据此换名重复创建。`relay check` 不要求重新授权，不上传代码、不创建身份、不认领中转，最多等待 30 秒；传输证书和协议校验继续生效。连接恢复后，用原地址执行 `xrun up --relay <地址> --name <设备名> --json` 创建网络；邀请链接和有效期从最终结果读取。桌面 `NETWORK_CREATED_CLEANUP_FAILED` 表示网络已连接，仅需重试撤销授权。未知同名 Worker 返回 `ALREADY_EXISTS`，须更换名称。
+
+Ctrl+C 取消 Cloudflare 操作并以 130 退出；已有部署记录保留，可用同一 `--name` 继续。取消期间会尝试结束临时授权，再次 Ctrl+C 强制结束；强制退出或授权撤销失败后，可在 Cloudflare 账号中撤销 xrun 应用授权。临时 `relay login` 只验证授权并撤销，重复维护且希望保留登录的管理设备使用 `relay login --provider cloudflare --remember`。
+
+阶段耗时记录在 `~/.xrun/deployment.log`，最多保留约 1 MiB，只记录时间、操作编号、阶段、状态、耗时和错误码，不记录授权 URL、令牌或错误正文。错误参数和 `--dry-run` 不创建此日志；这些本机诊断文件不参与活动附件保留策略。
+
 ## 访问权限
 
 管理设备签发成员身份，被控设备决定访问授权，中转接通连接并转发密文。成员身份不自动授予执行、文件、截图、任务查询或转发权限。
@@ -145,7 +169,9 @@ xrun allow-from mac1
 xrun deny-from mac1
 ```
 
-只允许管理设备生成邀请和撤销成员：`xrun invite`、`xrun revoke win1`。双方需要互相授权时，用 `xrun invite --allow` 或 `xrun up --allow`；否则分别执行 `xrun allow-from <来源设备>`。带 `--allow` 的链接等于管理设备当前用户的命令执行权，应通过可信渠道传递。普通成员之间各自授权。
+只允许管理设备生成邀请和撤销成员：`xrun invite`、`xrun revoke win1`。希望管理设备访问新成员时，用 `xrun invite --allow` 或 `xrun up --allow` 申请，由新设备明确确认。双向访问需要双方分别执行 `xrun allow-from <来源设备>`；邀请不会自动允许新成员访问管理设备。允许访问等于目标设备当前用户的命令执行权，应只授权可信设备。
+
+管理设备默认拒绝远程操作，但可以逐台允许可信成员访问本机。管理设备上执行 `xrun allow-from win1` 后，win1 可以用 `xrun mac-pro -- <程序> <参数>` 操作管理设备，包括命令、文件、截图和转发；`xrun deny-from win1` 关闭该授权。桌面在“设备”列表打开该成员的“允许访问本机”开关。授权在服务重启后保留；管理设备不支持 `allow-from --all`。管理身份和邀请权限不因该授权转移；获准操作管理设备当前用户的成员可以接触本机管理密钥，因此应只授权可信设备。
 
 撤销使用管理设备签名的成员清单，通过设备间加密连接同步，并报告未确认收到的设备；已收到记录的设备拒绝被撤销来源。离线设备或被中转隔离的设备可能尚未收到记录，紧急阻断在目标本机执行 `deny-from` 或暂停访问。已受理的可靠任务继续按任务语义处理。
 
@@ -158,7 +184,7 @@ xrun daemon pause
 xrun daemon resume
 ```
 
-设备名是别名，认证、白名单和去重使用不可变设备 ID；命令也接受 `dev_…`。daemon 以当前用户权限运行。`allow-from --all` 包含当前和未来加入的未撤销成员，单独拒绝优先；`deny-from --all` 只关闭全体信任，保留单独允许和拒绝记录。
+设备名是别名，认证、白名单和去重使用不可变设备 ID；命令也接受不带前缀的 32 位十六进制设备 ID。daemon 以当前用户权限运行。`allow-from --all` 包含当前和未来加入的未撤销成员，单独拒绝优先；`deny-from --all` 只关闭全体信任，保留单独允许和拒绝记录。
 
 `deny-from` 拒绝指定来源；`pause` 暂停本机远程访问并使已有业务会话失效，恢复后按原授权重新建立会话。两者都保留已受理的可靠任务，但会清理流式进程和转发连接。`revoke` 则撤销网络成员身份，在收到签名更新的设备上生效，不取消已有可靠任务或回滚副作用。
 
@@ -378,7 +404,7 @@ xrun daemon
 配置、身份和数据库在 `~/.xrun`（Windows 为 `%USERPROFILE%\.xrun`）。工具链 PATH、默认目录和来源白名单写入 `daemon.toml`：
 
 ```toml
-allow_from = ["dev_来源设备ID"]
+allow_from = ["b63c4960932e4b46afdb8028e9490cc8"]
 default_cwd = "/path/to/repo"
 max_concurrent_jobs = 4
 attachment_retention_days = 30

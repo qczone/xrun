@@ -4,6 +4,7 @@ use super::{
     bundle::Bundle,
     state::{self, Deployment, DeploymentStatus},
 };
+use crate::deployment::{self, DeploymentStage, ProgressDetails, ProgressStatus};
 use crate::{crypto, error::ErrorCode};
 use anyhow::{Context, Result, bail};
 use reqwest::Method;
@@ -14,7 +15,7 @@ use std::{
     path::Path,
 };
 
-#[derive(Serialize)]
+#[derive(Clone, Serialize)]
 /// A deployment recorded locally after the Worker and its HTTPS endpoint are ready.
 pub struct DeployedRelay {
     /// Relay provider.
@@ -23,14 +24,14 @@ pub struct DeployedRelay {
     pub name: String,
     /// Owning Cloudflare account ID.
     pub account_id: String,
-    /// Complete private relay deployment link.
+    /// Public relay address; it does not contain access credentials.
     pub link: String,
     /// Best-effort placement hint, applied only when creating new objects.
     pub region: super::Region,
 }
 
 /// Account offered by Cloudflare after authorization.
-#[derive(Serialize)]
+#[derive(Clone, Serialize)]
 pub struct Account {
     /// Validated Cloudflare account ID.
     pub id: String,
@@ -75,6 +76,15 @@ pub(crate) async fn deploy_selected(
     deploy_with_prompt(name, Some(account), false, Some(prompt), region).await
 }
 
+pub(crate) async fn prepare_selected(
+    name: &str,
+    account: String,
+    prompt: &(dyn Fn(&str) + Send + Sync),
+    region: Option<super::Region>,
+) -> Result<DeployedRelay> {
+    deploy_operation(name, Some(account), false, Some(prompt), region).await
+}
+
 async fn deploy_with_prompt(
     name: &str,
     account: Option<String>,
@@ -82,7 +92,12 @@ async fn deploy_with_prompt(
     prompt: Option<&(dyn Fn(&str) + Send + Sync)>,
     region: Option<super::Region>,
 ) -> Result<DeployedRelay> {
-    let result = deploy_operation(name, account, no_browser, prompt, region).await;
+    let result = async {
+        let relay = deploy_operation(name, account, no_browser, prompt, region).await?;
+        crate::client::relay::check_relay(&relay.link).await?;
+        Ok(relay)
+    }
+    .await;
     auth::finish_temporary(result).await
 }
 
@@ -114,8 +129,25 @@ async fn deploy_operation(
     }
     let api = Api::new(auth::token_with_prompt(no_browser, prompt).await?)?;
     let account = select_account(&api, account).await?;
-    eprintln!("[xrun] Deploying {name} to Cloudflare account {account}…");
-    deploy_with(api, &directory, name, &account, &bundle, region).await
+    if !deployment::active() {
+        eprintln!("[xrun] Deploying {name} to Cloudflare account {account}…");
+    }
+    let relay = deploy_with(api, &directory, name, &account, &bundle, region).await?;
+    deployment::report(
+        DeploymentStage::Deployed,
+        ProgressStatus::Completed,
+        ProgressDetails {
+            deployment: Some(relay.clone()),
+            next_command: Some(vec![
+                "xrun".into(),
+                "up".into(),
+                "--relay".into(),
+                relay.link.clone(),
+            ]),
+            ..Default::default()
+        },
+    );
+    Ok(relay)
 }
 
 async fn select_account(api: &Api, selected: Option<String>) -> Result<String> {
@@ -127,9 +159,19 @@ async fn select_account(api: &Api, selected: Option<String>) -> Result<String> {
         &accounts[0]
     } else {
         for (index, account) in accounts.iter().enumerate() {
-            eprintln!("  {}. {} ({})", index + 1, account.name, account.id);
+            if !deployment::active() {
+                eprintln!("  {}. {} ({})", index + 1, account.name, account.id);
+            }
         }
-        if !std::io::stdin().is_terminal() {
+        deployment::report(
+            DeploymentStage::AccountSelection,
+            ProgressStatus::Waiting,
+            ProgressDetails {
+                accounts: Some(accounts.clone()),
+                ..Default::default()
+            },
+        );
+        if !std::io::stdin().is_terminal() || !deployment::interactive() {
             bail!(
                 ErrorCode::InteractiveRequired
                     .error("multiple Cloudflare accounts; specify --account <ID>")
@@ -137,8 +179,12 @@ async fn select_account(api: &Api, selected: Option<String>) -> Result<String> {
         }
         eprint!("[xrun] Choose an account (1-{}): ", accounts.len());
         std::io::stderr().flush()?;
-        let mut input = String::new();
-        std::io::stdin().read_line(&mut input)?;
+        let input = tokio::task::spawn_blocking(|| -> Result<String> {
+            let mut input = String::new();
+            std::io::stdin().read_line(&mut input)?;
+            Ok(input)
+        })
+        .await??;
         let index = input
             .trim()
             .parse::<usize>()
@@ -202,31 +248,34 @@ pub(super) async fn deploy_with(
     let subdomain = subdomain(&api, account).await?;
     let script = format!("/accounts/{account}/workers/scripts/{name}");
     let published = api.worker(account, name).await?;
-    let mut state = match (previous, &published) {
-        (None, Some(_)) => bail!(
-            ErrorCode::AlreadyExists
-                .error("a Worker with this name already exists; choose another --name")
-        ),
-        (Some(state), Some(published)) => {
-            state.validate_ownership(published)?;
-            if published["migration_tag"] != "v1" && published["migration_tag"] != "v2" {
-                bail!(
-                    ErrorCode::VersionMismatch
-                        .error("unsupported Cloudflare Durable Object migration tag")
-                )
+    let mut state = deployment::step(DeploymentStage::WorkerCheck, async {
+        Ok(match (previous, &published) {
+            (None, Some(_)) => bail!(
+                ErrorCode::AlreadyExists
+                    .error("a Worker with this name already exists; choose another --name")
+            ),
+            (Some(state), Some(published)) => {
+                state.validate_ownership(published)?;
+                if published["migration_tag"] != "v1" && published["migration_tag"] != "v2" {
+                    bail!(
+                        ErrorCode::VersionMismatch
+                            .error("unsupported Cloudflare Durable Object migration tag")
+                    )
+                }
+                state
             }
-            state
-        }
-        (Some(state), None) => state,
-        (None, None) => Deployment {
-            name: name.into(),
-            account_id: account.into(),
-            ownership: crypto::random_token(),
-            url: None,
-            status: DeploymentStatus::Active,
-            region: super::Region::Auto,
-        },
-    };
+            (Some(state), None) => state,
+            (None, None) => Deployment {
+                name: name.into(),
+                account_id: account.into(),
+                ownership: crypto::random_token(),
+                url: None,
+                status: DeploymentStatus::Active,
+                region: super::Region::Auto,
+            },
+        })
+    })
+    .await?;
     if let Some(region) = region {
         state.region = region;
     }
@@ -303,7 +352,9 @@ async fn subdomain(api: &Api, account: &str) -> Result<String> {
         }
         _ => {
             let name = format!("xrun-{}", &account[..12]);
-            eprintln!("[xrun] Registering {name}.workers.dev for this Cloudflare account…");
+            if !deployment::active() {
+                eprintln!("[xrun] Registering {name}.workers.dev for this Cloudflare account…");
+            }
             api.json(Method::PUT, &path, Some(json!({"subdomain":name})))
                 .await?
         }

@@ -22,6 +22,8 @@ XRUN_CLOUDFLARE_BUNDLE_DIR="$PWD/cloudflare/.wrangler/package" cargo build --loc
 
 Package 工作流在六个平台产物中嵌入此 Worker，并通过安装后的 helper / CLI 运行 `relay deploy --provider cloudflare --dry-run --json` 校验版本、摘要和内置 OAuth 配置。检查时移除运行时 Client ID 环境变量，确保用户安装后无需额外配置。公共 Client ID、申请的 scopes 和回调地址来自 [cloudflare/oauth.json](../cloudflare/oauth.json)，本地构建与 Package 共用此文件；不依赖 GitHub 仓库变量。
 
+部署过程由 `src/deployment.rs` 提供 task-scoped 的统一进度事件。CLI 使用 stderr 文案或 NDJSON；桌面使用带操作编号的 Tauri 事件，收到有效授权回调后切回前台。桌面创建入口在连接与临时授权清理之间使用结构化并行等待，两个任务均收尾后返回，不使用退出时丢失的后台清理任务。`~/.xrun/deployment.log` 是大小有界的脱敏耗时日志；授权 URL 仅交给实时调用者，持久日志不含凭据、URL 或错误正文。
+
 浏览器授权使用 **xrun 自己的公开 OAuth 客户端**。注册参数在 [cloudflare/oauth-client.json](../cloudflare/oauth-client.json)：Authorization Code、PKCE S256、刷新令牌、token endpoint auth method `none`。临时授权仅申请 `account-settings.read` 和 `workers-scripts.admin`；显式记住登录时额外请求 `offline_access`。Workers Admin 支持首次创建、更新和删除中转 Worker；Workers Editor 只适合更新已有 Worker。授权请求中的 scope ID 必须与客户端登记的范围对应，`.edit`、`.write` 和 `.admin` 不能互换。公开客户端需要填写 xrun 名称、Logo、`https://xrun.sh` 客户端地址，并完成该域名的所有权验证。公共 Client ID、scopes 和回调地址保存在 `cloudflare/oauth.json`，构建时校验格式并编入程序。这些字段不是秘密，不使用 Wrangler 的 Client ID，不向客户端分发 client secret。[Cloudflare 官方 OAuth 配置](https://developers.cloudflare.com/fundamentals/oauth/create-an-oauth-client/)、[Workers 权限说明](https://blog.cloudflare.com/workers-granular-authorization/)。
 
 Cloudflare 客户端需登记以下三个回调地址。登录时依次尝试端口 8976、8977、8978；只在端口被占用时改用下一项，全部被占则返回 `INVALID_PORT`。每次授权先绑定本机 IPv4 回环监听，再打开浏览器；授权请求和换取令牌使用同一个已选回调地址。取消、失败或超时后释放监听，不使用未注册的随机端口，也不停止占用端口的其他进程。

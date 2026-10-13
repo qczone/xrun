@@ -80,7 +80,7 @@ export function NetworkSettings({
             <small>
               {t(
                 network?.is_manager
-                  ? "devices.managerProtected"
+                  ? "devices.managerAccessHint"
                   : "devices.allowAllHint",
               )}
             </small>
