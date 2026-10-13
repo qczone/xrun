@@ -25,6 +25,9 @@ printf '%s' "${0##*/}" >> "$HOME/service-calls"
 for arg do printf '\t%s' "$arg" >> "$HOME/service-calls"; done
 printf '\n' >> "$HOME/service-calls"
 if [ -f "$HOME/fail-service" ]; then printf 'injected service failure\n' >&2; exit 1; fi
+if [ "${0##*/}" = systemctl ] && [ "$2" = enable ]; then
+  printf '.' >> "$HOME/service-ready"
+fi
 "#,
             )?;
             std::fs::set_permissions(exe, std::fs::Permissions::from_mode(0o700))?;
@@ -39,13 +42,33 @@ if [ -f "$HOME/fail-service" ]; then printf 'injected service failure\n' >&2; ex
         })
     }
     async fn cli(&self, args: &[&str]) -> Result<std::process::Output> {
-        Ok(tokio::time::timeout(
-            Duration::from_secs(15),
-            command(self.home.path(), args)
-                .env("PATH", &self.path)
-                .output(),
-        )
-        .await??)
+        let marker = self.home.path().join("service-ready");
+        let before = std::fs::metadata(&marker).map_or(0, |file| file.len());
+        let deploy = args.starts_with(&["relay", "deploy"]);
+        let mut process = command(self.home.path(), args);
+        process.env("PATH", &self.path);
+        let mut output = Box::pin(process.output());
+        let mut relay = None;
+        let result = tokio::time::timeout(Duration::from_secs(15), async {
+            loop {
+                tokio::select! {
+                    result = &mut output => break result.map_err(anyhow::Error::from),
+                    _ = tokio::time::sleep(Duration::from_millis(20)), if deploy && relay.is_none() => {
+                        if std::fs::metadata(&marker).is_ok_and(|file| file.len() > before) {
+                            relay = Some(logged(
+                                self.home.path(),
+                                &["relay", "run", "--provider", "local"],
+                                "service-ready-relay",
+                            )?.spawn()?);
+                        }
+                    }
+                }
+            }
+        }).await;
+        if let Some(mut relay) = relay {
+            stop(&mut relay).await?;
+        }
+        result?
     }
     fn config(&self) -> Result<ServerConfig> {
         config::read(&self.home.path().join(".xrun/config.toml"))
