@@ -12,6 +12,22 @@ fn database(lab: &Lab) -> Result<rusqlite::Connection> {
     db.busy_timeout(Duration::from_secs(5))?;
     Ok(db)
 }
+async fn wait_for_admission(lab: &Lab, request: &str) -> Result<()> {
+    let log = process_log_path(&lab.target, "target");
+    tokio::time::timeout(Duration::from_secs(10), async {
+        loop {
+            let text = std::fs::read_to_string(&log)?;
+            if text.lines().any(|line| {
+                line.contains(request) && line.contains("persisting reliable execution admission")
+            }) {
+                return Ok::<_, anyhow::Error>(());
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .context("target did not reach the blocked admission transaction")?
+}
 fn execution(lab: &Lab, program: &Path, args: &[&str]) -> Result<Execution> {
     Ok(Execution {
         request_id: uuid::Uuid::new_v4().to_string(),
@@ -414,21 +430,7 @@ async fn authorization_changes_during_acceptance_never_claim_the_request_was_rej
             });
             // Wait for the target's actual persistence boundary, rather than
             // guessing when a new multiplexed stream completes its handshake.
-            let log = process_log_path(&lab.target, "target");
-            tokio::time::timeout(Duration::from_secs(10), async {
-                loop {
-                    let text = std::fs::read_to_string(&log)?;
-                    if text.lines().any(|line| {
-                        line.contains(&request)
-                            && line.contains("persisting reliable execution admission")
-                    }) {
-                        return Ok::<_, anyhow::Error>(());
-                    }
-                    tokio::time::sleep(Duration::from_millis(20)).await;
-                }
-            })
-            .await
-            .context("target reached the blocked admission transaction")??;
+            wait_for_admission(&lab, &request).await?;
             let mut cfg: config::DaemonConfig = config::read(&cfg_path)?;
             if pause {
                 cfg.remote_access_paused = true;
@@ -563,8 +565,11 @@ async fn cli_recovers_shutdown_during_acceptance_without_marking_the_request_rej
         let submitted = tokio::spawn(async move {
             cli(&source, &["target1", "start", "--json", "--request-id", "shutdown-during-acceptance", "--", &program, "--version"]).await
         });
-        tokio::time::sleep(Duration::from_secs(1)).await;
+        wait_for_admission(&lab, "shutdown-during-acceptance").await?;
         xrun::testing::control::request_shutdown(&lab.target.join(".xrun")).await?;
+        // Keep acceptance blocked until its acknowledgement channel is gone.
+        // Recovery must then query the original request after the restart.
+        lab.relay.stop().await?;
         tokio::time::sleep(Duration::from_millis(100)).await;
         assert!(lab.daemon.try_wait()?.is_none());
         db.execute_batch("COMMIT")?;
@@ -577,6 +582,7 @@ async fn cli_recovers_shutdown_during_acceptance_without_marking_the_request_rej
         let saved = store(&lab)?.by_request(&lab.source_identity.device_id, "shutdown-during-acceptance")?.context("accepted task")?;
         assert_eq!(saved.state, JobState::Canceled);
         assert!(saved.process.is_none());
+        lab.relay.start().await?;
         lab.daemon = logged(&lab.target, &["daemon"], "shutdown-recovery-target")?.spawn()?;
         online(&lab.source, "target1").await?;
         let recovered: Job = serde_json::from_str(&ok(submitted.await?))?;
