@@ -21,8 +21,10 @@ jobs:
             runner: ubuntu-24.04-arm
             target: aarch64-unknown-linux-gnu
     env:
-      RUST_BACKTRACE: '1'
+      RUST_BACKTRACE: "1"
       XRUN_TEST_LOG_DIR: ${{ github.workspace }}/target/test-logs
+      XRUN_CLOUDFLARE_BUNDLE_DIR: ${{ github.workspace }}/cloudflare/.wrangler/package
+      WRANGLER_SEND_METRICS: "false"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
@@ -44,6 +46,22 @@ jobs:
             target/debug
           key: xrun-${{ runner.os }}-${{ matrix.target }}-test-${{ steps.toolchain.outputs.version }}-${{ hashFiles('Cargo.lock') }}
           restore-keys: xrun-${{ runner.os }}-${{ matrix.target }}-test-${{ steps.toolchain.outputs.version }}-
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version-file: cloudflare/package.json
+      - name: Cache Cloudflare relay dependencies
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.bun/install/cache
+          key: xrun-${{ runner.os }}-${{ matrix.target }}-cloudflare-${{ hashFiles('cloudflare/bun.lock', 'cloudflare/package.json') }}
+          restore-keys: xrun-${{ runner.os }}-${{ matrix.target }}-cloudflare-
+      - name: Build embedded Cloudflare relay
+        working-directory: cloudflare
+        shell: bash
+        run: |
+          set -euo pipefail
+          bun install --frozen-lockfile
+          bun run package
       - name: Format, lint and test
         shell: bash
         run: |
@@ -63,7 +81,7 @@ jobs:
       - name: Test real systemd service lifecycle
         shell: bash
         env:
-          XRUN_TEST_SYSTEM_SERVICE: '1'
+          XRUN_TEST_SYSTEM_SERVICE: "1"
         run: |
           sudo loginctl enable-linger "$(id -un)"
           sudo systemctl start "user@$(id -u).service"
@@ -74,28 +92,18 @@ jobs:
           mkdir -p "$XRUN_TEST_LOG_DIR"
           trap 'journalctl --user -u xrun-daemon.service --no-pager > "$XRUN_TEST_LOG_DIR/systemd.log" || true' EXIT
           cargo test --locked --test service -- --ignored --nocapture
-      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
-        with:
-          bun-version-file: cloudflare/package.json
-      - name: Cache Cloudflare relay dependencies
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: ~/.bun/install/cache
-          key: xrun-${{ runner.os }}-${{ matrix.target }}-cloudflare-${{ hashFiles('cloudflare/bun.lock', 'cloudflare/package.json') }}
-          restore-keys: xrun-${{ runner.os }}-${{ matrix.target }}-cloudflare-
       - name: Check Cloudflare relay in workerd
         working-directory: cloudflare
         env:
-          WRANGLER_SEND_METRICS: 'false'
+          WRANGLER_SEND_METRICS: "false"
         run: |
-          bun install --frozen-lockfile
           bun run check
           bun run test
       - name: Test real Rust clients through Cloudflare workerd
         working-directory: cloudflare
         timeout-minutes: 15
         env:
-          WRANGLER_SEND_METRICS: 'false'
+          WRANGLER_SEND_METRICS: "false"
         run: bun run test:interop
       - name: Test automatic CLI installation
         run: |

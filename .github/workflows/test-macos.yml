@@ -10,10 +10,12 @@ jobs:
     runs-on: macos-15
     timeout-minutes: 45
     env:
-      RUST_BACKTRACE: '1'
+      RUST_BACKTRACE: "1"
       XRUN_TEST_LOG_DIR: ${{ github.workspace }}/target/test-logs
-      MACOSX_DEPLOYMENT_TARGET: '13.0'
-      CARGO_PROFILE_DEV_DEBUG: '0'
+      XRUN_CLOUDFLARE_BUNDLE_DIR: ${{ github.workspace }}/cloudflare/.wrangler/package
+      WRANGLER_SEND_METRICS: "false"
+      MACOSX_DEPLOYMENT_TARGET: "13.0"
+      CARGO_PROFILE_DEV_DEBUG: "0"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
@@ -33,6 +35,22 @@ jobs:
             target/debug
           key: xrun-${{ runner.os }}-${{ runner.arch }}-test-${{ steps.toolchain.outputs.version }}-${{ hashFiles('Cargo.lock') }}
           restore-keys: xrun-${{ runner.os }}-${{ runner.arch }}-test-${{ steps.toolchain.outputs.version }}-
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version-file: desktop/package.json
+      - name: Cache Bun dependencies
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.bun/install/cache
+          key: xrun-${{ runner.os }}-${{ runner.arch }}-bun-${{ hashFiles('desktop/bun.lock', 'desktop/package.json', 'cloudflare/bun.lock', 'cloudflare/package.json') }}
+          restore-keys: xrun-${{ runner.os }}-${{ runner.arch }}-bun-
+      - name: Build embedded Cloudflare relay
+        working-directory: cloudflare
+        shell: bash
+        run: |
+          set -euo pipefail
+          bun install --frozen-lockfile
+          bun run package
       - name: Format, lint and test
         shell: bash
         run: |
@@ -41,15 +59,6 @@ jobs:
           # Integration tests launch the CLI; build it after clippy to refresh cached binaries.
           cargo build --locked --bin xrun
           cargo test --locked
-      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
-        with:
-          bun-version-file: desktop/package.json
-      - name: Cache Bun dependencies
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: ~/.bun/install/cache
-          key: xrun-${{ runner.os }}-${{ runner.arch }}-bun-${{ hashFiles('desktop/bun.lock', 'desktop/package.json') }}
-          restore-keys: xrun-${{ runner.os }}-${{ runner.arch }}-bun-
       - name: Build desktop App ZIP
         working-directory: desktop
         run: |

@@ -521,6 +521,7 @@ pub(super) fn register<R: tauri::Runtime>(builder: tauri::Builder<R>) -> tauri::
 
 #[cfg(test)]
 pub(crate) mod tests {
+    #[cfg(target_os = "macos")]
     mod service;
     use super::*;
     use anyhow::Result;

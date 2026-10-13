@@ -23,9 +23,11 @@ jobs:
             msvc_arch: arm64
             target: aarch64-pc-windows-msvc
     env:
-      RUST_BACKTRACE: '1'
+      RUST_BACKTRACE: "1"
       XRUN_TEST_LOG_DIR: ${{ github.workspace }}/target/test-logs
-      CARGO_PROFILE_DEV_DEBUG: '0'
+      XRUN_CLOUDFLARE_BUNDLE_DIR: ${{ github.workspace }}/cloudflare/.wrangler/package
+      WRANGLER_SEND_METRICS: "false"
+      CARGO_PROFILE_DEV_DEBUG: "0"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
@@ -52,6 +54,22 @@ jobs:
             target/${{ matrix.target }}/debug
           key: xrun-${{ runner.os }}-${{ matrix.target }}-test-${{ steps.toolchain.outputs.version }}-${{ hashFiles('Cargo.lock') }}
           restore-keys: xrun-${{ runner.os }}-${{ matrix.target }}-test-${{ steps.toolchain.outputs.version }}-
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version-file: desktop/package.json
+      - name: Cache Bun dependencies
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.bun/install/cache
+          key: xrun-${{ runner.os }}-${{ matrix.target }}-bun-${{ hashFiles('desktop/bun.lock', 'desktop/package.json', 'cloudflare/bun.lock', 'cloudflare/package.json') }}
+          restore-keys: xrun-${{ runner.os }}-${{ matrix.target }}-bun-
+      - name: Build embedded Cloudflare relay
+        working-directory: cloudflare
+        shell: pwsh
+        run: |
+          $PSNativeCommandUseErrorActionPreference = $true
+          bun install --frozen-lockfile
+          bun run package
       - name: Format, lint and test
         shell: pwsh
         run: |
@@ -61,15 +79,6 @@ jobs:
           # Integration tests launch the CLI; build it after clippy to refresh cached binaries.
           cargo build --locked --target '${{ matrix.target }}' --bin xrun
           cargo test --locked --target '${{ matrix.target }}'
-      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
-        with:
-          bun-version-file: desktop/package.json
-      - name: Cache Bun dependencies
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: ~/.bun/install/cache
-          key: xrun-${{ runner.os }}-${{ matrix.target }}-bun-${{ hashFiles('desktop/bun.lock', 'desktop/package.json') }}
-          restore-keys: xrun-${{ runner.os }}-${{ matrix.target }}-bun-
       - name: Build desktop installer
         working-directory: desktop
         shell: pwsh
