@@ -195,8 +195,8 @@ jobs:
           bun run build --target '${{ matrix.target }}' --verbose
           app=../target/${{ matrix.target }}/release/bundle/macos/xrun.app
           codesign --verify --deep --strict "$app"
-          xcrun stapler staple "$app"
-          xcrun stapler validate "$app"
+          bash ../scripts/stapler.sh staple "$app"
+          bash ../scripts/stapler.sh validate "$app"
           mkdir -p ../dist
           # Archive only after stapling, retaining the App's resource metadata.
           ditto -c -k --sequesterRsrc --keepParent "$app" ../dist/xrun-app-${{ matrix.platform }}.zip
@@ -223,7 +223,7 @@ jobs:
           mkdir -p "$smoke_dir"
           ditto -x -k dist/xrun-app-${{ matrix.platform }}.zip "$smoke_dir"
           codesign --verify --deep --strict "$smoke_dir/xrun.app"
-          xcrun stapler validate "$smoke_dir/xrun.app"
+          bash scripts/stapler.sh validate "$smoke_dir/xrun.app"
           export XRUN_TEST_BINARY="$smoke_dir/xrun.app/Contents/MacOS/xrun"
           cargo test --locked --release --target '${{ matrix.target }}' --test smoke -- --nocapture
       - name: Install and test the release App helper
