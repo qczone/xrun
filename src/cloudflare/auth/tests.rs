@@ -1,6 +1,7 @@
 use super::*;
 use axum::{Json, body::Body, http::Request};
 use serde_json::json;
+use std::collections::HashMap;
 use tower::ServiceExt;
 
 #[tokio::test]
@@ -43,14 +44,17 @@ async fn cancelling_desktop_authorization_releases_its_callback_listener() -> Re
 
 #[tokio::test]
 async fn callbacks_reject_wrong_states_and_consume_valid_codes_once() -> Result<()> {
-    let authorization = Authorization::new()?;
+    let redirects: Vec<_> = env!("XRUN_CLOUDFLARE_REDIRECT_URIS")
+        .split_whitespace()
+        .collect();
+    let authorization = Authorization::new(redirects[0].to_owned())?;
     let (sender, mut receiver) = oneshot::channel();
     let callback = Arc::new(Callback {
         state: authorization.state.clone(),
         sender: Mutex::new(Some(sender)),
     });
     let router = Router::new()
-        .route("/oauth/callback", get(super::callback))
+        .route("/oauth/callback", get(super::callback::receive))
         .with_state(callback);
     let response = router
         .clone()
@@ -87,12 +91,11 @@ async fn callbacks_reject_wrong_states_and_consume_valid_codes_once() -> Result<
     let url = authorization.url("xrun-client", false)?;
     let query: HashMap<_, _> = url.query_pairs().into_owned().collect();
     assert_eq!(query["client_id"], "xrun-client");
-    assert_eq!(query["redirect_uri"], REDIRECT);
+    assert_eq!(query["redirect_uri"], redirects[0]);
     assert_eq!(query["code_challenge_method"], "S256");
-    assert!(
-        query["scope"].contains("workers-scripts.write")
-            && !query["scope"].contains("offline_access")
-            && !query["scope"].contains("workers-routes.write")
+    assert_eq!(
+        query["scope"],
+        "account-settings.read workers-scripts.admin"
     );
     assert_eq!(
         query["code_challenge"],
@@ -103,8 +106,49 @@ async fn callbacks_reject_wrong_states_and_consume_valid_codes_once() -> Result<
         authorization
             .url("xrun-client", true)?
             .query_pairs()
-            .any(|(key, value)| key == "scope" && value.contains("offline_access"))
+            .any(|(key, value)| {
+                key == "scope"
+                    && value == "account-settings.read workers-scripts.admin offline_access"
+            })
     );
+    let registration: serde_json::Value =
+        serde_json::from_str(include_str!("../../../cloudflare/oauth-client.json"))?;
+    let registered: Vec<_> = registration["scopes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|value| value.as_str().unwrap())
+        .collect();
+    assert_eq!(
+        query["scope"].split_whitespace().collect::<Vec<_>>(),
+        registered
+    );
+    let registered_redirects: Vec<_> = registration["redirect_uris"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|value| value.as_str().unwrap())
+        .collect();
+    assert_eq!(redirects, registered_redirects);
+    for redirect in redirects {
+        let authorization = Authorization::new(redirect.to_owned())?;
+        let url = authorization.url("xrun-client", false)?;
+        let query: HashMap<_, _> = url.query_pairs().into_owned().collect();
+        let exchange = form(
+            &http()?,
+            TOKEN,
+            &authorization.exchange_fields("xrun-client", "owned-test-code"),
+        )
+        .build()?;
+        let exchange: HashMap<_, _> =
+            url::form_urlencoded::parse(exchange.body().unwrap().as_bytes().unwrap())
+                .into_owned()
+                .collect();
+        assert_eq!(query["redirect_uri"], redirect);
+        assert_eq!(exchange["redirect_uri"], query["redirect_uri"]);
+        assert_eq!(exchange["code_verifier"], authorization.verifier);
+        assert_eq!(exchange["code"], "owned-test-code");
+    }
     Ok(())
 }
 
@@ -116,7 +160,7 @@ async fn denied_consent_is_an_explicit_login_failure() -> Result<()> {
         sender: Mutex::new(Some(sender)),
     });
     let router = Router::new()
-        .route("/oauth/callback", get(super::callback))
+        .route("/oauth/callback", get(super::callback::receive))
         .with_state(callback);
     let response = router
         .oneshot(
@@ -127,6 +171,70 @@ async fn denied_consent_is_an_explicit_login_failure() -> Result<()> {
         .await?;
     assert_eq!(response.status(), StatusCode::OK);
     assert!(receiver.await?.is_err());
+    Ok(())
+}
+
+#[tokio::test]
+async fn scope_failures_reach_the_caller_and_release_the_callback_listener() -> Result<()> {
+    let directory = tempfile::tempdir()?;
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
+    let address = listener.local_addr()?;
+    let (prompted, wait_prompt) = oneshot::channel();
+    let prompt_sender = Mutex::new(Some(prompted));
+    let path = directory.path().to_path_buf();
+    let task = tokio::spawn(async move {
+        let prompt = |url: &str| {
+            let _ = prompt_sender
+                .lock()
+                .unwrap()
+                .take()
+                .unwrap()
+                .send(url.to_owned());
+        };
+        authorize_with_listener(
+            &path,
+            "0123456789abcdef0123456789abcdef",
+            false,
+            true,
+            Some(&prompt),
+            listener,
+        )
+        .await
+    });
+    let prompt = tokio::time::timeout(Duration::from_secs(2), wait_prompt).await??;
+    let prompt = Url::parse(&prompt)?;
+    let query: HashMap<_, _> = prompt.query_pairs().into_owned().collect();
+    assert_eq!(
+        query["redirect_uri"],
+        format!("http://{address}/oauth/callback")
+    );
+    let mut callback_url = Url::parse(&format!("http://{address}/oauth/callback"))?;
+    callback_url.query_pairs_mut().extend_pairs([
+        ("state", query["state"].as_str()),
+        ("error", "invalid_scope"),
+        (
+            "error_description",
+            "The OAuth client is not allowed to request scope 'workers-scripts.write'.",
+        ),
+    ]);
+    let response = reqwest::Client::new()
+        .get(callback_url)
+        .timeout(Duration::from_secs(2))
+        .send()
+        .await?;
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = response.text().await?;
+    assert!(body.contains("OAUTH_INVALID_SCOPE"));
+    assert!(!body.contains(&query["state"]));
+    let error = tokio::time::timeout(Duration::from_secs(2), task)
+        .await??
+        .unwrap_err();
+    assert!(crate::error::is(&error, ErrorCode::OAuthInvalidScope));
+    assert!(error.to_string().contains("workers-scripts.write"));
+    assert!(!error.to_string().contains("was declined"));
+    assert!(!directory.path().join("credentials.toml").exists());
+    assert!(!directory.path().join("login.toml").exists());
+    let _available = tokio::net::TcpListener::bind(address).await?;
     Ok(())
 }
 

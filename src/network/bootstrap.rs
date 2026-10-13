@@ -29,7 +29,7 @@ pub(crate) async fn create(relay_link: &str, name: Option<String>) -> Result<Ide
                 crypto::relay_tls_config(&ca)?,
             )
             .await?;
-            // A challenge proves the random route; there is no member yet.
+            // Discover the relay's current owner before creating a network identity.
             if !matches!(receive(&mut ws).await?, RelayMessage::Challenge { .. }) {
                 bail!(ErrorCode::InvalidMessage.error("expected a relay challenge"))
             }

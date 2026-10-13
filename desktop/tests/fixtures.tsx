@@ -50,7 +50,7 @@ export async function fixture(
       joined,
       device_id: "self",
       name: "mac1",
-      version: "0.1.0-rc.7",
+      version: "0.1.0-rc.8",
       daemon_running: true,
       daemon_connected: true,
       remote_access_paused: false,
@@ -213,7 +213,7 @@ export async function fixture(
             manager_id: "manager",
             manager_name: "manager1",
             is_manager: !(args.link as string).startsWith("xrun://"),
-            relay_addresses: ["https://relay.example/private"],
+            relay_addresses: ["https://relay.example"],
           };
           if (args.allowManager) status.allow_from = ["manager"];
           return null;

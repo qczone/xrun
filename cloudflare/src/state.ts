@@ -4,12 +4,7 @@ import { DEVICE, object } from "./auth";
 import { WINDOW } from "./limits";
 import { PROTOCOL } from "./protocol";
 import { trafficCounters, type TrafficCounter } from "./traffic-state";
-import {
-  NETWORK,
-  relativeRoute,
-  SESSION_TOKEN,
-  type ChallengeRoute,
-} from "./routes";
+import { NETWORK, route, SESSION_TOKEN, type ChallengeRoute } from "./routes";
 
 export interface ConnectionBase {
   id: string;
@@ -257,7 +252,7 @@ export function attachment(value: unknown): Attachment | undefined {
         !deadline(value.deadline)
       )
         return;
-      const parsed = relativeRoute(value.path);
+      const parsed = route(value.path);
       if (
         !parsed ||
         parsed.action === "attach" ||

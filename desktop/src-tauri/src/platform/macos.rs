@@ -23,7 +23,7 @@ impl AppService for SMAppService {
     }
     fn unregister(&self) -> Result<()> {
         unsafe { self.unregisterAndReturnError() }
-            .map_err(|e| anyhow::anyhow!("SERVICE_FAILED: {e}"))
+            .map_err(|e| error::failure("SERVICE_FAILED", format!("{e}")))
     }
 }
 
@@ -44,16 +44,29 @@ fn service_state(
 }
 
 fn enable_agent(service: &impl AppService) -> Result<()> {
-    if service.state() != 1 {
-        service.register()?;
-    }
     if service.state() == 2 {
         bail!(error::failure(
             "APPROVAL_REQUIRED",
             "allow xrun in System Settings > General > Login Items"
         ));
     }
-    Ok(())
+    // Enabled describes consent, not whether launchd has the current helper's
+    // signature. Refresh a stopped service before starting a replaced App.
+    if service.state() == 1 {
+        service.unregister()?;
+    }
+    service.register()?;
+    match service.state() {
+        1 => Ok(()),
+        2 => bail!(error::failure(
+            "APPROVAL_REQUIRED",
+            "allow xrun in System Settings > General > Login Items"
+        )),
+        _ => bail!(error::failure(
+            "SERVICE_FAILED",
+            "the background service was not enabled for the current application"
+        )),
+    }
 }
 
 fn set_enabled(service: &impl AppService, enabled: bool) -> Result<()> {
@@ -207,6 +220,7 @@ mod tests {
 
         struct Service {
             state: Cell<isize>,
+            registered_revision: Cell<u32>,
             approval: bool,
             fail: bool,
             calls: RefCell<Vec<&'static str>>,
@@ -215,6 +229,7 @@ mod tests {
             fn new(state: isize) -> Self {
                 Self {
                     state: Cell::new(state),
+                    registered_revision: Cell::new(u32::from(matches!(state, 1 | 2))),
                     approval: false,
                     fail: false,
                     calls: RefCell::new(vec![]),
@@ -234,6 +249,7 @@ mod tests {
                     ));
                 }
                 self.state.set(if self.approval { 2 } else { 1 });
+                self.registered_revision.set(2);
                 Ok(())
             }
             fn unregister(&self) -> Result<()> {
@@ -242,6 +258,7 @@ mod tests {
                     bail!(error::failure("SERVICE_FAILED", "simulated removal error"));
                 }
                 self.state.set(0);
+                self.registered_revision.set(0);
                 Ok(())
             }
         }
@@ -275,13 +292,39 @@ mod tests {
                     .starts_with("APPROVAL_REQUIRED:")
             );
             assert_eq!(service.state(), 2);
-            service.state.set(1);
             service.calls.borrow_mut().clear();
+            assert!(enable_agent(&service).is_err());
+            assert!(service.calls.borrow().is_empty());
+            assert_eq!(service.state(), 2);
+            Ok(())
+        }
+
+        #[test]
+        fn starting_an_enabled_agent_refreshes_the_replaced_helper() -> Result<()> {
+            let service = Service::new(1);
+            assert_eq!(service.registered_revision.get(), 1);
             enable_agent(&service)?;
+            assert_eq!(service.state(), 1);
+            assert_eq!(service.registered_revision.get(), 2);
+            assert_eq!(*service.calls.borrow(), vec!["unregister", "register"]);
+
+            let mut service = Service::new(1);
+            service.fail = true;
+            assert!(enable_agent(&service).is_err());
+            assert_eq!(service.state(), 1);
+            assert_eq!(service.registered_revision.get(), 1);
+            assert_eq!(*service.calls.borrow(), vec!["unregister"]);
+
+            let mut service = Service::new(1);
+            service.approval = true;
             assert!(
-                service.calls.borrow().is_empty(),
-                "already-enabled agents must not be registered again"
+                enable_agent(&service)
+                    .unwrap_err()
+                    .to_string()
+                    .starts_with("APPROVAL_REQUIRED:")
             );
+            assert_eq!(service.registered_revision.get(), 2);
+            assert_eq!(service.state(), 2);
             Ok(())
         }
 

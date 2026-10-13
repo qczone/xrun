@@ -156,7 +156,7 @@ mod tests {
     #[test]
     fn public_relay_preserves_network_identity_through_pairing_and_revocation() -> Result<()> {
         let dir = tempfile::tempdir()?;
-        let address = format!("https://relay.example/{}", crate::crypto::random_token());
+        let address = "https://relay.example".to_owned();
         let (manager, _, _, _) = Manager::create(
             &dir.path().join("manager"),
             "manager1",
@@ -196,9 +196,15 @@ mod tests {
     }
 
     #[test]
-    fn public_relay_requires_an_unambiguous_secret_route() {
+    fn public_relay_uses_a_canonical_https_origin_without_paths() -> Result<()> {
+        for value in ["https://relay.example", "https://relay.example/"] {
+            assert_eq!(endpoint(value)?.addresses, vec!["https://relay.example"]);
+        }
+        assert_eq!(
+            endpoint("https://relay.example:9528/")?.addresses,
+            vec!["https://relay.example:9528"]
+        );
         for value in [
-            "https://relay.example",
             "https://relay.example/wrong",
             "http://relay.example/abcdefghijklmnopqrstuvwxyz",
             "https://user@relay.example/abcdefghijklmnopqrstuvwxyz",
@@ -208,5 +214,6 @@ mod tests {
         ] {
             assert!(endpoint(value).is_err(), "accepted {value}");
         }
+        Ok(())
     }
 }

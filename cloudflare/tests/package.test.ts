@@ -20,7 +20,6 @@ test("the distributable Worker includes its dependencies and runs without a sour
       createHash("sha256").update(source).digest("hex"),
     );
     expect(manifest.protocol).toEqual(PROTOCOL);
-    const secret = "a".repeat(26);
     runtime = new Miniflare(
       convertV4MiniflareOptions({
         modules: true,
@@ -31,7 +30,6 @@ test("the distributable Worker includes its dependencies and runs without a sour
           DATA: { className: "XrunData", useSQLite: true },
         },
         bindings: {
-          RELAY_ROUTE: secret,
           XRUN_PROTOCOL_MIN: PROTOCOL.min,
           XRUN_PROTOCOL_MAX: PROTOCOL.max,
         },
@@ -39,7 +37,7 @@ test("the distributable Worker includes its dependencies and runs without a sour
     );
     await runtime.ready;
     const response = await runtime.dispatchFetch(
-      `https://test/${secret}/networks/probe/status`,
+      `https://test/networks/probe/status`,
       {
         headers: { Upgrade: "websocket", "X-Xrun-Protocol": PROTOCOL_HEADER },
       },

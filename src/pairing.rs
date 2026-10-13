@@ -69,8 +69,7 @@ pub(crate) fn origin(address: &str) -> Result<String> {
         || !matches!(url.path(), "" | "/")
     {
         bail!(
-            ErrorCode::InvalidAddress
-                .error("use the relay host and port, without its private route")
+            ErrorCode::InvalidAddress.error("use the relay host and optional port, without a path")
         );
     }
     if !url.host_str().is_some_and(|host| {

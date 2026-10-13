@@ -10,7 +10,7 @@ mod traffic;
 mod version;
 pub use crate::membership::{AuthorityState, SignedLease};
 pub use job::*;
-pub use relay::{ChallengeBinding, Proof, RelayMessage, RelayOwner, valid_relay_route};
+pub use relay::{ChallengeBinding, Proof, RelayMessage, RelayOwner};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 pub use traffic::*;

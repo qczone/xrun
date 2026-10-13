@@ -98,10 +98,13 @@ async fn desktop_device_metadata_survives_peer_shutdown_and_process_restart() ->
 async fn registration_permissions_migration_and_manager_offline_execution() -> Result<()> {
     tokio::time::timeout(Duration::from_secs(25), async {
         let mut lab = Lab::new().await?;
-        let invalid = lab.root.path().join("invalid-route");
+        let invalid = lab.root.path().join("invalid-fingerprint");
         std::fs::create_dir_all(&invalid)?;
-        let link = xrun::testing::relay::deployment_link(&lab.relay.config)?;
-        let wrong = format!("{}#{}", link.split_once('#').unwrap().0, "a".repeat(26));
+        let wrong = format!(
+            "xrun-relay://{}/{}",
+            lab.relay.config.addresses.join(","),
+            "a".repeat(52)
+        );
         let denied = cli(&invalid, &["up", "--relay", &wrong, "--no-daemon"]).await;
         assert_eq!(denied.status.code(), Some(125));
         assert!(!invalid.join(".xrun/identity.toml").exists());
@@ -148,7 +151,7 @@ async fn registration_permissions_migration_and_manager_offline_execution() -> R
             }
         })
         .await?;
-        // Knowing the relay route without a member certificate only permits
+        // Knowing the relay address without a member certificate only permits
         // pairing with the manager, never execution or task-history access.
         let path = format!("/networks/{network}/connect/{}", lab.target_identity.device_id);
         let mut outer = common::relay_socket(None, &roster, &path).await?;

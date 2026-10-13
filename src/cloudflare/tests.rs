@@ -22,6 +22,8 @@ use std::sync::{Arc, Mutex};
 
 const ACCOUNT: &str = "0123456789abcdef0123456789abcdef";
 
+mod subdomain;
+
 fn bundle() -> Result<Bundle> {
     let source =
         "export class XrunRelay {}\nexport default {fetch() {return new Response('test')}};";
@@ -41,6 +43,8 @@ struct Mock {
     enabled: bool,
     fail_enable: bool,
     new_subdomain: bool,
+    subdomain_lookup_error: Option<(StatusCode, Vec<u32>)>,
+    subdomain_registration_error: Option<(StatusCode, Vec<u32>)>,
     registered_subdomain: Option<String>,
     forbidden: bool,
     migration: Option<String>,
@@ -84,6 +88,14 @@ fn missing() -> Response {
         .into_response()
 }
 
+fn api_failure(status: StatusCode, codes: &[u32]) -> Response {
+    let errors: Vec<_> = codes
+        .iter()
+        .map(|code| json!({"code":code,"message":"test-api-token request failed"}))
+        .collect();
+    (status, Json(json!({"success":false,"errors":errors}))).into_response()
+}
+
 async fn mock(State(state): State<Arc<Mutex<Mock>>>, request: Request<Body>) -> Response {
     assert_eq!(request.headers()["authorization"], "Bearer test-api-token");
     let path = request.uri().path().to_owned();
@@ -100,6 +112,12 @@ async fn mock(State(state): State<Arc<Mutex<Mock>>>, request: Request<Body>) -> 
         )
             .into_response();
     }
+    if state.new_subdomain
+        && (path.ends_with("/workers/scripts")
+            || (method == Method::PUT && path.ends_with("/workers/scripts/xrun-relay")))
+    {
+        return api_failure(StatusCode::FORBIDDEN, &[10063]);
+    }
     if path.ends_with("/workers/scripts") {
         return match &state.metadata {
             Some(metadata) => reply(
@@ -113,14 +131,22 @@ async fn mock(State(state): State<Arc<Mutex<Mock>>>, request: Request<Body>) -> 
     }
     if path.ends_with("/workers/subdomain") {
         if method == Method::PUT {
+            if let Some((status, codes)) = &state.subdomain_registration_error {
+                return api_failure(*status, codes);
+            }
             let body: Value = serde_json::from_slice(&body).unwrap();
             state.registered_subdomain = Some(body["subdomain"].as_str().unwrap().into());
+            state.new_subdomain = false;
+            state.subdomain_lookup_error = None;
             return reply(body);
+        }
+        if let Some((status, codes)) = &state.subdomain_lookup_error {
+            return api_failure(*status, codes);
         }
         return if state.new_subdomain {
             missing()
         } else {
-            reply(json!({"subdomain":"example"}))
+            reply(json!({"subdomain":state.registered_subdomain.as_deref().unwrap_or("example")}))
         };
     }
     if method == Method::POST && path.ends_with("/subdomain") {
@@ -173,7 +199,7 @@ async fn mock(State(state): State<Arc<Mutex<Mock>>>, request: Request<Body>) -> 
 }
 
 #[tokio::test]
-async fn new_deployment_and_updates_keep_the_private_route_and_durable_objects() -> Result<()> {
+async fn new_deployment_and_updates_keep_the_origin_and_durable_objects() -> Result<()> {
     let server = server().await?;
     let directory = tempfile::tempdir()?;
     let api =
@@ -187,11 +213,7 @@ async fn new_deployment_and_updates_keep_the_private_route_and_durable_objects()
         None,
     )
     .await?;
-    let saved = Deployment::load(directory.path(), "xrun-relay")?.unwrap();
-    assert_eq!(
-        first.link,
-        format!("https://xrun-relay.example.workers.dev/{}", saved.route)
-    );
+    assert_eq!(first.link, "https://xrun-relay.example.workers.dev");
     let second = deploy_with(
         api()?,
         directory.path(),
@@ -211,9 +233,15 @@ async fn new_deployment_and_updates_keep_the_private_route_and_durable_objects()
     );
     assert!(state.uploads[1].get("migrations").is_none());
     assert_eq!(state.uploads[0]["bindings"], state.uploads[1]["bindings"]);
-    assert_eq!(state.uploads[0]["bindings"][2]["text"], saved.route);
+    assert!(
+        state.uploads[0]["bindings"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|binding| binding["name"] != "RELAY_ROUTE")
+    );
     assert_eq!(
-        state.uploads[0]["bindings"][3]["json"],
+        state.uploads[0]["bindings"][2]["json"],
         ProtocolRange::CURRENT.min
     );
     #[cfg(unix)]
@@ -261,7 +289,7 @@ async fn failed_enable_can_be_retried_without_recreating_the_relay() -> Result<(
         None,
     )
     .await?;
-    assert!(result.link.ends_with(&saved.route));
+    assert_eq!(result.link, "https://xrun-relay.example.workers.dev");
     let state = server.state.lock().unwrap();
     assert!(state.uploads[1].get("migrations").is_none());
     Ok(())
@@ -303,11 +331,7 @@ async fn new_accounts_get_a_workers_dev_subdomain() -> Result<()> {
         None,
     )
     .await?;
-    assert!(
-        result
-            .link
-            .starts_with("https://xrun-relay.xrun-0123456789ab.workers.dev/")
-    );
+    assert!(result.link == "https://xrun-relay.xrun-0123456789ab.workers.dev");
     assert_eq!(
         server.state.lock().unwrap().registered_subdomain.as_deref(),
         Some("xrun-0123456789ab")

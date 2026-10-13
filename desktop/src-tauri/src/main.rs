@@ -11,6 +11,19 @@ mod remote;
 mod tray;
 
 fn main() {
+    #[cfg(target_os = "macos")]
+    if std::env::args().any(|arg| arg == "--start-service") {
+        let result = tauri::async_runtime::block_on(async {
+            platform::start().await?;
+            println!("{}", serde_json::to_string(&xrun::client::local_status()?)?);
+            Ok::<_, anyhow::Error>(())
+        });
+        if let Err(error) = result {
+            eprintln!("{error:#}");
+            std::process::exit(1);
+        }
+        return;
+    }
     #[cfg(any(windows, target_os = "macos"))]
     if std::env::args().any(|arg| arg == "--install-cli") {
         if let Err(e) = platform::install_cli() {

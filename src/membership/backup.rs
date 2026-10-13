@@ -669,7 +669,7 @@ mod tests {
         let (manager, member, key_pem, cert_pem) = Manager::create(
             &dir.join("manager"),
             "manager1",
-            vec!["https://relay.example/abcdefghijklmnopqrstuvwxyz".into()],
+            vec!["https://relay.example".into()],
             String::new(),
         )?;
         let roster = manager.roster()?;

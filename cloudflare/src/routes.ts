@@ -25,8 +25,8 @@ export type AttachRoute = RouteBase & {
 };
 export type Route = ChallengeRoute | AttachRoute;
 
-/** Parse the signed path, without the deployment's secret prefix. */
-export function relativeRoute(path: string): Route | undefined {
+/** Parse the operation path used by both routing and signed challenges. */
+export function route(path: string): Route | undefined {
   if (!path.startsWith("/")) return;
   const parts = path.split("/").slice(1);
   const [resource, network, action, target, generation, sid] = parts;
@@ -57,9 +57,4 @@ export function relativeRoute(path: string): Route | undefined {
     SESSION_TOKEN.test(generation) &&
     SESSION_TOKEN.test(sid);
   if (attach) return { network, action, target, generation, sid, path };
-}
-
-export function route(path: string, prefix: string): Route | undefined {
-  if (!/^[a-z2-7]{26}$/.test(prefix) || !path.startsWith(`/${prefix}/`)) return;
-  return relativeRoute(path.slice(prefix.length + 1));
 }

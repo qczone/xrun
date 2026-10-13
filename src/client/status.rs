@@ -18,7 +18,7 @@ pub struct NetworkStatus {
     pub manager_name: String,
     /// Whether this device owns the manager identity.
     pub is_manager: bool,
-    /// Signed relay endpoints, including any private route.
+    /// Signed relay HTTPS origins.
     pub relay_addresses: Vec<String>,
 }
 

@@ -25,8 +25,8 @@ export default {
     ctx: ExecutionContext,
   ): Promise<Response> {
     const url = new URL(request.url);
-    const match = /^\/([^/]+)\/probe\/(net_[a-z2-7]{52})$/.exec(url.pathname);
-    if (match && match[1] === env.RELAY_ROUTE && request.method === "GET") {
+    const match = /^\/probe\/(net_[a-z2-7]{52})$/.exec(url.pathname);
+    if (match && request.method === "GET") {
       return env.NETWORKS.getByName(RELAY_OBJECT).fetch("https://test/probe");
     }
     return worker.fetch(request, env);

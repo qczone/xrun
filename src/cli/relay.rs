@@ -264,9 +264,6 @@ async fn deploy_local(
             println!("xrun up --relay '{link}'");
         },
     );
-    eprintln!(
-        "[xrun] keep the relay link private; allow inbound TCP {}",
-        cfg.port
-    );
+    eprintln!("[xrun] allow inbound TCP {}", cfg.port);
     Ok(())
 }

@@ -433,6 +433,9 @@ async fn relay_routes_only_proven_members_and_keeps_binding_and_resource_limits(
         };
         let link = xrun::testing::relay::deployment_link(&cfg)?;
         assert_eq!(link, xrun::testing::relay::deployment_link(&cfg)?);
+        assert!(!link.contains('#'));
+        assert_eq!(xrun::testing::relay::addresses(&cfg)?, cfg.urls());
+        assert!(!cfg.data_dir.join("route").exists());
         let keys = crypto::load_or_create_server(&cfg)?;
         let net = network(&temp.path().join("manager"), &cfg)?;
         let other = network(&temp.path().join("other"), &cfg)?;
@@ -465,9 +468,8 @@ async fn relay_routes_only_proven_members_and_keeps_binding_and_resource_limits(
             .await
             .is_err()
         );
-        // Only the random route is accepted; there is no roster API or member database.
+        // Unknown prefixes and roster endpoints remain unavailable.
         for url in [
-            format!("{}/networks/{n}/status", cfg.urls()[0]),
             format!("{}/wrong/networks/{n}/status", cfg.urls()[0]),
             format!(
                 "{}/networks/{n}/roster",

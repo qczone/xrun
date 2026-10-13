@@ -28,13 +28,7 @@ console.log(`Deploying ${state.name} (${version})…`);
 const output = await wrangler(["deploy", "--config", configPath]);
 const url = /https:\/\/[a-z0-9-]+\.[a-z0-9-]+\.workers\.dev/.exec(output)?.[0];
 if (!url) throw new Error("Wrangler did not return a workers.dev address");
-await wrangler(
-  ["secret", "put", "RELAY_ROUTE", "--config", configPath],
-  state.route + "\n",
-);
 state.url = url;
 await save(state);
-console.log(`\nRelay address: ${url}/${state.route}\n`);
-console.log(
-  "Use this full address in the App or xrun up --relay. Keep the address private.",
-);
+console.log(`\nRelay address: ${url}\n`);
+console.log("Use this address in the App or xrun up --relay.");

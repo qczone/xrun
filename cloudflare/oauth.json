@@ -1,3 +1,12 @@
 {
-  "client_id": "d34286fb7066942861a41df53ce51176"
+  "client_id": "d34286fb7066942861a41df53ce51176",
+  "scopes": [
+    "account-settings.read",
+    "workers-scripts.admin"
+  ],
+  "redirect_uris": [
+    "http://127.0.0.1:8976/oauth/callback",
+    "http://127.0.0.1:8977/oauth/callback",
+    "http://127.0.0.1:8978/oauth/callback"
+  ]
 }

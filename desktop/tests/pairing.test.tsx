@@ -24,7 +24,7 @@ test("the default onboarding accepts a manually typed relay and code with explic
   });
   await waitFor(() => expect(screen.queryByLabelText("接入码")).toBeNull());
 });
-test("pasting a short invitation fills the two code fields without carrying a private route", async () => {
+test("pasting a short invitation fills the relay host and two code fields", async () => {
   await fixture({}, false);
   fireEvent.change(screen.getByLabelText("中转地址"), {
     target: { value: "xrun://relay.example:9528#K7M4-P9Q2" },

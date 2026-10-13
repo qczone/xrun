@@ -61,13 +61,7 @@ pub(super) fn parse_link(link: &str) -> Result<Invitation> {
             if parts[4] == "webpki" {
                 return Ok(endpoint(&format!("https://{a}"))?.addresses.remove(0));
             }
-            let (host, route) = a
-                .split_once('/')
-                .context(ErrorCode::InvalidLink.error("missing relay route"))?;
-            crate::client::validate_address(host)?;
-            if !crate::protocol::valid_relay_route(route) {
-                bail!(ErrorCode::InvalidLink.error("invalid relay route"))
-            }
+            crate::client::validate_address(a)?;
             Ok(format!("https://{a}"))
         })
         .collect::<Result<Vec<_>>>()?;
@@ -109,16 +103,15 @@ pub(super) fn endpoint(link: &str) -> Result<RelayEndpoint> {
             || url.password().is_some()
             || url.query().is_some()
             || url.fragment().is_some()
-            || !crate::protocol::valid_relay_route(url.path().trim_start_matches('/'))
-            || url.path().matches('/').count() != 1
+            || url.path() != "/"
         {
             bail!(
                 ErrorCode::InvalidRelay
-                    .error("expected a complete HTTPS relay address with its random route")
+                    .error("expected an HTTPS relay host with an optional port and no path")
             )
         }
         return Ok(RelayEndpoint {
-            addresses: vec![url.into()],
+            addresses: vec![url.as_str().trim_end_matches('/').to_owned()],
             pin: "webpki".into(),
         });
     }
@@ -127,9 +120,6 @@ pub(super) fn endpoint(link: &str) -> Result<RelayEndpoint> {
             .context(ErrorCode::InvalidRelay.error(
                 "use the HTTPS address or deployment link printed by the relay deployment",
             ))?;
-    let (value, route) = value
-        .split_once('#')
-        .context(ErrorCode::InvalidRelay.error("missing relay route"))?;
     let (addresses, pin) = value
         .split_once('/')
         .context(ErrorCode::InvalidRelay.error("missing transport fingerprint"))?;
@@ -138,14 +128,14 @@ pub(super) fn endpoint(link: &str) -> Result<RelayEndpoint> {
             && s.bytes()
                 .all(|b| b.is_ascii_lowercase() || matches!(b, b'2'..=b'7'))
     };
-    if !valid(pin, 52) || !crate::protocol::valid_relay_route(route) {
-        bail!(ErrorCode::InvalidRelay.error("malformed fingerprint or relay route"))
+    if !valid(pin, 52) {
+        bail!(ErrorCode::InvalidRelay.error("malformed transport fingerprint"))
     }
     let addresses = addresses
         .split(',')
         .map(|a| {
             crate::client::validate_address(a)?;
-            Ok(format!("https://{a}/{route}"))
+            Ok(format!("https://{a}"))
         })
         .collect::<Result<Vec<_>>>()?;
     if addresses.is_empty() || addresses.len() > MAX_RELAY_ADDRESSES {

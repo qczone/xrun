@@ -16,7 +16,7 @@ xrun relay deploy --provider cloudflare --name xrun-relay
 
 在浏览器登录 Cloudflare 并授权 xrun，CLI 直接上传内置的预编译 Worker。
 支持 macOS、Windows 和 Linux，用户不需要源码、Bun、Node.js、Wrangler 或编译环境。
-多账号可通过 `--account <账号 ID>` 选择；同名重复部署保留随机路由和 DO 数据。
+多账号可通过 `--account <账号 ID>` 选择；同名重复部署保留域名和 DO 数据。
 `xrun relay login --provider cloudflare` 可提前授权，`xrun relay logout --provider cloudflare` 撤销本地登录且保留中转。
 `xrun relay deploy --provider cloudflare --dry-run --json` 只检查包内产物。
 `xrun relay link --provider cloudflare --name xrun-relay` 从本机记录查看部署地址，不联网。
@@ -32,8 +32,8 @@ bun run --cwd cloudflare deploy --name xrun-relay
 ```
 
 多账号时设置 `CLOUDFLARE_ACCOUNT_ID`。命令输出完整 HTTPS 地址，粘贴到 App，
-或用于 `xrun up --relay '<完整地址>' --name mac1`。同名再次部署复用随机路由；
-保留 `.deploy/` 中的私有状态文件，勿纳入 Git。中转地址需要保密。
+或用于 `xrun up --relay '<完整地址>' --name mac1`。地址只包含 HTTPS 域名，同名再次部署保留 DO 数据；
+保留 `.deploy/` 中的私有状态文件，勿纳入 Git。中转地址本身不作为访问凭据。
 部署和授权 Cloudflare 账号不会创建网络管理身份。你选定的本地设备首次创建网络后成为管理设备，
 中转验证根密钥和设备签名后持久绑定它；普通探测、匿名连接和无管理签名的成员不能认领。
 后续设备通过该管理设备发出的邀请加入；其他网络即使持有完整中转地址也会被拒绝。

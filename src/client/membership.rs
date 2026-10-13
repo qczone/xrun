@@ -124,7 +124,7 @@ pub struct Invitation {
     /// Short-invitation identity used for explicit cancellation or replacement.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub invitation_id: Option<String>,
-    /// Relay host and port, without its private route.
+    /// Relay host and optional port.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub address: Option<String>,
     /// Human-readable, single-use eight-character code.

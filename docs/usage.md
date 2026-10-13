@@ -22,7 +22,7 @@
 
 ## 安装
 
-CLI 和 daemon 是同一个 Rust 二进制，运行已构建程序不需要 Rust、Node.js 或 Bun。桌面 App 管理网络、授权与服务，也可直接执行远程命令；文件传输使用 CLI。当前版本为 `0.1.0-rc.7`；本机 CLI 与 daemon 要求发布版本一致，设备与中转按协议范围协商互通。
+CLI 和 daemon 是同一个 Rust 二进制，运行已构建程序不需要 Rust、Node.js 或 Bun。桌面 App 管理网络、授权与服务，也可直接执行远程命令；文件传输使用 CLI。当前版本为 `0.1.0-rc.8`；本机 CLI 与 daemon 要求发布版本一致，设备与中转按协议范围协商互通。
 
 | 平台 | 安装方式 |
 | --- | --- |
@@ -45,25 +45,25 @@ Windows EXE 安装器同时安装桌面 App 和终端 CLI，并自动将安装�
 从相应版本的 Release 下载安装脚本。例如 macOS / Linux：
 
 ```bash
-curl -fL https://github.com/qczone/xrun/releases/download/v0.1.0-rc.7/install.sh -o install.sh
-bash install.sh --version 0.1.0-rc.7
+curl -fL https://github.com/qczone/xrun/releases/download/v0.1.0-rc.8/install.sh -o install.sh
+bash install.sh --version 0.1.0-rc.8
 ```
 
 ```powershell
-Invoke-WebRequest https://github.com/qczone/xrun/releases/download/v0.1.0-rc.7/install.ps1 -OutFile install.ps1
-powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File .\install.ps1 -Version 0.1.0-rc.7
+Invoke-WebRequest https://github.com/qczone/xrun/releases/download/v0.1.0-rc.8/install.ps1 -OutFile install.ps1
+powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File .\install.ps1 -Version 0.1.0-rc.8
 ```
 
 整个过程通过 stdout 返回一条 JSON，失败时 `ok` 为 `false`、包含 `error.code` 和 `error.message`，进程退出码为 1；成功返回版本、安装路径、终端 CLI 的 `executable` 路径、`changed` 和自检结果。Windows 另返回 `helper_executable` 供检查后台 helper。重复安装相同产物时返回 `changed: false`。源码中的安装脚本位于 `scripts/`，也可直接从项目根目录执行。
 
-macOS 默认识别设备的真实架构，即使终端通过 Rosetta 运行也会选择 arm64 包。已安装 Rosetta 的 Apple Silicon Mac 可用 `--arch x86_64` 安装 Intel 版，例如 `bash install.sh --version 0.1.0-rc.7 --arch x86_64`；Intel Mac 不支持安装 arm64 版。Windows 和 Linux 按系统架构自动选择原生包。
+macOS 默认识别设备的真实架构，即使终端通过 Rosetta 运行也会选择 arm64 包。已安装 Rosetta 的 Apple Silicon Mac 可用 `--arch x86_64` 安装 Intel 版，例如 `bash install.sh --version 0.1.0-rc.8 --arch x86_64`；Intel Mac 不支持安装 arm64 版。Windows 和 Linux 按系统架构自动选择原生包。
 
 默认下载地址是 `https://github.com/qczone/xrun/releases/download/v<完整版本>/`。`--base-url`／`-BaseUrl` 可指定其他 HTTPS 产物目录。每个目录需包含对应的 `xrun-<系统>-<架构>.json` 清单及其引用的文件，系统为 `darwin`、`windows` 或 `linux`，架构为 `x86_64` 或 `arm64`。安装时不需要 Bun；产物准备见 [开发与发布](development.md#发布与内置文档)。
 
 离线安装或验收本地打包产物时，用 `--source-dir`／`-SourceDir` 指定产物目录。例如 macOS：
 
 ```bash
-bash scripts/install.sh --version 0.1.0-rc.7 --source-dir ./dist
+bash scripts/install.sh --version 0.1.0-rc.8 --source-dir ./dist
 ```
 
 默认 macOS App 安装到 `~/Applications/xrun.app`，CLI 入口为 `~/.local/bin/xrun`；Windows App 安装到 `%LOCALAPPDATA%\Programs\xrun`，CLI 位于其 `cli` 子目录；Linux CLI 安装到 `~/.local/bin/xrun`。`--install-dir`／`-InstallDir` 可指定父目录，AI 可直接使用 JSON 返回的 `executable` 路径调用程序。脚本安装程序并配置当前用户的终端 PATH；网络加入、设备授权和后台服务的启用继续使用现有 App 或 CLI 命令。
@@ -302,7 +302,7 @@ App 分为设备、活动、设置三个页面。顶部固定显示本机名称�
 
 菜单中的“退出 xrun”只退出界面，后台服务继续独立运行。暂停访问保留已有授权，恢复后沿用原授权。“停止服务”位于窗口顶部的更多菜单和“设置 → 网络与服务”中，确认后正常结束 daemon 和本机运行中的任务，保留任务结果，服务会在下次登录时再启动。“移除后台服务”取消服务的登录启动并保留本机数据。“登录时显示 xrun 图标”单独控制托盘界面的登录启动。
 
-macOS App 通过 SMAppService 注册包内 LaunchAgent，系统登录项会关联到 xrun App；需要授权时界面会提示前往系统设置。Windows 后台程序运行在当前用户的登录会话中，不显示控制台窗口。纯 CLI 安装继续使用原来的系统服务。
+macOS App 通过 SMAppService 注册包内 LaunchAgent，系统登录项会关联到 xrun App。更换 App 后，下次启动已停止的后台服务会重新登记当前包内程序，避免系统仍使用旧版本的签名信息；需要授权时界面会提示前往系统设置。Windows 后台程序运行在当前用户的登录会话中，不显示控制台窗口。纯 CLI 安装继续使用原来的系统服务。
 
 从 CLI 服务迁移时，先停止服务再在 App 中启动，App 会替换旧的服务注册；打开 App 本身不会中断已有任务。旧版 Windows daemon 不支持安全停止时，应先使用旧版 CLI 的 `xrun daemon uninstall`，再启动 App 服务。App 管理的 macOS 服务请在 App 中移除。
 
@@ -316,17 +316,19 @@ macOS App 通过 SMAppService 注册包内 LaunchAgent，系统登录项会关�
 xrun relay deploy --provider cloudflare --name xrun-relay
 ```
 
-命令自动打开浏览器，请在 Cloudflare 登录并授权 xrun；多账号时在终端选择账号，也可通过 `--account <账号 ID>` 指定。CLI 直接上传包内预编译的 Worker 和 Durable Object，用户无需源码、Bun、Node.js、Wrangler 或编译环境。账号尚无 workers.dev 子域名时自动创建一个。
+命令自动打开浏览器，请在 Cloudflare 登录并授权 xrun；多账号时在终端选择账号，也可通过 `--account <账号 ID>` 指定。CLI 直接上传包内预编译的 Worker 和 Durable Object，用户无需源码、Bun、Node.js、Wrangler 或编译环境。上传前先检查 workers.dev 子域名，账号尚无子域名时自动创建一个；如果 Cloudflare 仍要求初始化账号，打开该账号的 Workers & Pages 页面后重试。
 
-成功后输出完整 HTTPS 地址。同名重复部署保留随机路由与 DO 数据，不覆盖其他应用的同名 Worker。部署记录和登录凭据保存在 `~/.xrun/cloudflare/`，应保留该目录。把完整地址粘贴到 App，或创建网络：
+成功后输出完整 HTTPS 地址。同名重复部署保留域名与 DO 数据，不覆盖其他应用的同名 Worker。部署记录和登录凭据保存在 `~/.xrun/cloudflare/`，应保留该目录。把完整地址粘贴到 App，或创建网络：
 
 ```bash
-xrun up --relay 'https://<Worker 域名>/<随机路由>' --name mac1
+xrun up --relay 'https://<Worker 域名>' --name mac1
 ```
 
-可单独执行 `xrun relay login --provider cloudflare` 授权，`xrun relay logout --provider cloudflare` 撤销并移除本地登录凭据，保留已部署中转。`xrun relay deploy --provider cloudflare --dry-run --json` 仅检查包内 Worker，不登录或修改 Cloudflare。无浏览器自动打开能力时使用 `--no-browser`，手动打开命令输出的授权地址；浏览器须能访问本机 127.0.0.1:8976 的回调。自动化环境可以通过 `CLOUDFLARE_API_TOKEN` 和 `CLOUDFLARE_ACCOUNT_ID` 指定账号，令牌不会写入部署记录。
+也可以在 Cloudflare 的 Worker 设置 → Domains & Routes → Add → Custom Domain 中绑定自己的子域名，例如 `relay.example.com`。域名须属于自己的有效 Cloudflare zone。绑定完成后，直接把 `https://relay.example.com` 粘贴到 App 或用于 `xrun up --relay`。当前部署命令不自动绑定自定义域名；已经组网的网络若要改用新地址，由管理设备执行 `xrun up --relay 'https://relay.example.com'` 明确更新。配置方式见 [Cloudflare 自定义域名文档](https://developers.cloudflare.com/workers/configuration/routing/custom-domains/)。
 
-Cloudflare 使用公共 HTTPS 证书，设备间仍使用独立的网络根证书和双向 TLS。中转不保存成员名单、任务、日志或文件，持久化流量汇总。单文件大小不设固定上限；每方向 4 MiB 的传输窗口限制尚未确认的密文，每个网络最多同时保留 8 个中转会话。开发者源码部署与检查说明见 [cloudflare/README.md](../cloudflare/README.md)。
+可单独执行 `xrun relay login --provider cloudflare` 授权，`xrun relay logout --provider cloudflare` 撤销并移除本地登录凭据，保留已部署中转。`xrun relay deploy --provider cloudflare --dry-run --json` 仅检查包内 Worker，不登录或修改 Cloudflare。无浏览器自动打开能力时使用 `--no-browser`，手动打开命令输出的授权地址；浏览器须能访问本机 127.0.0.1 的回调，程序依次尝试端口 8976、8977、8978，自动跳过被占用的端口。自动化环境可以通过 `CLOUDFLARE_API_TOKEN` 和 `CLOUDFLARE_ACCOUNT_ID` 指定账号，令牌不会写入部署记录。
+
+Cloudflare 使用公共 HTTPS 证书，设备间仍使用独立的网络根证书和双向 TLS。中转持久化网络归属、根签名成员状态和流量汇总，不保存命令任务、日志或文件内容。单文件大小不设固定上限；每方向 4 MiB 的传输窗口限制尚未确认的密文，每个网络最多同时保留 8 个中转会话。开发者源码部署与检查说明见 [cloudflare/README.md](../cloudflare/README.md)。
 
 如果使用自建 Linux 中转，在 Linux 主机上执行：
 
@@ -336,7 +338,7 @@ xrun relay deploy --provider local --addr 192.168.1.10:9528
 
 替换为其他设备可访问的 IPv4 地址或有 A 记录的域名，并放行 TCP 9528。省略 `--addr` 时自动探测地址；手动地址持久保留。此命令安装 systemd 用户服务并启用 linger，负责开机启动和异常重启中转。中转只接通连接、转发设备间的 TLS 密文，网络管理密钥不保存在中转。
 
-部署链接包含中转指纹和固定随机路由，可以重复使用，重启后保留。在中转主机可查看链接、前台运行已配置中转或移除服务：
+本地部署链接保留中转证书指纹，不含随机路径，可以重复使用，重启后保留。在中转主机可查看链接、前台运行已配置中转或移除服务：
 
 ```bash
 xrun relay link --provider local

@@ -9,7 +9,7 @@ const relay = {
   provider: "cloudflare",
   name: "xrun-relay",
   account_id: account.id,
-  link: "https://xrun-relay.example.workers.dev/secret-deployment-route",
+  link: "https://xrun-relay.example.workers.dev",
 };
 const create = async () => {
   await act(async () =>

@@ -63,7 +63,7 @@ async function measure(
           }
         : { NETWORKS: { className: "TestRelay", useSQLite: true } },
       bindings: {
-        RELAY_ROUTE: secret,
+        ...(!sharded ? { RELAY_ROUTE: secret } : {}),
         XRUN_VERSION: fixtures.VERSION,
         XRUN_PROTOCOL_MIN: protocol.min,
         XRUN_PROTOCOL_MAX: protocol.max,
@@ -80,7 +80,7 @@ async function measure(
     const sources = [source, await network.member(), owner];
     async function open(path: string) {
       const response = await runtime.dispatchFetch(
-        `${origin}/${secret}${path}`,
+        `${origin}${sharded ? "" : `/${secret}`}${path}`,
         {
           headers: {
             Upgrade: "websocket",

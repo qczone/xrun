@@ -15,7 +15,7 @@ use std::{
 };
 
 #[derive(Serialize)]
-/// A deployment recorded locally after the Worker and its private route are ready.
+/// A deployment recorded locally after the Worker and its HTTPS endpoint are ready.
 pub struct DeployedRelay {
     /// Relay provider.
     pub provider: &'static str,
@@ -181,7 +181,7 @@ pub(super) async fn account_list(api: &Api) -> Result<Vec<Account>> {
 }
 
 pub(super) async fn deploy_with(
-    mut api: Api,
+    api: Api,
     directory: &Path,
     name: &str,
     account: &str,
@@ -198,6 +198,8 @@ pub(super) async fn deploy_with(
     {
         bail!(ErrorCode::InvalidConfig.error("deployment account differs from the saved record"))
     }
+    // Durable Object uploads require workers.dev to be registered already.
+    let subdomain = subdomain(&api, account).await?;
     let script = format!("/accounts/{account}/workers/scripts/{name}");
     let published = api.worker(account, name).await?;
     let mut state = match (previous, &published) {
@@ -219,7 +221,6 @@ pub(super) async fn deploy_with(
         (None, None) => Deployment {
             name: name.into(),
             account_id: account.into(),
-            route: crypto::random_token(),
             ownership: crypto::random_token(),
             url: None,
             status: DeploymentStatus::Active,
@@ -229,9 +230,8 @@ pub(super) async fn deploy_with(
     if let Some(region) = region {
         state.region = region;
     }
-    api.protect(&state.route);
     // Persist before upload: a timeout after a successful upload must be retryable
-    // with the same private route and ownership marker.
+    // with the same ownership marker.
     state.save(directory)?;
     let mut metadata = json!({
         "main_module": "relay.mjs",
@@ -240,7 +240,6 @@ pub(super) async fn deploy_with(
         "bindings": [
             {"type":"durable_object_namespace", "name":"NETWORKS", "class_name":"XrunRelay"},
             {"type":"durable_object_namespace", "name":"DATA", "class_name":"XrunData"},
-            {"type":"secret_text", "name":"RELAY_ROUTE", "text":state.route},
             {"type":"json", "name":"XRUN_PROTOCOL_MIN", "json":bundle.manifest.protocol.min},
             {"type":"json", "name":"XRUN_PROTOCOL_MAX", "json":bundle.manifest.protocol.max}
         ]
@@ -262,14 +261,13 @@ pub(super) async fn deploy_with(
             json!({"old_tag":"v1", "new_tag":"v2", "new_sqlite_classes":["XrunData"]});
     }
     api.upload(&script, &metadata, &bundle.source).await?;
-    let subdomain = subdomain(&api, account).await?;
     api.json(
         Method::POST,
         &format!("{script}/subdomain"),
         Some(json!({"enabled":true, "previews_enabled":false})),
     )
     .await?;
-    let url = format!("https://{name}.{subdomain}.workers.dev/{}", state.route);
+    let url = format!("https://{name}.{subdomain}.workers.dev");
     let state = Deployment {
         url: Some(url.clone()),
         ..state
@@ -295,7 +293,7 @@ fn require_active(state: Option<&Deployment>) -> Result<()> {
 
 async fn subdomain(api: &Api, account: &str) -> Result<String> {
     let path = format!("/accounts/{account}/workers/subdomain");
-    let value = match api.optional(&path).await? {
+    let value = match api.workers_subdomain(account).await? {
         Some(value)
             if value["subdomain"]
                 .as_str()

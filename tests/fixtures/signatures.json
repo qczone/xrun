@@ -32,14 +32,14 @@
             }
           ],
           "relay_addresses": [
-            "https://relay.example.com/abcdefghijklmnopqrstuvwxy2"
+            "https://relay.example.com"
           ],
           "relay_ca_pem": ""
         },
         "19d6355e1fbefc03eff9631120e75e1936a95f5a8576e9afdc89c4e25427574b"
       ],
-      "payload_utf8": "xrun/sig-v1/roster\u0000[{\"network_id\":\"net_tpu5dixsnflzdsjdpxsawsx26olu3ci5zf65zgmubc4xebk6co5q\",\"version\":7,\"manager_id\":\"dev_00000000000000000000000000000001\",\"authority_generation\":1,\"members\":[{\"device_id\":\"dev_00000000000000000000000000000001\",\"name\":\"manager\",\"key_fp\":\"9be9d1a2f2695791c9237de40b4afaf3974d891dc97ddc999408b972055e13bb\",\"revoked\":false},{\"device_id\":\"dev_00000000000000000000000000000002\",\"name\":\"member\",\"key_fp\":\"daf892b377896e8c9def0ddfa1ef239ed4b36fb0035ab0f33352b3ab0677c163\",\"revoked\":false}],\"relay_addresses\":[\"https://relay.example.com/abcdefghijklmnopqrstuvwxy2\"],\"relay_ca_pem\":\"\"},\"19d6355e1fbefc03eff9631120e75e1936a95f5a8576e9afdc89c4e25427574b\"]",
-      "signature": "MEQCIGaa+UMoPLg2Xe0opchi3F7y04s2Gu7DcoO731ofJ5MgAiAd27kIetVj+HxpOjJQwjTiR0fejPJNk75N6kO6mutV1g==",
+      "payload_utf8": "xrun/sig-v1/roster\u0000[{\"network_id\":\"net_tpu5dixsnflzdsjdpxsawsx26olu3ci5zf65zgmubc4xebk6co5q\",\"version\":7,\"manager_id\":\"dev_00000000000000000000000000000001\",\"authority_generation\":1,\"members\":[{\"device_id\":\"dev_00000000000000000000000000000001\",\"name\":\"manager\",\"key_fp\":\"9be9d1a2f2695791c9237de40b4afaf3974d891dc97ddc999408b972055e13bb\",\"revoked\":false},{\"device_id\":\"dev_00000000000000000000000000000002\",\"name\":\"member\",\"key_fp\":\"daf892b377896e8c9def0ddfa1ef239ed4b36fb0035ab0f33352b3ab0677c163\",\"revoked\":false}],\"relay_addresses\":[\"https://relay.example.com\"],\"relay_ca_pem\":\"\"},\"19d6355e1fbefc03eff9631120e75e1936a95f5a8576e9afdc89c4e25427574b\"]",
+      "signature": "MEUCIAhdr8DDyA9KFfGV4YEHYloJj2mrYg9nSAr77ppT1KyXAiEAi18Aabdd46hkxnGhO6tnZPoIcIACbAQhlRaP3hgMdVA=",
       "signer": "root"
     },
     "pairing": {
@@ -56,12 +56,12 @@
     "roster-ack": {
       "value": {
         "device_id": "dev_00000000000000000000000000000002",
-        "hash": "2d6fa639e1bd795e7ec0c03f7f5d8f1a7386f734c0f9eb804ba08e87efff44d2",
+        "hash": "4e2d8aad9aa8d8ed67f9bcdabad033833400c0a3047241b49bbb4bfeea6178d7",
         "network": "net_tpu5dixsnflzdsjdpxsawsx26olu3ci5zf65zgmubc4xebk6co5q",
         "version": 7
       },
-      "payload_utf8": "xrun/sig-v1/roster-ack\u0000{\"device_id\":\"dev_00000000000000000000000000000002\",\"hash\":\"2d6fa639e1bd795e7ec0c03f7f5d8f1a7386f734c0f9eb804ba08e87efff44d2\",\"network\":\"net_tpu5dixsnflzdsjdpxsawsx26olu3ci5zf65zgmubc4xebk6co5q\",\"version\":7}",
-      "signature": "MEUCIFyYm1IO3mS9+6u5G+tNkLKVdPI+NKMAP9AZm9niCRD9AiEAyE8VE6rjlkHqS+3ViIJ6jA0J7dNtfMy3wq5aHLzhIWU=",
+      "payload_utf8": "xrun/sig-v1/roster-ack\u0000{\"device_id\":\"dev_00000000000000000000000000000002\",\"hash\":\"4e2d8aad9aa8d8ed67f9bcdabad033833400c0a3047241b49bbb4bfeea6178d7\",\"network\":\"net_tpu5dixsnflzdsjdpxsawsx26olu3ci5zf65zgmubc4xebk6co5q\",\"version\":7}",
+      "signature": "MEQCIEgzl85TNI1wbKWC6Nr74CaTQtGMu93BheaZzwOrRhUPAiA2Lk0pCOuWcpp388qNCjt2O0N5UmYtCW5o0C7fYhYQpQ==",
       "signer": "member"
     },
     "relay-proof": {

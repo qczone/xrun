@@ -14,6 +14,77 @@ fn main() {
         .filter(|id| id.len() == 32 && id.bytes().all(|byte| byte.is_ascii_hexdigit()))
         .expect("Cloudflare OAuth client ID must be 32 hexadecimal characters");
     println!("cargo:rustc-env=XRUN_CLOUDFLARE_PUBLIC_CLIENT_ID={client_id}");
+    let scopes = oauth["scopes"]
+        .as_array()
+        .filter(|scopes| !scopes.is_empty())
+        .expect("Cloudflare OAuth scopes must be a nonempty array");
+    let mut unique = std::collections::HashSet::new();
+    let scopes: Vec<_> = scopes
+        .iter()
+        .map(|scope| {
+            let id = scope
+                .as_str()
+                .filter(|id| {
+                    !id.is_empty()
+                        && id.len() <= 128
+                        && id.bytes().all(|byte| {
+                            byte.is_ascii_lowercase()
+                                || byte.is_ascii_digit()
+                                || matches!(byte, b'.' | b'-' | b'_' | b':')
+                        })
+                })
+                .expect("Cloudflare OAuth scope must be a valid scope ID");
+            assert_ne!(
+                id, "offline_access",
+                "offline_access is only requested for remembered login"
+            );
+            assert!(
+                unique.insert(id),
+                "Cloudflare OAuth scopes must not be duplicated"
+            );
+            id
+        })
+        .collect();
+    println!(
+        "cargo:rustc-env=XRUN_CLOUDFLARE_PUBLIC_SCOPES={}",
+        scopes.join(" ")
+    );
+    let redirects = oauth["redirect_uris"]
+        .as_array()
+        .filter(|uris| !uris.is_empty())
+        .expect("Cloudflare OAuth redirect URIs must be a nonempty array");
+    let mut unique_ports = std::collections::HashSet::new();
+    let redirects: Vec<_> = redirects
+        .iter()
+        .map(|uri| {
+            let uri = uri
+                .as_str()
+                .expect("Cloudflare OAuth redirect URI must be a string");
+            let text = uri
+                .strip_prefix("http://127.0.0.1:")
+                .and_then(|value| value.strip_suffix("/oauth/callback"))
+                .expect("Cloudflare OAuth redirect URI must use the IPv4 loopback callback");
+            let port: u16 = text
+                .parse()
+                .ok()
+                .filter(|port| *port != 0)
+                .expect("Cloudflare OAuth callback port must be between 1 and 65535");
+            assert_eq!(
+                text,
+                port.to_string(),
+                "Cloudflare OAuth callback port must be canonical"
+            );
+            assert!(
+                unique_ports.insert(port),
+                "Cloudflare OAuth callback ports must not be duplicated"
+            );
+            uri
+        })
+        .collect();
+    println!(
+        "cargo:rustc-env=XRUN_CLOUDFLARE_REDIRECT_URIS={}",
+        redirects.join(" ")
+    );
     let output = PathBuf::from(env::var_os("OUT_DIR").expect("OUT_DIR"));
     let generated = output.join("cloudflare_bundle.rs");
     let Some(directory) = env::var_os("XRUN_CLOUDFLARE_BUNDLE_DIR") else {

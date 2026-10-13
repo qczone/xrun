@@ -5,10 +5,13 @@
   "grant_types": ["authorization_code", "refresh_token"],
   "response_types": ["code"],
   "token_endpoint_auth_method": "none",
-  "redirect_uris": ["http://127.0.0.1:8976/oauth/callback"],
+  "redirect_uris": [
+    "http://127.0.0.1:8976/oauth/callback",
+    "http://127.0.0.1:8977/oauth/callback",
+    "http://127.0.0.1:8978/oauth/callback"
+  ],
   "scopes": [
     "account-settings.read",
-    "workers-scripts.write",
-    "workers-routes.write"
+    "workers-scripts.admin"
   ]
 }

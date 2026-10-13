@@ -20,9 +20,21 @@ bun run --cwd cloudflare package
 XRUN_CLOUDFLARE_BUNDLE_DIR="$PWD/cloudflare/.wrangler/package" cargo build --locked --release
 ```
 
-Package 工作流在六个平台产物中嵌入此 Worker，并通过安装后的 helper / CLI 运行 `relay deploy --provider cloudflare --dry-run --json` 校验版本、摘要和内置 OAuth 配置。检查时移除运行时 Client ID 环境变量，确保用户安装后无需额外配置。公共 Client ID 来自 [cloudflare/oauth.json](../cloudflare/oauth.json)，本地构建与 Package 共用此文件；不依赖 GitHub 仓库变量。
+Package 工作流在六个平台产物中嵌入此 Worker，并通过安装后的 helper / CLI 运行 `relay deploy --provider cloudflare --dry-run --json` 校验版本、摘要和内置 OAuth 配置。检查时移除运行时 Client ID 环境变量，确保用户安装后无需额外配置。公共 Client ID、申请的 scopes 和回调地址来自 [cloudflare/oauth.json](../cloudflare/oauth.json)，本地构建与 Package 共用此文件；不依赖 GitHub 仓库变量。
 
-浏览器授权使用 **xrun 自己的公开 OAuth 客户端**。注册参数在 [cloudflare/oauth-client.json](../cloudflare/oauth-client.json)：Authorization Code、PKCE S256、刷新令牌、token endpoint auth method `none`，回调固定为 `http://127.0.0.1:8976/oauth/callback`。仅申请 `account-settings.read`、`workers-scripts.write`、`workers-routes.write`，授权时额外请求 `offline_access` 以便刷新登录。公开客户端需要填写 xrun 名称、Logo、`https://xrun.sh` 客户端地址，并完成该域名的所有权验证。公共 Client ID 保存在 `cloudflare/oauth.json`，构建时校验格式并编入程序。该 ID 不是秘密，不使用 Wrangler 的 Client ID，不向客户端分发 client secret。[Cloudflare 官方 OAuth 配置](https://developers.cloudflare.com/fundamentals/oauth/create-an-oauth-client/)。
+浏览器授权使用 **xrun 自己的公开 OAuth 客户端**。注册参数在 [cloudflare/oauth-client.json](../cloudflare/oauth-client.json)：Authorization Code、PKCE S256、刷新令牌、token endpoint auth method `none`。临时授权仅申请 `account-settings.read` 和 `workers-scripts.admin`；显式记住登录时额外请求 `offline_access`。Workers Admin 支持首次创建、更新和删除中转 Worker；Workers Editor 只适合更新已有 Worker。授权请求中的 scope ID 必须与客户端登记的范围对应，`.edit`、`.write` 和 `.admin` 不能互换。公开客户端需要填写 xrun 名称、Logo、`https://xrun.sh` 客户端地址，并完成该域名的所有权验证。公共 Client ID、scopes 和回调地址保存在 `cloudflare/oauth.json`，构建时校验格式并编入程序。这些字段不是秘密，不使用 Wrangler 的 Client ID，不向客户端分发 client secret。[Cloudflare 官方 OAuth 配置](https://developers.cloudflare.com/fundamentals/oauth/create-an-oauth-client/)、[Workers 权限说明](https://blog.cloudflare.com/workers-granular-authorization/)。
+
+Cloudflare 客户端需登记以下三个回调地址。登录时依次尝试端口 8976、8977、8978；只在端口被占用时改用下一项，全部被占则返回 `INVALID_PORT`。每次授权先绑定本机 IPv4 回环监听，再打开浏览器；授权请求和换取令牌使用同一个已选回调地址。取消、失败或超时后释放监听，不使用未注册的随机端口，也不停止占用端口的其他进程。
+
+```text
+http://127.0.0.1:8976/oauth/callback
+http://127.0.0.1:8977/oauth/callback
+http://127.0.0.1:8978/oauth/callback
+```
+
+遇到 `OAUTH_INVALID_SCOPE` 时，按错误详情中的 Cloudflare `error_description` 核对客户端登记的权限；后台显示名称与真实 scope ID 通过 `GET /client/v4/oauth/scopes` 的 `name`、`id` 对应，更新时同步注册参数和 `cloudflare/oauth.json`。只有 `access_denied` 显示授权被拒绝，其他提供方错误保留具体原因。回调页与 App 错误详情都会隐藏回调中的 state、code 和令牌。权限和回调配置编入 CLI 和 App helper，修改源码后必须重新构建应用，已安装的旧版本不会自动读取项目配置。
+
+部署在查询 Worker 和上传 Durable Objects 前检查账号的 workers.dev 子域名。仅子域名查询返回 400/404 + `10007` 或 403 + `10063` 且错误数组全部为该码时，按尚未初始化处理并尝试注册；普通 401/403 和混合错误仍中止部署，不当作不存在。注册仍返回 `10063` 时提示打开 Cloudflare Workers & Pages 初始化后重试，错误为 `INVALID_CONFIG`。已有子域名保留，不覆盖账号设置。自动部署只使用 workers.dev，不调用 zone 的 Workers Routes API，因此不申请 `workers-routes.write`。
 
 本地构建默认读取同一份公共 Client ID；运行时可设置 `XRUN_CLOUDFLARE_OAUTH_CLIENT_ID` 进行联调，也可用自己的 `CLOUDFLARE_API_TOKEN` 和 `CLOUDFLARE_ACCOUNT_ID` 进行原生部署。Fork 应注册自己的 OAuth 客户端并修改 `cloudflare/oauth.json`。面向用户发布前应实测浏览器授权及真实账号部署。
 
@@ -90,6 +102,8 @@ macOS 安装版 App 在启动时配置当前用户的终端 CLI；`--install-cli
 Linux 自动安装脚本配置同样的 zsh 和 Bash 用户配置文件；PATH 指向实际安装目录，支持空格、单引号、符号链接配置文件，保留原有内容和权限。重复安装不重复追加 PATH 块；不可写或不完整的配置报告 `CLI_INSTALL_FAILED`。
 
 Windows 安装包在 `cli/xrun.exe` 中包含控制台版 CLI，根目录 `xrun.exe` 仍是无控制台 daemon helper。NSIS 安装后调用 App 的 `--install-cli` 写入 `HKCU\Environment\Path`，保留原有注册表类型、未展开的变量和长 PATH，并广播环境更新。安装器通过 `.xrun-cli-path.json` 记录自己添加的项，卸载准备成功后只移除该项；预先存在的用户 PATH 项不归安装器所有。配置失败返回安装器退出码 34 和 `CLI_INSTALL_FAILED`。Windows 安装回归同时检查 PowerShell / CMD 按名称运行 CLI、重复安装、卸载清理和配置失败。
+
+macOS 服务启动排查可调用已放在固定位置的 App：`/Applications/xrun.app/Contents/MacOS/xrun-desktop --start-service`。该入口复用界面的服务启动流程并输出本机状态，不打开窗口、不重新组网。SMAppService 的 `enabled` 仅说明登记和授权状态，不能证明 launchd 已保存当前 helper 的签名；更新程序后按 Apple SDK 要求先注销再重新登记。已在运行的服务不会被重复启动，等待批准时返回 `APPROVAL_REQUIRED`。可用 `launchctl print gui/$(id -u)/dev.qczone.xrun.daemon` 核对登记与进程状态；本地测试使用 ad-hoc 签名，不能把本地服务检查描述为正式包公证验收。
 
 ## 验证
 

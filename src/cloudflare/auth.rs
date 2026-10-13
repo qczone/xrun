@@ -1,19 +1,14 @@
+mod callback;
 mod vault;
 use super::state;
 use crate::{config, error::ErrorCode};
 use anyhow::{Context, Result, bail};
-use axum::{
-    Router,
-    extract::{Query, State},
-    http::StatusCode,
-    response::{Html, IntoResponse},
-    routing::get,
-};
+use axum::{Router, http::StatusCode, routing::get};
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
+use callback::Callback;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::{
-    collections::HashMap,
     path::Path,
     sync::{Arc, Mutex, OnceLock},
     time::{Duration, SystemTime, UNIX_EPOCH},
@@ -22,7 +17,6 @@ use tokio::sync::oneshot;
 use url::Url;
 use vault::{SystemVault, Vault};
 
-const REDIRECT: &str = "http://127.0.0.1:8976/oauth/callback";
 const AUTHORIZE: &str = "https://dash.cloudflare.com/oauth2/auth";
 const TOKEN: &str = "https://dash.cloudflare.com/oauth2/token";
 
@@ -409,10 +403,11 @@ fn form(
 struct Authorization {
     state: String,
     verifier: String,
+    redirect_uri: String,
 }
 
 impl Authorization {
-    fn new() -> Result<Self> {
+    fn new(redirect_uri: String) -> Result<Self> {
         fn random() -> Result<String> {
             let mut bytes = [0u8; 32];
             getrandom::fill(&mut bytes)
@@ -422,24 +417,24 @@ impl Authorization {
         Ok(Self {
             state: random()?,
             verifier: random()?,
+            redirect_uri,
         })
     }
 
     fn url(&self, client_id: &str, remember: bool) -> Result<Url> {
         let mut url = Url::parse(AUTHORIZE)?;
+        let scopes = env!("XRUN_CLOUDFLARE_PUBLIC_SCOPES");
+        let scopes = if remember {
+            format!("{scopes} offline_access")
+        } else {
+            scopes.to_owned()
+        };
         url.query_pairs_mut().extend_pairs([
             ("response_type", "code"),
             ("client_id", client_id),
-            ("redirect_uri", REDIRECT),
+            ("redirect_uri", self.redirect_uri.as_str()),
             ("state", &self.state),
-            (
-                "scope",
-                if remember {
-                    "account-settings.read workers-scripts.write offline_access"
-                } else {
-                    "account-settings.read workers-scripts.write"
-                },
-            ),
+            ("scope", scopes.as_str()),
             ("code_challenge_method", "S256"),
             (
                 "code_challenge",
@@ -448,47 +443,19 @@ impl Authorization {
         ]);
         Ok(url)
     }
-}
-
-type CodeResult = std::result::Result<String, String>;
-struct Callback {
-    state: String,
-    sender: Mutex<Option<oneshot::Sender<CodeResult>>>,
-}
-
-async fn callback(
-    State(callback): State<Arc<Callback>>,
-    Query(query): Query<HashMap<String, String>>,
-) -> impl IntoResponse {
-    if query.get("state") != Some(&callback.state) {
-        return (StatusCode::BAD_REQUEST, Html("Invalid login state."));
+    fn exchange_fields<'a>(
+        &'a self,
+        client_id: &'a str,
+        code: &'a str,
+    ) -> [(&'static str, &'a str); 5] {
+        [
+            ("grant_type", "authorization_code"),
+            ("client_id", client_id),
+            ("redirect_uri", &self.redirect_uri),
+            ("code", code),
+            ("code_verifier", &self.verifier),
+        ]
     }
-    let code = if query.contains_key("error") {
-        Err("Cloudflare authorization was declined".into())
-    } else if let Some(code) = query
-        .get("code")
-        .filter(|code| !code.is_empty() && code.len() <= 4096)
-    {
-        Ok(code.clone())
-    } else {
-        return (StatusCode::BAD_REQUEST, Html("Missing authorization code."));
-    };
-    let success = code.is_ok();
-    let Some(sender) = callback.sender.lock().expect("callback lock").take() else {
-        return (StatusCode::GONE, Html("This login has already completed."));
-    };
-    let _ = sender.send(code);
-    (
-        StatusCode::OK,
-        Html(if success {
-            concat!(
-                "<!doctype html><meta name=referrer content=no-referrer><title>xrun</title>",
-                "<script>history.replaceState(null,'','/')</script>Authorized. Return to xrun to finish deployment."
-            )
-        } else {
-            "Authorization declined. Return to xrun."
-        }),
-    )
 }
 
 struct CallbackServer(tokio::task::AbortHandle);
@@ -506,12 +473,10 @@ async fn authorize_with_prompt(
     no_browser: bool,
     prompt: Option<&(dyn Fn(&str) + Send + Sync)>,
 ) -> Result<String> {
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:8976")
-        .await
-        .context(
-            ErrorCode::InvalidPort
-                .error("Cloudflare login needs local port 8976; close another login and retry"),
-        )?;
+    let redirects: Vec<_> = env!("XRUN_CLOUDFLARE_REDIRECT_URIS")
+        .split_whitespace()
+        .collect();
+    let listener = callback::listen(&redirects).await?;
     let (cancel, cancelled) = oneshot::channel();
     let stamp = uuid::Uuid::new_v4().to_string();
     *pending().lock().unwrap() = Some((stamp.clone(), cancel));
@@ -536,14 +501,15 @@ async fn authorize_with_listener(
     prompt: Option<&(dyn Fn(&str) + Send + Sync)>,
     listener: tokio::net::TcpListener,
 ) -> Result<String> {
-    let authorization = Authorization::new()?;
+    let authorization =
+        Authorization::new(format!("http://{}/oauth/callback", listener.local_addr()?))?;
     let (sender, receiver) = oneshot::channel();
     let callback = Arc::new(Callback {
         state: authorization.state.clone(),
         sender: Mutex::new(Some(sender)),
     });
     let router = Router::new()
-        .route("/oauth/callback", get(self::callback))
+        .route("/oauth/callback", get(callback::receive))
         .with_state(callback);
     let (shutdown, stopped) = oneshot::channel();
     let mut server = tokio::spawn(async move {
@@ -565,7 +531,7 @@ async fn authorize_with_listener(
     }
     let result = tokio::select! {
         code = receiver => code.context("Cloudflare login callback closed")
-            .and_then(|code| code.map_err(|message| ErrorCode::Unauthenticated.error(message).into())),
+            .and_then(|code| code.map_err(anyhow::Error::new)),
         _ = tokio::time::sleep(Duration::from_secs(300)) => Err(ErrorCode::ConnectTimeout.error("Cloudflare login timed out").into()),
         _ = tokio::signal::ctrl_c() => Err(ErrorCode::Unauthenticated.error("Cloudflare login cancelled").into()),
     };
@@ -580,13 +546,7 @@ async fn authorize_with_listener(
     let tokens = exchange(
         &http()?,
         TOKEN,
-        &[
-            ("grant_type", "authorization_code"),
-            ("client_id", client_id),
-            ("redirect_uri", REDIRECT),
-            ("code", &code),
-            ("code_verifier", &authorization.verifier),
-        ],
+        &authorization.exchange_fields(client_id, &code),
     )
     .await?
     .context(

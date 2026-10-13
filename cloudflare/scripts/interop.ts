@@ -13,7 +13,7 @@ import {
   X509CertificateGenerator,
 } from "@peculiar/x509";
 import { Miniflare, convertV4MiniflareOptions } from "miniflare";
-import { base32, randomRoute } from "../src/auth";
+import { base32 } from "../src/auth";
 import { VERSION } from "../tests/fixtures";
 
 // Only the outer transport CA is a JS fixture. Network authority, member
@@ -64,7 +64,6 @@ const key = Buffer.from(
   await crypto.subtle.exportKey("pkcs8", serverKeys.privateKey),
 ).toString("base64");
 const pemKey = `-----BEGIN PRIVATE KEY-----\n${key.match(/.{1,64}/g)!.join("\n")}\n-----END PRIVATE KEY-----\n`;
-const route = randomRoute();
 const directory = await mkdtemp(join(tmpdir(), "xrun-workerd-"));
 let runtime: Miniflare | undefined;
 let child: ReturnType<typeof Bun.spawn> | undefined;
@@ -158,7 +157,6 @@ try {
           DATA: { className: "XrunData", useSQLite: true },
         },
         bindings: {
-          RELAY_ROUTE: route,
           XRUN_PROTOCOL_MIN: PROTOCOL.min,
           XRUN_PROTOCOL_MAX: PROTOCOL.max,
         },
@@ -170,13 +168,9 @@ try {
     );
     const linkFile = join(directory, "relay-link");
     // Exercise normal production pin, chain, validity and hostname verification.
-    await writeFile(
-      linkFile,
-      `xrun-relay://${address.host}/${pin}#${route}\n`,
-      {
-        mode: 0o600,
-      },
-    );
+    await writeFile(linkFile, `xrun-relay://${address.host}/${pin}\n`, {
+      mode: 0o600,
+    });
     child = Bun.spawn(
       [
         testSnapshot,

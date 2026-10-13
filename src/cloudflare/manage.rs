@@ -93,16 +93,11 @@ pub(crate) async fn remove(name: &str, no_browser: bool) -> Result<RemovedRelay>
     auth::finish_temporary(result).await
 }
 
-pub(super) async fn remove_with(
-    mut api: Api,
-    directory: &Path,
-    name: &str,
-) -> Result<RemovedRelay> {
+pub(super) async fn remove_with(api: Api, directory: &Path, name: &str) -> Result<RemovedRelay> {
     let mut state = recorded(directory, name)?;
     if state.status == DeploymentStatus::Removed {
         return Ok(removed(name));
     }
-    api.protect(&state.route);
     if let Some(worker) = api.worker(&state.account_id, name).await? {
         state.validate_ownership(&worker)?;
         let migration = worker["migration_tag"].as_str().unwrap_or_default();

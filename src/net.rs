@@ -85,7 +85,7 @@ pub(crate) fn remember(id: &Identity, address: &str) {
 pub async fn websocket_at(address: &str, path: &str, tls: Arc<rustls::ClientConfig>) -> Result<Ws> {
     let url = url::Url::parse(&format!(
         "{}{}",
-        address.replace("https://", "wss://"),
+        address.trim_end_matches('/').replace("https://", "wss://"),
         path
     ))?;
     let tcp = tcp(&url).await?;

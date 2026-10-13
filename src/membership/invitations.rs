@@ -105,7 +105,7 @@ mod tests {
         let (manager, _, _, _) = Manager::create(
             dir.path(),
             "manager1",
-            vec!["https://relay.example/abcdefghijklmnopqrstuvwxyz".into()],
+            vec!["https://relay.example".into()],
             String::new(),
         )?;
         let manager = Arc::new(manager);
@@ -166,7 +166,7 @@ mod tests {
         let (manager, _, _, _) = Manager::create(
             dir.path(),
             "manager1",
-            vec!["https://relay.example/abcdefghijklmnopqrstuvwxyz".into()],
+            vec!["https://relay.example".into()],
             String::new(),
         )?;
         let root = std::fs::read(dir.path().join("root.key"))?;

@@ -10,7 +10,8 @@ const file = process.env.XRUN_TEST_CF_LINK_FILE;
 if (!file)
   throw new Error("Set XRUN_TEST_CF_LINK_FILE for a temporary probe Worker");
 const link = new URL((await readFile(file, "utf8")).trim());
-const prefix = link.pathname.replace(/\/$/, "");
+if (link.pathname !== "/" || link.search || link.hash)
+  throw new Error("Use the probe Worker's HTTPS origin without a path");
 const network = await fixture();
 const target = await network.member(),
   source = await network.member();
@@ -19,7 +20,7 @@ function check(value: unknown, message: string): asserts value {
   if (!value) throw new Error(message);
 }
 async function open(path: string): Promise<RelaySocket> {
-  const socket = new RelaySocket(`wss://${link.host}${prefix}${path}`, VERSION);
+  const socket = new RelaySocket(`wss://${link.host}${path}`, VERSION);
   clients.push(socket);
   await socket.ready;
   return socket;
@@ -49,9 +50,7 @@ interface Snapshot {
   }[];
 }
 async function inspect(): Promise<Snapshot> {
-  const response = await fetch(
-    `https://${link.host}${prefix}/probe/${network.network}`,
-  );
+  const response = await fetch(`https://${link.host}/probe/${network.network}`);
   check(response.ok, `probe returned ${response.status}`);
   return response.json() as Promise<Snapshot>;
 }

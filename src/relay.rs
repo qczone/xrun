@@ -259,7 +259,6 @@ async fn finish(ws: &mut WebSocket, result: Result<()>) {
 pub async fn run(config: ServerConfig) -> Result<()> {
     let _lock = server::instance_lock(&config.data_dir)?;
     let keys = crypto::load_or_create_server(&config)?;
-    let path = route(&config)?;
     let app = Arc::new(App {
         pairing_limits: pairing_limits::PairingLimits::open(
             &config.data_dir.join("pairing.sqlite"),
@@ -289,47 +288,19 @@ pub async fn run(config: ServerConfig) -> Result<()> {
         config.port,
         tokio_rustls::TlsAcceptor::from(keys.tls_config),
         Router::new()
-            .nest(&format!("/{path}"), router)
+            .merge(router)
             .route("/.well-known/xrun/pair/{locator}", get(pairing::route))
             .with_state(app),
     )
     .await
 }
-fn route(config: &ServerConfig) -> Result<String> {
-    std::fs::create_dir_all(&config.data_dir)?;
-    crate::config::restrict_dir(&config.data_dir)?;
-    let lock = std::fs::OpenOptions::new()
-        .read(true)
-        .write(true)
-        .create(true)
-        .truncate(false)
-        .open(config.data_dir.join("route.lock"))?;
-    lock.lock()?;
-    let path = config.data_dir.join("route");
-    match std::fs::read_to_string(&path) {
-        Ok(value) if valid_relay_route(&value) => Ok(value),
-        Ok(_) => bail!(ErrorCode::InvalidRelay.error("invalid local relay route")),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            let value = crypto::random_token();
-            crate::config::atomic_private_write(&path, value.as_bytes())?;
-            Ok(value)
-        }
-        Err(error) => Err(error.into()),
-    }
-}
 pub fn addresses(config: &ServerConfig) -> Result<Vec<String>> {
-    let route = route(config)?;
-    Ok(config
-        .urls()
-        .into_iter()
-        .map(|a| format!("{a}/{route}"))
-        .collect())
+    Ok(config.urls())
 }
 pub fn deployment_link(config: &ServerConfig) -> Result<String> {
     let keys = crypto::load_or_create_server(config)?;
-    let route = route(config)?;
     Ok(format!(
-        "xrun-relay://{}/{}#{route}",
+        "xrun-relay://{}/{}",
         config.addresses.join(","),
         crypto::ca_spki_pin(&keys.ca_pem)?
     ))

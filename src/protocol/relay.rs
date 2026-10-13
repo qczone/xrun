@@ -320,11 +320,3 @@ impl RelayMessage {
         Self::Error { code, message }
     }
 }
-
-/// Validate the 26-character base32 private route shared by both relay implementations.
-pub fn valid_relay_route(value: &str) -> bool {
-    value.len() == 26
-        && value
-            .bytes()
-            .all(|byte| byte.is_ascii_lowercase() || matches!(byte, b'2'..=b'7'))
-}

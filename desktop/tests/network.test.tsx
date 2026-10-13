@@ -34,7 +34,7 @@ test("creating on an owned relay directs the device to a manager invitation", as
     },
     false,
   );
-  fillLink("https://relay.test/secret");
+  fillLink("https://relay.test");
   expect(screen.getByText("将创建网络，本机成为管理设备")).toBeTruthy();
   expect(screen.queryByLabelText("允许管理设备访问本机")).toBeNull();
   await submit();
@@ -200,7 +200,7 @@ test("a completed registration never flashes the secret form after a service fai
     </Profiler>
   );
   const view = render(form());
-  fillLink("https://relay.test/secret");
+  fillLink("https://relay.test");
   fireEvent.change(screen.getByLabelText("本机名称"), {
     target: { value: "mac2" },
   });

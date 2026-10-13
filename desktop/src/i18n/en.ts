@@ -270,7 +270,7 @@ export const en = {
     "Paste the HTTPS address or link from your relay deployment. This device becomes the manager for invitations " +
     "and revocations.",
   "setup.invitationLink": "Invitation link",
-  "setup.relayLink": "Relay deployment link",
+  "setup.relayLink": "Relay address",
   "setup.relayPlaceholder": "https://… or xrun-relay://…",
   "setup.deviceName": "Device name",
   "setup.namePlaceholder": "For example, mac1 or win1",

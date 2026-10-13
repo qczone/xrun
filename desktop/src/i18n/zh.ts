@@ -241,7 +241,7 @@ export const zh = {
   "setup.createHint":
     "粘贴中转部署完成后提供的 HTTPS 地址或部署链接。 创建后，本机成为管理设备，负责邀请和撤销成员。",
   "setup.invitationLink": "邀请链接",
-  "setup.relayLink": "中转部署链接",
+  "setup.relayLink": "中转地址",
   "setup.relayPlaceholder": "https://… 或 xrun-relay://…",
   "setup.deviceName": "本机名称",
   "setup.namePlaceholder": "例如 mac1 或 win1",

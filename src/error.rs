@@ -43,6 +43,7 @@ codes! {
     ConnectFailed => "CONNECT_FAILED",
     ConnectTimeout => "CONNECT_TIMEOUT",
     CredentialStoreUnavailable => "CREDENTIAL_STORE_UNAVAILABLE",
+    OAuthInvalidScope => "OAUTH_INVALID_SCOPE",
     OAuthRevocationFailed => "OAUTH_REVOCATION_FAILED",
     ControlTimeout => "CONTROL_TIMEOUT",
     DaemonChanged => "DAEMON_CHANGED",

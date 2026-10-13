@@ -199,14 +199,13 @@ impl SignedRoster {
                 || url.host_str().is_none()
                 || !url.username().is_empty()
                 || url.password().is_some()
-                || !(url.path() == "/"
-                    || crate::protocol::valid_relay_route(url.path().trim_start_matches('/')))
+                || url.path() != "/"
                 || url.query().is_some()
                 || url.fragment().is_some()
             {
                 bail!(
                     ErrorCode::InvalidRoster
-                        .error("expected HTTPS relay addresses with an optional random route")
+                        .error("expected HTTPS relay hosts with an optional port and no path")
                 )
             }
         }

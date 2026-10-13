@@ -10,10 +10,8 @@ import {
   test,
 } from "bun:test";
 import { Miniflare, convertV4MiniflareOptions } from "miniflare";
-import { randomRoute } from "../src/auth";
 import { fixture as makeFixture, VERSION } from "./fixtures";
 import { RELAY_OBJECT } from "../src/routes";
-const secret = randomRoute();
 // Alarm delivery and individual socket reads each have a 5-second deadline.
 // The containing regression needs room to finish both and report their errors.
 const ALARM_TEST_TIMEOUT = 15_000;
@@ -53,7 +51,6 @@ beforeEach(async () => {
       compatibilityDate: "2026-10-03",
       durableObjects: { NETWORKS: { className: "TestRelay", useSQLite: true } },
       bindings: {
-        RELAY_ROUTE: secret,
         XRUN_PROTOCOL_MIN: PROTOCOL.min,
         XRUN_PROTOCOL_MAX: PROTOCOL.max,
         XRUN_TEST_PROOF_GATE: gate.url.origin,
@@ -70,7 +67,7 @@ afterAll(() => {
   gate?.stop(true);
 });
 async function open(path: string): Promise<Socket> {
-  const response = await runtime.dispatchFetch(`${origin}/${secret}${path}`, {
+  const response = await runtime.dispatchFetch(`${origin}${path}`, {
     headers: {
       Upgrade: "websocket",
       "X-Xrun-Version": VERSION,
@@ -303,7 +300,7 @@ test("concurrent valid claims choose one persistent manager and reject every for
     `attach/${device}/${"a".repeat(32)}/${"b".repeat(32)}`,
   ]) {
     const response = await upgradeResponse(
-      `${origin}/${secret}/networks/${foreign}/${action}`,
+      `${origin}/networks/${foreign}/${action}`,
       { "X-Xrun-Version": VERSION, "X-Xrun-Protocol": PROTOCOL_HEADER },
     );
     expect(response.status).toBe(403);
@@ -672,7 +669,7 @@ test("idle authentication sockets are capped and client headers cannot bypass th
     expect((await socket.json()).type).toBe("challenge");
     waiting.push(socket);
   }
-  const response = await runtime.dispatchFetch(`${origin}/${secret}${path}`, {
+  const response = await runtime.dispatchFetch(`${origin}${path}`, {
     headers: {
       Upgrade: "websocket",
       "X-Xrun-Version": VERSION,
@@ -686,14 +683,14 @@ test("idle authentication sockets are capped and client headers cannot bypass th
 });
 
 // Runs production relay handlers in workerd; only alarm controls are test-specific.
-test("secret route, protocol and proof protect existing device routes", async () => {
+test("origin routing, protocol and proof protect existing device routes", async () => {
   expect(
     (await runtime.dispatchFetch(`${origin}/wrong/networks/probe/status`))
       .status,
   ).toBe(404);
   expect(
     (
-      await runtime.dispatchFetch(`${origin}/${secret}/networks/probe/status`, {
+      await runtime.dispatchFetch(`${origin}/networks/probe/status`, {
         headers: {
           Upgrade: "websocket",
           "X-Xrun-Version": VERSION,

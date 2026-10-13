@@ -6,7 +6,6 @@ import { PROTOCOL, PROTOCOL_HEADER } from "../src/protocol";
 import { RELAY_OBJECT } from "../src/routes";
 import { SESSIONS_PER_SOURCE } from "../src/limits";
 import { region, edgeRegion } from "../src/regions";
-const secret = "a".repeat(26);
 let runtime: Miniflare;
 let origin: string;
 beforeEach(async () => {
@@ -27,7 +26,6 @@ beforeEach(async () => {
         DATA: { className: "TestShardData", useSQLite: true },
       },
       bindings: {
-        RELAY_ROUTE: secret,
         XRUN_PROTOCOL_MIN: PROTOCOL.min,
         XRUN_PROTOCOL_MAX: PROTOCOL.max,
         XRUN_RELAY_REGION: "apac",
@@ -40,16 +38,13 @@ afterEach(async () => {
   await runtime?.dispose();
 });
 async function response(path: string) {
-  return runtime.dispatchFetch(
-    `${origin}${path.startsWith("/.well-known/") ? "" : `/${secret}`}${path}`,
-    {
-      headers: {
-        Upgrade: "websocket",
-        "X-Xrun-Version": VERSION,
-        "X-Xrun-Protocol": PROTOCOL_HEADER,
-      },
+  return runtime.dispatchFetch(`${origin}${path}`, {
+    headers: {
+      Upgrade: "websocket",
+      "X-Xrun-Version": VERSION,
+      "X-Xrun-Protocol": PROTOCOL_HEADER,
     },
-  );
+  });
 }
 async function open(path: string) {
   const reply = await response(path);

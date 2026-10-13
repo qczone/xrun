@@ -43,7 +43,6 @@ export interface Env {
   NETWORKS: DurableObjectNamespace<XrunRelay>;
   DATA?: DurableObjectNamespace<XrunData>;
   XRUN_RELAY_REGION?: DurableObjectLocationHint;
-  RELAY_ROUTE: string;
   XRUN_PROTOCOL_MIN: number;
   XRUN_PROTOCOL_MAX: number;
 }
@@ -493,7 +492,7 @@ export class XrunRelay extends DurableObject<Env> {
             target: owner.manager_id,
             path: `/networks/${owner.network_id}/connect/${owner.manager_id}`,
           }
-        : route(pathname, this.env.RELAY_ROUTE);
+        : route(pathname);
     if (!parsed) return new Response("Not found", { status: 404 });
     const probe = parsed.network === "probe" && parsed.action === "status";
     try {

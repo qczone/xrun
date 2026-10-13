@@ -1,4 +1,4 @@
-use crate::{config, error::ErrorCode, protocol::valid_relay_route};
+use crate::{config, error::ErrorCode};
 use anyhow::{Result, bail};
 use serde::{Deserialize, Serialize};
 use std::{
@@ -44,7 +44,6 @@ pub(super) fn validate_account(account: &str) -> Result<()> {
 pub(super) struct Deployment {
     pub name: String,
     pub account_id: String,
-    pub route: String,
     pub ownership: String,
     pub url: Option<String>,
     #[serde(default)]
@@ -79,8 +78,11 @@ impl Deployment {
         };
         validate_account(&value.account_id)?;
         if value.name != name
-            || !valid_relay_route(&value.route)
-            || !valid_relay_route(&value.ownership)
+            || value.ownership.len() != 26
+            || !value
+                .ownership
+                .bytes()
+                .all(|byte| byte.is_ascii_lowercase() || matches!(byte, b'2'..=b'7'))
         {
             bail!(ErrorCode::InvalidConfig.error("invalid Cloudflare deployment record"))
         }

@@ -10,21 +10,19 @@ export type { Env } from "./relay";
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
-    const parsed = route(url.pathname, env.RELAY_ROUTE);
+    const parsed = route(url.pathname);
     const pairing = pairingLocator(url.pathname);
-    const publicData =
+    const data =
       /^\/\.well-known\/xrun\/data\/(net_[a-z2-7]{52})\/([a-f0-9]{32})\/(source|target)\/([a-f0-9]{32})$/.exec(
         url.pathname,
-      );
-    const dataRoute =
-      url.pathname.startsWith(`/${env.RELAY_ROUTE}/`) &&
-      /^\/networks\/net_[a-z2-7]{52}\/data\/[a-f0-9]{32}\/(source|target)\/[a-f0-9]{32}$/.test(
-        url.pathname.slice(env.RELAY_ROUTE.length + 1),
+      ) ??
+      /^\/networks\/(net_[a-z2-7]{52})\/data\/([a-f0-9]{32})\/(source|target)\/([a-f0-9]{32})$/.exec(
+        url.pathname,
       );
     if (
       request.method !== "GET" ||
       url.search ||
-      (!parsed && !pairing && !dataRoute && !publicData)
+      (!parsed && !pairing && !data)
     )
       return new Response("Not found", { status: 404 });
     const supported = {
@@ -60,11 +58,6 @@ export default {
     const hint =
       region(env.XRUN_RELAY_REGION) ?? edgeRegion(request.cf?.continent);
     if (hint) headers.set("X-Xrun-Region", hint);
-    const data =
-      publicData ??
-      /^\/networks\/(net_[a-z2-7]{52})\/data\/([a-f0-9]{32})\/(source|target)\/([a-f0-9]{32})$/.exec(
-        url.pathname.slice(env.RELAY_ROUTE.length + 1),
-      );
     if (data) {
       if (
         !env.DATA ||

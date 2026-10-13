@@ -8,7 +8,6 @@ pub(super) struct Api {
     client: Client,
     origin: String,
     token: String,
-    secrets: Vec<String>,
 }
 
 impl Api {
@@ -20,7 +19,6 @@ impl Api {
                 .build()?,
             origin: "https://api.cloudflare.com/client/v4".into(),
             token,
-            secrets: vec![],
         })
     }
 
@@ -28,10 +26,6 @@ impl Api {
     pub(super) fn test_origin(mut self, origin: String) -> Self {
         self.origin = origin;
         self
-    }
-
-    pub(super) fn protect(&mut self, secret: &str) {
-        self.secrets.push(secret.to_owned());
     }
 
     pub(super) async fn json(
@@ -45,8 +39,15 @@ impl Api {
             .map(|value| value.expect("required API result"))
     }
 
-    pub(super) async fn optional(&self, path: &str) -> Result<Option<Value>> {
-        self.request(Method::GET, path, None, None, true).await
+    pub(super) async fn workers_subdomain(&self, account: &str) -> Result<Option<Value>> {
+        self.request(
+            Method::GET,
+            &format!("/accounts/{account}/workers/subdomain"),
+            None,
+            None,
+            true,
+        )
+        .await
     }
 
     pub(super) async fn worker(&self, account: &str, name: &str) -> Result<Option<Value>> {
@@ -90,7 +91,7 @@ impl Api {
         path: &str,
         body: Option<Value>,
         upload: Option<(String, String)>,
-        missing_ok: bool,
+        missing_subdomain_ok: bool,
     ) -> Result<Option<Value>> {
         let mut request = self
             .client
@@ -114,12 +115,17 @@ impl Api {
             bytes.extend_from_slice(&chunk);
         }
         let value: Value = serde_json::from_slice(&bytes).unwrap_or(json!({}));
-        if missing_ok
-            && matches!(status, StatusCode::NOT_FOUND | StatusCode::BAD_REQUEST)
-            && value["success"] == false
-            && value["errors"].as_array().is_some_and(|errors| {
-                !errors.is_empty() && errors.iter().all(|error| error["code"] == 10007)
-            })
+        let only_error = |code: u32| {
+            value["success"] == false
+                && value["errors"].as_array().is_some_and(|errors| {
+                    !errors.is_empty() && errors.iter().all(|error| error["code"] == code)
+                })
+        };
+        let subdomain_required = status == StatusCode::FORBIDDEN && only_error(10063);
+        if missing_subdomain_ok
+            && (subdomain_required
+                || (matches!(status, StatusCode::NOT_FOUND | StatusCode::BAD_REQUEST)
+                    && only_error(10007)))
         {
             return Ok(None);
         }
@@ -141,12 +147,15 @@ impl Api {
                         .join("; ")
                 })
                 .unwrap_or_default();
-            for secret in std::iter::once(&self.token).chain(&self.secrets) {
-                if !secret.is_empty() {
-                    details = details.replace(secret, "[redacted]");
-                }
+            if !self.token.is_empty() {
+                details = details.replace(&self.token, "[redacted]");
             }
-            let code = if matches!(status, StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN) {
+            let code = if subdomain_required {
+                details.push_str(
+                    "; open Cloudflare Workers & Pages to initialize workers.dev, then retry",
+                );
+                ErrorCode::InvalidConfig
+            } else if matches!(status, StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN) {
                 ErrorCode::Unauthenticated
             } else {
                 ErrorCode::HttpError
