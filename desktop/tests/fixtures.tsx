@@ -307,6 +307,13 @@ export function openMemberActions(name: string) {
   if (!summary.closest("details")!.open) fireEvent.click(summary);
 }
 
+/** Labels of the inline quick actions on an online device row. */
+export const deviceAction = {
+  command: (name: string) => `在 ${name} 上执行命令`,
+  files: (name: string) => `与 ${name} 传输文件`,
+  screenshot: (name: string) => `截取 ${name} 的屏幕`,
+};
+
 export async function selectOption(control: HTMLElement, value: string) {
   if (control.getAttribute("aria-expanded") !== "true")
     fireEvent.click(control);

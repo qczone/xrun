@@ -11,6 +11,7 @@ import { ErrorNotice } from "../../components/ErrorNotice";
 import { Select } from "../../components/Select";
 import { errorText } from "../../errors";
 import { t } from "../../i18n";
+import { Icon } from "../../components/Icon";
 
 export function ScreenshotDialog({
   device,
@@ -54,8 +55,14 @@ export function ScreenshotDialog({
     >
       <header className="dialog-heading">
         <h2>{t("capture.title", { name: device.name })}</h2>
-        <button onClick={close} disabled={busy} aria-label={t("common.close")}>
-          {t("common.close")}
+        <button
+          className="icon-button"
+          onClick={close}
+          disabled={busy}
+          aria-label={t("common.close")}
+          title={t("common.close")}
+        >
+          <Icon name="close" />
         </button>
       </header>
       <form

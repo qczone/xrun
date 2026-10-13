@@ -14,9 +14,6 @@ interface Props {
   toggle: () => void;
   close: () => void;
   revoke: () => void;
-  runCommand: () => void;
-  captureScreen: () => void;
-  transferFile: () => void;
 }
 export function DeviceMenu({
   device,
@@ -26,9 +23,6 @@ export function DeviceMenu({
   toggle,
   close,
   revoke,
-  runCommand,
-  captureScreen,
-  transferFile,
 }: Props) {
   const { busy } = useOperations();
   const menu = useRef<HTMLDetailsElement>(null);
@@ -103,9 +97,11 @@ export function DeviceMenu({
         <Icon name="more" />
       </summary>
       <div ref={body} className="device-more-body">
-        <span className="field-help">{t("common.deviceId")}</span>
-        <Identifier value={device.device_id} label={t("common.deviceId")} />
         <dl className="device-facts">
+          <dt>{t("common.deviceId")}</dt>
+          <dd>
+            <Identifier value={device.device_id} label={t("common.deviceId")} />
+          </dd>
           {device.connection && (
             <>
               <dt>{t("devices.connection")}</dt>
@@ -139,36 +135,6 @@ export function DeviceMenu({
             </>
           )}
         </dl>
-        <button
-          className="remote-command-entry"
-          disabled={busy || device.revoked || !device.online}
-          onClick={() => {
-            close();
-            runCommand();
-          }}
-        >
-          <Icon name="terminal" />
-          {t("remote.open")}
-        </button>
-        <button
-          disabled={busy || device.revoked || !device.online}
-          onClick={() => {
-            close();
-            captureScreen();
-          }}
-        >
-          <Icon name="monitor" />
-          {t("capture.open")}
-        </button>
-        <button
-          disabled={busy || device.revoked || !device.online}
-          onClick={() => {
-            close();
-            transferFile();
-          }}
-        >
-          {t("files.open")}
-        </button>
         {manager && !device.revoked && device.device_id !== managerId && (
           <button
             className="danger-button"

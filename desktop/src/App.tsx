@@ -2,7 +2,7 @@ import { useCallback, useRef, useState } from "react";
 import type { DesktopPage } from "./api";
 import { Icon, IconDefinitions, type IconName } from "./components/Icon";
 import { ErrorNotice } from "./components/ErrorNotice";
-import { LocalDeviceBar } from "./components/LocalDeviceBar";
+import { LocalDeviceCard, StatusBanner } from "./components/LocalDevice";
 import { t, useLanguage } from "./i18n";
 import { Logo } from "./components/Logo";
 import { Devices } from "./pages/Devices";
@@ -101,20 +101,16 @@ export function App() {
             </button>
           ))}
         </nav>
-        <div className="sidebar-bottom">
-          <span className="version">{status && status.local.version}</span>
-          <Icon name="lock" />
-        </div>
-      </aside>
-      <div className="workspace">
         {status?.local.joined && (
-          <LocalDeviceBar
+          <LocalDeviceCard
             status={status}
-            active={visible}
             openNetworkSettings={openNetworkSettings}
           />
         )}
+      </aside>
+      <div className="workspace">
         <main ref={main} aria-busy={busy}>
+          {status?.local.joined && <StatusBanner status={status} />}
           {statusError && statusError !== error?.detail && (
             <ErrorNotice
               title={t("error.status")}
@@ -168,6 +164,7 @@ export function App() {
         </main>
         {toast && (
           <div id="toast" className="toast" role="status">
+            <Icon name="check" />
             {toast}
           </div>
         )}

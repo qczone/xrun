@@ -8,17 +8,17 @@ import {
 } from "@testing-library/react";
 import {
   commandJob,
+  deviceAction,
   event,
   fixture,
-  openMemberActions,
   selectOption,
 } from "./fixtures";
 import type { CommandJob } from "../src/api";
 
 const openCommand = async (name: string) => {
-  openMemberActions(name);
-  const menu = screen.getByLabelText(`${name} 的更多操作`).closest("details")!;
-  fireEvent.click(within(menu).getByRole("button", { name: "执行命令" }));
+  fireEvent.click(
+    screen.getByRole("button", { name: deviceAction.command(name) }),
+  );
   return await screen.findByRole("dialog", { name: `在 ${name} 执行命令` });
 };
 
@@ -177,31 +177,19 @@ test("remote cancellation requires confirmation and retains the acknowledged sta
 
 test("offline and revoked devices cannot initiate remote commands", async () => {
   const { devices, poll } = await fixture();
+  const name = devices[0].name;
+  expect(
+    screen.getByRole("button", { name: deviceAction.command(name) }),
+  ).toBeTruthy();
   devices[0].online = false;
   await poll();
-  openMemberActions(devices[0].name);
-  expect(
-    (
-      within(
-        screen
-          .getByLabelText(`${devices[0].name} 的更多操作`)
-          .closest("details")!,
-      ).getByRole("button", { name: "执行命令" }) as HTMLButtonElement
-    ).disabled,
-  ).toBe(true);
+  for (const label of Object.values(deviceAction))
+    expect(screen.queryByRole("button", { name: label(name) })).toBeNull();
   devices[0].online = true;
   devices[0].revoked = true;
   await poll();
-  openMemberActions(devices[0].name);
-  expect(
-    (
-      within(
-        screen
-          .getByLabelText(`${devices[0].name} 的更多操作`)
-          .closest("details")!,
-      ).getByRole("button", { name: "执行命令" }) as HTMLButtonElement
-    ).disabled,
-  ).toBe(true);
+  for (const label of Object.values(deviceAction))
+    expect(screen.queryByRole("button", { name: label(name) })).toBeNull();
 });
 
 test("a refused command explains where to grant access and remains editable", async () => {

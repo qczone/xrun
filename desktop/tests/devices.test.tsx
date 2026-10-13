@@ -1,6 +1,6 @@
 import { expect, spyOn, test } from "bun:test";
 import { act, fireEvent, screen, waitFor } from "@testing-library/react";
-import { fixture, openMemberActions } from "./fixtures";
+import { deviceAction, fixture, openMemberActions } from "./fixtures";
 import type { Device } from "../src/api";
 import { emit } from "@tauri-apps/api/event";
 
@@ -50,13 +50,18 @@ test("members can open command, file and screenshot actions for an online manage
     devices: () => ({ devices: [device], server_error: null }),
   });
   await page("设备");
-  openMemberActions("manager1");
-  for (const name of ["执行命令", "传输文件", "截图"]) {
+  for (const label of Object.values(deviceAction)) {
     expect(
-      (screen.getByRole("button", { name }) as HTMLButtonElement).disabled,
+      (
+        screen.getByRole("button", {
+          name: label("manager1"),
+        }) as HTMLButtonElement
+      ).disabled,
     ).toBe(false);
   }
-  fireEvent.click(screen.getByRole("button", { name: "截图" }));
+  fireEvent.click(
+    screen.getByRole("button", { name: deviceAction.screenshot("manager1") }),
+  );
   await screen.findByRole("dialog", { name: "截图 · manager1" });
   expect(
     (screen.getByRole("button", { name: "截图并保存" }) as HTMLButtonElement)

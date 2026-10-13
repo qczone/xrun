@@ -5,6 +5,7 @@ import { Select } from "./Select";
 import { ErrorNotice } from "./ErrorNotice";
 import { errorText } from "../errors";
 import { t } from "../i18n";
+import { Icon } from "./Icon";
 
 type AuthorityAction = "backup" | "restore" | "migrate";
 export function AuthoritySettings({ status }: { status: Status | null }) {
@@ -14,29 +15,33 @@ export function AuthoritySettings({ status }: { status: Status | null }) {
   useEffect(() => setMode(null), [status?.network?.network_id, manager]);
   return (
     <section className="authority-settings">
-      <h3>{t("authority.title")}</h3>
-      <p className="field-help">{t("authority.description")}</p>
-      <div className="hero-actions">
-        {manager && (
-          <button disabled={busy} onClick={() => setMode("backup")}>
-            {t("authority.backup")}
+      <div className="setting-row">
+        <span>
+          <strong>{t("authority.title")}</strong>
+          <small>{t("authority.description")}</small>
+          {status?.local.daemon_running && (
+            <small>{t("authority.stopFirst")}</small>
+          )}
+        </span>
+        <div className="row-actions">
+          {manager && (
+            <button disabled={busy} onClick={() => setMode("backup")}>
+              {t("authority.backup")}
+            </button>
+          )}
+          {manager && (
+            <button disabled={busy} onClick={() => setMode("migrate")}>
+              {t("authority.migrate")}
+            </button>
+          )}
+          <button
+            disabled={busy || !!status?.local.daemon_running}
+            onClick={() => setMode("restore")}
+          >
+            {t("authority.restore")}
           </button>
-        )}
-        {manager && (
-          <button disabled={busy} onClick={() => setMode("migrate")}>
-            {t("authority.migrate")}
-          </button>
-        )}
-        <button
-          disabled={busy || !!status?.local.daemon_running}
-          onClick={() => setMode("restore")}
-        >
-          {t("authority.restore")}
-        </button>
+        </div>
       </div>
-      {status?.local.daemon_running && (
-        <p className="field-help">{t("authority.stopFirst")}</p>
-      )}
       {mode && (
         <AuthorityDialog
           mode={mode}
@@ -101,8 +106,14 @@ function AuthorityDialog({
     >
       <div className="dialog-heading">
         <h2>{t(`authority.${mode}`)}</h2>
-        <button disabled={busy} onClick={close}>
-          {t("common.close")}
+        <button
+          className="icon-button"
+          disabled={busy}
+          aria-label={t("common.close")}
+          title={t("common.close")}
+          onClick={close}
+        >
+          <Icon name="close" />
         </button>
       </div>
       {failure && (

@@ -27,17 +27,9 @@ function Trend({ report }: { report: TrafficReport }) {
   const width = 600 / Math.max(1, report.daily.length);
   return (
     <>
-      <div className="traffic-legend">
-        <span className="traffic-ingress">
-          {t(report.device_id ? "traffic.sent" : "traffic.ingress")}
-        </span>
-        <span className="traffic-egress">
-          {t(report.device_id ? "traffic.received" : "traffic.egress")}
-        </span>
-        {report.period === "all" && (
-          <span className="muted">{t("traffic.last30Days")}</span>
-        )}
-      </div>
+      {report.period === "all" && (
+        <p className="traffic-legend">{t("traffic.last30Days")}</p>
+      )}
       <svg
         className="traffic-chart"
         viewBox="0 0 600 100"
@@ -103,14 +95,14 @@ export function TrafficDetails({
         <h2>{t(manager ? "traffic.network" : "traffic.device")}</h2>
         <div className="heading-actions">
           <div
-            className="traffic-periods filter-tabs"
+            className="segmented"
             role="group"
             aria-label={t("traffic.period")}
           >
             {(["today", "month", "all"] as const).map((value) => (
               <button
                 key={value}
-                className={`filter-tab ${period === value ? "selected" : ""}`}
+                className={period === value ? "selected" : ""}
                 aria-pressed={period === value}
                 onClick={() => traffic.changePeriod(value)}
               >

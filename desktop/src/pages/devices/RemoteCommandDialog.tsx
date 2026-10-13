@@ -212,12 +212,13 @@ export function RemoteCommandDialog({
           {t("remote.title", { name: device.name })}
         </h2>
         <button
-          className="text-button"
+          className="icon-button"
           disabled={busy}
           aria-label={t("remote.close")}
+          title={t("common.close")}
           onClick={close}
         >
-          {t("common.close")}
+          <Icon name="close" />
         </button>
       </div>
       <p className="field-help">{t("remote.direction")}</p>

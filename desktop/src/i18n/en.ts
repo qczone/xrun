@@ -11,6 +11,7 @@ export const en = {
   "devices.relay": "Relay",
 
   "files.open": "Transfer files",
+  "files.openNamed": "Transfer files with {name}",
   "files.title": "Files · {name}",
   "files.direction": "Direction",
   "files.upload": "Upload",
@@ -38,6 +39,7 @@ export const en = {
   "settings.compressionNone": "Off",
   "operation.save_traffic_compression": "Saving bandwidth settings…",
   "capture.open": "Screenshot",
+  "capture.openNamed": "Take a screenshot of {name}",
   "capture.title": "Screenshot · {name}",
   "capture.preset": "Image size",
   "capture.original": "Original PNG",
@@ -238,6 +240,7 @@ export const en = {
   "status.connectedHint":
     "The background service is running and connected to the relay.",
   "status.running": "Running",
+  "status.starting": "Starting…",
   "status.olderServiceHint":
     "An older service is running. Update it to see live connection status.",
   "status.connecting": "Connecting",
@@ -246,7 +249,6 @@ export const en = {
   "status.systemApproval": "Awaiting system approval",
   "status.noNetwork": "No network joined",
   "status.noService": "Service stopped",
-  "status.unavailable": "Status unavailable",
   "status.reconnecting": "Reconnecting",
   "status.relayDetails": "View relay details",
   "format.unknownOs": "Unknown OS",
@@ -503,17 +505,18 @@ export const en = {
   "settings.dataDir": "Local data directory",
   "settings.dataHint": "Stores identity, permissions, task records and logs",
   "common.updating": "Updating…",
-  "local.more": "More device actions",
   "local.pauseAccess": "Pause access",
   "local.resumeAccess": "Resume access",
   "local.approvalTitle": "System approval required",
   "local.approvalInstructions":
     "Allow xrun in System Settings → General → Login Items, then start the service.",
-  "local.serviceState": "Service: {state}",
+  "banner.stoppedTitle": "Background service stopped",
+  "banner.stoppedText":
+    "Other devices cannot reach this device until it starts.",
+  "banner.pausedTitle": "Remote access paused",
   "setup.connectTitle": "Connect your devices",
   "setup.connectDescription":
     "Join a network to connect your devices with xrun.",
-  "devices.description": "Manage which devices can access this device.",
   "devices.filter": "Filter devices",
   "devices.all": "All",
   "devices.online": "Online",
@@ -524,7 +527,6 @@ export const en = {
   "devices.lastSeen": "Last seen",
   "devices.infoPending": "Awaiting device info",
   "devices.name": "Device name",
-  "devices.state": "Status",
   "devices.noMatch": "No matching devices.",
   "devices.permissionSummary":
     "Membership and permission to access this device are managed separately.",
@@ -685,6 +687,7 @@ export const en = {
   "cloudflare.authorizationFailed":
     "Could not complete the authorization action.",
   "remote.open": "Run command",
+  "remote.openNamed": "Run a command on {name}",
   "remote.title": "Run a command on {name}",
   "remote.close": "Close remote command",
   "remote.direction":

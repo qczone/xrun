@@ -1,47 +1,33 @@
+.setup-heading {
+  justify-content: center;
+  text-align: center;
+  margin: 12px 0 24px;
+}
+.setup-heading h1 {
+  font-size: 22px;
+}
 .network-setup {
   max-width: 440px;
-  margin: 28px auto 0;
+  margin: 0 auto;
 }
 .network-setup-form {
-  margin-top: 22px;
+  margin-top: 4px;
 }
 .setup-tabs {
   display: flex;
-  gap: 3px;
-  padding: 3px;
-  border-radius: 9px;
-  background: var(--sidebar);
-  margin-bottom: 24px;
+  margin-bottom: 18px;
 }
-.setup-tabs button {
+.segmented.setup-tabs > button {
   flex: 1;
-  min-height: 32px;
-  padding: 5px 9px;
-  font-size: 12px;
-  border-color: transparent;
-  border-radius: 6px;
-  color: var(--muted);
-  background: transparent;
-}
-.setup-tabs button.selected {
-  background: var(--card);
-  border-color: var(--border);
-  color: var(--text);
-}
-.setup-tabs button:hover:not(:disabled) {
-  border-color: transparent;
-}
-.setup-tabs button.selected:hover:not(:disabled) {
-  background: var(--card);
-  border-color: var(--control-border-hover);
 }
 .setup-description {
   color: var(--muted);
-  font-size: 12px;
+  font-size: 12.5px;
   line-height: 1.7;
+  margin: 0 0 14px;
 }
 .setup-help {
-  margin: 15px 0;
+  margin: 16px 0 0;
   color: var(--muted);
   font-size: 12px;
 }
@@ -72,19 +58,20 @@
 }
 .network-setup-form > label {
   display: block;
-  font-size: 12px;
-  margin: 16px 0 7px;
+  font-size: 12.5px;
+  margin: 16px 0 6px;
+}
+.network-setup-form > label:first-child {
+  margin-top: 0;
 }
 .network-setup-form > .invitation-option {
   display: flex;
+  margin-top: 18px;
+  font-size: 13px;
 }
 .setup-advanced {
   font-size: 12px;
-  margin: 20px 0;
-}
-.setup-advanced summary {
-  color: var(--muted);
-  cursor: pointer;
+  margin: 18px 0 0;
 }
 .setup-advanced label {
   display: block;
@@ -95,19 +82,9 @@
   padding-left: 12px;
   font-size: 12px;
 }
-.cloudflare-relays h3,
-.authority-settings h3 {
-  font-size: 12px;
-  margin: 0;
-}
 
 .access-code-input {
   font-size: 1.35rem;
   letter-spacing: 0.14em;
   font-weight: 600;
-}
-
-.invitation-result input[type="text"] {
-  width: 100%;
-  margin: 6px 0 12px;
 }

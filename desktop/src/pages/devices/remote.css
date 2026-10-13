@@ -1,10 +1,3 @@
-.remote-command-entry {
-  display: flex;
-  align-items: center;
-  gap: 7px;
-  width: 100%;
-  margin-top: 12px;
-}
 .remote-command-dialog,
 .authority-dialog {
   width: min(620px, calc(100vw - 40px));
@@ -23,16 +16,12 @@
   font-size: 12px;
 }
 .remote-command-form textarea {
-  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  font-family: var(--font-mono);
   line-height: 1.6;
 }
 .remote-options {
   font-size: 12px;
   margin-top: 16px;
-}
-.remote-options summary {
-  color: var(--muted);
-  cursor: pointer;
 }
 .remote-result {
   margin-top: 20px;
@@ -46,19 +35,20 @@
 }
 .remote-output {
   margin: 12px 0;
-  padding: 14px;
+  padding: 10px 12px;
   min-height: 100px;
   max-height: 300px;
   overflow: auto;
   border: 1px solid var(--border);
-  border-radius: 6px;
-  background: var(--sidebar);
-  font-size: 12px;
+  border-radius: var(--radius);
+  background: var(--log-bg);
+  color: var(--log-text);
+  font: 11.5px/1.7 var(--font-mono);
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
 .remote-output .stderr {
-  color: var(--danger);
+  color: var(--stderr);
 }
 @media (max-width: 600px) {
   .remote-command-dialog,
@@ -68,46 +58,88 @@
   }
 }
 
-.screenshot-dialog form,
-.capture-options,
+.file-dialog,
+.screenshot-dialog {
+  width: min(480px, calc(100vw - 40px));
+}
+.screenshot-dialog form {
+  display: grid;
+  gap: 8px;
+}
+.screenshot-dialog form > label,
+.capture-options > label {
+  margin: 0;
+}
+.screenshot-dialog form > .field-help {
+  margin: 4px 0 8px;
+}
+.capture-options {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  align-items: center;
+  gap: 10px 14px;
+  margin: 6px 0 2px;
+}
+.capture-options .select-field {
+  width: 100%;
+}
 .capture-result {
   display: grid;
-  gap: 12px;
-}
-.screenshot-dialog .dialog-heading {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-}
-.capture-result {
+  gap: 6px;
   margin-top: 16px;
+  padding: 12px 14px;
+  border-radius: var(--radius);
+  background: var(--surface);
+  font-size: 12.5px;
   overflow-wrap: anywhere;
+}
+.capture-result p {
+  margin: 0;
+}
+.capture-result small {
+  color: var(--muted);
 }
 .capture-result img {
   width: 100%;
   max-height: 55vh;
   object-fit: contain;
   border: 1px solid var(--border);
-  border-radius: 10px;
+  border-radius: var(--radius);
+  background: var(--card);
 }
-.file-direction,
+.file-direction {
+  display: flex;
+  margin: 0 0 16px;
+}
+.file-direction > label {
+  flex: 1;
+}
 .file-options {
   display: flex;
   flex-wrap: wrap;
-  gap: 16px;
-  margin: 12px 0;
+  gap: 18px;
+  margin: 14px 0 0;
 }
-.file-direction label,
 .file-options label {
   display: flex;
   align-items: center;
   gap: 8px;
+  margin: 0;
+  font-weight: 400;
+}
+.file-dialog form > .primary {
+  width: 100%;
+  margin-top: 18px;
 }
 .file-recovery {
   border-top: 1px solid var(--border);
   margin-top: 16px;
   padding-top: 12px;
+}
+.file-recovery h3 {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
 }
 .file-recovery-row {
   display: flex;

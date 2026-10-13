@@ -73,9 +73,7 @@ export function InvitePanel({ active, status }: Props) {
   };
   return (
     <section className="invite-content" aria-label={t("invite.options")}>
-      <div className="section-title">
-        <p>{t("invite.description")}</p>
-      </div>
+      <p className="dialog-lead">{t("invite.description")}</p>
       <label className="invitation-option">
         <input
           type="checkbox"
@@ -88,7 +86,7 @@ export function InvitePanel({ active, status }: Props) {
         />
         {t("invite.managerAccess")}
       </label>
-      <p className="field-help">
+      <p className="field-help invitation-option-help">
         {status?.local.allow_all
           ? t("invite.allowAllHint")
           : t("invite.registrationHint")}
@@ -107,7 +105,11 @@ export function InvitePanel({ active, status }: Props) {
       {!status?.local.daemon_connected && (
         <p className="field-help">{t("invite.connectFirst")}</p>
       )}
-      {expired && <p role="status">{t("invite.expired")}</p>}
+      {expired && (
+        <p className="field-help" role="status">
+          {t("invite.expired")}
+        </p>
+      )}
       {invitation && (
         <div className="invitation-result">
           {invitation.address && invitation.code ? (

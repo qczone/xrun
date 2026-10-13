@@ -9,11 +9,11 @@ button {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 7px;
-  min-height: 34px;
-  padding: 6px 12px;
-  border: 1px solid var(--border);
-  border-radius: 8px;
+  gap: 6px;
+  min-height: 32px;
+  padding: 5px 12px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
   background: var(--card);
   color: var(--text);
   font-weight: 500;
@@ -25,7 +25,13 @@ button {
     background-color 0.15s,
     border-color 0.15s,
     color 0.15s,
+    box-shadow 0.15s,
     opacity 0.15s;
+}
+
+button .icon {
+  width: 15px;
+  height: 15px;
 }
 
 button:hover:not(:disabled) {
@@ -46,6 +52,7 @@ button:disabled {
   background: var(--accent);
   border-color: var(--accent);
   color: var(--accent-contrast);
+  box-shadow: var(--shadow-sm);
 }
 
 .primary:hover:not(:disabled) {
@@ -60,7 +67,8 @@ button:disabled {
 }
 
 .subtle {
-  background: var(--sidebar);
+  background: var(--surface);
+  border-color: transparent;
 }
 
 .text-button {
@@ -85,9 +93,9 @@ button:disabled {
 }
 
 .icon-button {
-  width: 32px;
-  min-height: 32px;
-  height: 32px;
+  width: 30px;
+  min-height: 30px;
+  height: 30px;
   display: inline-grid;
   place-items: center;
   padding: 0;
@@ -101,6 +109,16 @@ button:disabled {
 .icon-button .icon {
   width: 16px;
   height: 16px;
+}
+
+.icon-button:hover:not(:disabled) {
+  background: var(--nav-hover);
+  border-color: transparent;
+  color: var(--text);
+}
+
+.icon-button:active:not(:disabled) {
+  background: var(--nav-selected);
 }
 
 .refresh-button {
@@ -130,16 +148,17 @@ button:disabled {
 
 .identifier-error {
   color: var(--danger);
-  font-size: 11px;
+  font-size: 12px;
 }
 
 .identifier {
-  min-height: 26px;
-  padding: 2px 5px;
+  min-height: 24px;
+  padding: 1px 5px;
   border-color: transparent;
   background: transparent;
   color: var(--muted);
   font-size: 12px;
+  font-weight: 400;
   vertical-align: middle;
 }
 
@@ -205,7 +224,7 @@ input[type="radio"] {
   margin: 0;
   flex-shrink: 0;
   vertical-align: middle;
-  border: 1px solid var(--muted);
+  border: 1px solid var(--border-strong);
   border-radius: 4px;
   background: var(--input);
   cursor: pointer;
@@ -271,7 +290,7 @@ input[type="radio"]:disabled {
 .switch {
   display: inline-flex;
   position: relative;
-  width: 32px;
+  width: 34px;
   height: 20px;
   flex-shrink: 0;
 }
@@ -294,11 +313,13 @@ input[type="radio"]:disabled {
 }
 
 .switch-track {
-  width: 32px;
+  width: 34px;
   height: 20px;
   border-radius: 20px;
   background: var(--switch-off);
-  transition: background 0.18s;
+  transition:
+    background 0.18s,
+    box-shadow 0.18s;
 }
 
 .switch-track:after {
@@ -310,7 +331,7 @@ input[type="radio"]:disabled {
   width: 16px;
   border-radius: 50%;
   background: #fff;
-  box-shadow: 0 1px 3px #0002;
+  box-shadow: 0 1px 3px #0003;
   transition: transform 0.18s;
 }
 
@@ -319,11 +340,11 @@ input[type="radio"]:disabled {
 }
 
 .switch input:checked + .switch-track:after {
-  transform: translateX(12px);
+  transform: translateX(14px);
 }
 
 .switch input:hover:not(:disabled) + .switch-track {
-  box-shadow: 0 0 0 3px var(--control-hover);
+  box-shadow: 0 0 0 3px var(--focus-ring);
 }
 
 .switch input:focus-visible + .switch-track {
@@ -343,7 +364,7 @@ input[type="radio"]:disabled {
 .invitation-option {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 9px;
   font-size: 13px;
   font-weight: 400;
   cursor: pointer;
@@ -355,33 +376,37 @@ input[type="radio"]:disabled {
 
 form label {
   display: block;
-  font-size: 14px;
-  font-weight: 550;
-  margin: 0 0 7px;
+  font-size: 13px;
+  font-weight: 500;
+  margin: 0 0 6px;
 }
 
 input[type="text"],
 input[type="password"],
 input[type="number"],
+input:not([type]),
 textarea,
 select {
-  padding: 8px 10px;
+  padding: 6px 10px;
+  min-height: 34px;
   background: var(--input);
-  border: 1px solid var(--border);
-  border-radius: 8px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
   color: var(--text);
   width: 100%;
   min-width: 0;
-  font-size: 14px;
+  font-size: 13px;
   line-height: 20px;
   transition:
     border-color 0.15s,
+    box-shadow 0.15s,
     background-color 0.15s;
 }
 
 input[type="text"]:hover:not(:disabled):not(:read-only),
 input[type="password"]:hover:not(:disabled),
 input[type="number"]:hover:not(:disabled),
+input:not([type]):hover:not(:disabled):not(:read-only),
 textarea:hover:not(:disabled):not(:read-only),
 select:hover:not(:disabled) {
   border-color: var(--control-border-hover);
@@ -390,15 +415,25 @@ select:hover:not(:disabled) {
 input[type="text"]:focus,
 input[type="password"]:focus,
 input[type="number"]:focus,
+input:not([type]):focus,
 textarea:focus,
 select:focus {
   border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--focus-ring);
+}
+
+input[type="text"]:focus-visible,
+input[type="password"]:focus-visible,
+input[type="number"]:focus-visible,
+input:not([type]):focus-visible,
+textarea:focus-visible {
+  outline: none;
 }
 
 input::placeholder,
 textarea::placeholder {
-  color: var(--muted);
-  opacity: 0.75;
+  color: var(--faint);
+  opacity: 1;
 }
 
 input:disabled,
@@ -407,10 +442,16 @@ select:disabled {
   opacity: 0.5;
 }
 
+input[type="text"]:read-only:not(:disabled),
+input:not([type]):read-only:not(:disabled),
+textarea:read-only:not(:disabled) {
+  background: var(--surface);
+}
+
 textarea {
   resize: vertical;
   min-height: 66px;
-  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  font-family: var(--font-mono);
   line-height: 1.55;
 }
 
@@ -420,7 +461,7 @@ select {
   width: auto;
   max-width: 100%;
   padding-right: 30px;
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none'%3E%3Cpath d='m4 6 4 4 4-4' stroke='%23748078' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none'%3E%3Cpath d='m4 6 4 4 4-4' stroke='%2369736f' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
   background-position: right 10px center;
   background-size: 12px 12px;
   background-repeat: no-repeat;
@@ -443,13 +484,13 @@ select option {
 
 .input-with-button input {
   flex: 1;
-  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  font-family: var(--font-mono);
 }
 
 .field-help {
   font-size: 12px;
   color: var(--muted);
-  margin: 7px 0 0;
+  margin: 6px 0 0;
   line-height: 1.6;
 }
 
@@ -458,7 +499,7 @@ select option {
   justify-content: space-between;
   align-items: center;
   gap: 10px;
-  margin-bottom: 8px;
+  margin-bottom: 6px;
 }
 
 .field-heading label {
@@ -466,16 +507,92 @@ select option {
 }
 
 .field-tag {
-  font-size: 12px;
-  background: var(--bg);
-  border: 1px solid var(--border);
-  padding: 1px 6px;
-  border-radius: 4px;
+  font-size: 11px;
+  background: var(--surface);
+  padding: 1px 7px;
+  border-radius: 20px;
+  color: var(--muted);
+}
+
+.segmented {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 2px;
+  border-radius: var(--radius);
+  background: var(--surface);
+  box-shadow: inset 0 0 0 1px var(--border);
+}
+
+.segmented > button,
+.segmented > label {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  min-height: 26px;
+  margin: 0;
+  padding: 2px 11px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--muted);
+  font-size: 12.5px;
+  font-weight: 500;
+  cursor: pointer;
+  box-shadow: none;
+}
+
+.segmented > button:hover:not(:disabled),
+.segmented > label:hover {
+  background: transparent;
+  color: var(--text);
+}
+
+.segmented > .selected,
+.segmented > .selected:hover:not(:disabled),
+.segmented > label:has(input:checked) {
+  background: var(--card);
+  color: var(--text);
+  box-shadow:
+    var(--shadow-sm),
+    0 0 0 1px var(--border);
+}
+
+.segmented > label:has(input:focus-visible) {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.segmented > label input {
+  position: absolute;
+  opacity: 0;
+  width: 1px;
+  height: 1px;
+  pointer-events: none;
+}
+
+.segmented-count {
+  font-size: 11px;
+  font-weight: 400;
+  color: var(--faint);
+  font-variant-numeric: tabular-nums;
+}
+
+.selected .segmented-count {
   color: var(--muted);
 }
 
 @media (prefers-color-scheme: dark) {
   select {
-    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none'%3E%3Cpath d='m4 6 4 4 4-4' stroke='%23a9b8c0' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none'%3E%3Cpath d='m4 6 4 4 4-4' stroke='%239da8a5' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  }
+
+  .segmented > .selected,
+  .segmented > .selected:hover:not(:disabled),
+  .segmented > label:has(input:checked) {
+    background: var(--border-strong);
+    box-shadow: none;
   }
 }

@@ -56,22 +56,18 @@ export function CloudflareRelays({
     };
   }, [manager, networkId, revision]);
   if (!relays.length && !error && !manager) return null;
+  const waiting =
+    authorizing &&
+    (progress.current?.stage === "authorization" || !progress.events.length);
   return (
     <div className="cloudflare-relays">
-      <h3>{t("cloudflare.savedRelays")}</h3>
-      <p className="field-help">{t("cloudflare.temporaryHint")}</p>
-      {manager && (
-        <>
-          <label className="invitation-option">
-            <input
-              type="checkbox"
-              checked={remember}
-              disabled={busy}
-              onChange={(event) => setRemember(event.target.checked)}
-            />
-            {t("cloudflare.rememberLogin")}
-          </label>
-          <div className="hero-actions">
+      <div className="setting-row">
+        <span>
+          <strong>{t("cloudflare.savedRelays")}</strong>
+          <small>{t("cloudflare.temporaryHint")}</small>
+        </span>
+        {manager && (
+          <div className="row-actions">
             <button
               disabled={busy}
               onClick={async () => {
@@ -133,34 +129,41 @@ export function CloudflareRelays({
             >
               {t("cloudflare.logout")}
             </button>
-            {authorizing &&
-              (progress.current?.stage === "authorization" ||
-                !progress.events.length) && (
-                <button
-                  onClick={() =>
-                    void api
-                      .openCloudflareAuthorization()
-                      .catch((error) => setError(errorText(error)))
-                  }
-                >
-                  {t("cloudflare.openBrowser")}
-                </button>
-              )}
-            {authorizing &&
-              (progress.current?.stage === "authorization" ||
-                !progress.events.length) && (
-                <button
-                  onClick={() =>
-                    void api
-                      .cancelCloudflareAuthorization()
-                      .catch((error) => setError(errorText(error)))
-                  }
-                >
-                  {t("cloudflare.cancel")}
-                </button>
-              )}
           </div>
-        </>
+        )}
+      </div>
+      {manager && (
+        <label className="invitation-option">
+          <input
+            type="checkbox"
+            checked={remember}
+            disabled={busy}
+            onChange={(event) => setRemember(event.target.checked)}
+          />
+          {t("cloudflare.rememberLogin")}
+        </label>
+      )}
+      {waiting && (
+        <div className="hero-actions">
+          <button
+            onClick={() =>
+              void api
+                .openCloudflareAuthorization()
+                .catch((error) => setError(errorText(error)))
+            }
+          >
+            {t("cloudflare.openBrowser")}
+          </button>
+          <button
+            onClick={() =>
+              void api
+                .cancelCloudflareAuthorization()
+                .catch((error) => setError(errorText(error)))
+            }
+          >
+            {t("cloudflare.cancel")}
+          </button>
+        </div>
       )}
       {(authorizing || loggingOut) && (
         <DeploymentProgress
@@ -177,7 +180,7 @@ export function CloudflareRelays({
         />
       )}
       {relays.map((relay) => (
-        <div className="setting-row" key={relay.name}>
+        <div className="setting-row relay-item" key={relay.name}>
           <span>
             <strong>{relay.name}</strong>
             <small>{relayHost(relay.link)}</small>

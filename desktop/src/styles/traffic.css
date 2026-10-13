@@ -1,38 +1,53 @@
 .traffic-summary {
-  margin-top: 34px;
-  border-top: 1px solid var(--border);
-  padding: 17px 14px;
-  font-size: 11px;
+  margin-top: 24px;
 }
 .traffic-summary-row {
   display: flex;
   align-items: center;
-  gap: 22px;
+  flex-wrap: wrap;
+  gap: 6px 24px;
+  min-height: 48px;
+  padding: 7px 8px 7px 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--card);
+  font-size: 12px;
 }
 .traffic-summary-title {
   color: var(--muted);
+  font-weight: 500;
 }
 .traffic-summary-stat {
   display: flex;
   align-items: center;
-  gap: 7px;
+  gap: 6px;
   color: var(--muted);
 }
 .traffic-summary-stat .icon {
-  width: 13px;
-  height: 13px;
+  width: 14px;
+  height: 14px;
+  color: var(--faint);
 }
 .traffic-summary-stat strong {
   font-size: 13px;
-  font-weight: 500;
+  font-weight: 600;
   color: var(--text);
+  font-variant-numeric: tabular-nums;
 }
 .traffic-summary-row > .text-button {
   margin-left: auto;
-  font-size: 11px;
+  gap: 2px;
+  font-size: 12.5px;
+}
+.traffic-summary-row > .text-button .icon {
+  width: 14px;
+  height: 14px;
+}
+.traffic-summary .footnote {
+  margin: 8px 4px 0;
 }
 .traffic-summary .error-notice {
-  margin-top: 12px;
+  margin-top: 10px;
 }
 .traffic-dialog {
   width: 640px;
@@ -41,44 +56,57 @@
   border: 0;
   padding: 0;
   margin: 0;
+  overflow: visible;
 }
 .traffic-panel .panel-heading {
   padding: 0;
 }
 .traffic-panel .panel-heading h2 {
-  font-size: 12px;
+  font-size: 13px;
   color: var(--muted);
-  font-weight: 400;
-}
-.traffic-periods {
-  flex-wrap: nowrap;
+  font-weight: 500;
 }
 .traffic-totals {
-  display: flex;
-  gap: 55px;
-  margin: 24px 0;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  margin: 16px 0 20px;
+}
+.traffic-totals > div {
+  padding: 12px 14px;
+  border-radius: var(--radius);
+  background: var(--surface);
 }
 .traffic-totals span {
-  display: block;
-  font-size: 11px;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 12px;
   color: var(--muted);
 }
+.traffic-totals span::before {
+  content: "";
+  width: 8px;
+  height: 8px;
+  border-radius: 2px;
+  background: var(--accent);
+  flex-shrink: 0;
+}
+.traffic-totals > div + div span::before {
+  opacity: 0.35;
+}
 .traffic-totals strong {
-  font-size: 26px;
-  font-weight: 500;
+  display: block;
+  margin-top: 2px;
+  font-size: 22px;
+  font-weight: 600;
+  letter-spacing: -0.2px;
   font-variant-numeric: tabular-nums;
 }
 .traffic-legend {
-  display: flex;
-  gap: 16px;
-  font-size: 11px;
-  margin-bottom: 12px;
-}
-.traffic-ingress {
-  color: var(--accent);
-}
-.traffic-egress {
+  font-size: 11.5px;
   color: var(--muted);
+  margin: 0 0 10px;
 }
 .traffic-chart {
   width: 100%;
@@ -88,7 +116,7 @@
 }
 .traffic-bar-ingress {
   fill: var(--accent);
-  opacity: 0.75;
+  opacity: 0.8;
 }
 .traffic-bar-egress {
   fill: var(--accent);
@@ -97,13 +125,17 @@
 .traffic-axis {
   display: flex;
   justify-content: space-between;
-  font-size: 10px;
+  font-size: 11px;
   color: var(--muted);
   margin-top: 6px;
+  font-variant-numeric: tabular-nums;
 }
 .traffic-note {
-  font-size: 11px;
-  margin: 16px 0 0;
+  font-size: 11.5px;
+  margin: 14px 0 0;
+}
+.traffic-note + .traffic-note {
+  margin-top: 4px;
 }
 .traffic-devices {
   width: 100%;
@@ -113,14 +145,14 @@
 .traffic-devices th,
 .traffic-devices td {
   text-align: left;
-  padding: 10px 7px;
+  padding: 9px 8px;
   border-bottom: 1px solid var(--border);
   overflow-wrap: anywhere;
 }
 .traffic-devices th {
   color: var(--muted);
-  font-size: 11px;
-  font-weight: 400;
+  font-size: 11.5px;
+  font-weight: 500;
 }
 .traffic-devices td:first-child {
   max-width: 220px;
@@ -128,13 +160,14 @@
 .traffic-devices td:not(:first-child),
 .traffic-devices th:not(:first-child) {
   white-space: nowrap;
+  font-variant-numeric: tabular-nums;
 }
 .traffic-device-details {
   margin-top: 24px;
   font-size: 12px;
   color: var(--muted);
 }
-.traffic-device-details > summary {
+.traffic-device-details[open] > summary {
   margin-bottom: 10px;
 }
 .traffic-pagination {
@@ -145,19 +178,4 @@
 }
 .traffic-pagination button {
   font-size: 11px;
-}
-@media (max-width: 850px) {
-  .traffic-summary-row {
-    gap: 13px;
-    flex-wrap: wrap;
-  }
-}
-@media (max-width: 720px) {
-  .traffic-summary {
-    padding-left: 5px;
-    padding-right: 5px;
-  }
-  .traffic-summary-title {
-    width: 100%;
-  }
 }

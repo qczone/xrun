@@ -132,6 +132,7 @@ export function AttachmentPanel({
           <button
             className="icon-button"
             aria-label={t("common.close")}
+            title={t("common.close")}
             onClick={() => setImageOpen(false)}
           >
             <Icon name="close" />

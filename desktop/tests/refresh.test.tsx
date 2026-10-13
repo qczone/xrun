@@ -64,7 +64,7 @@ test("activity pagination remains usable during polling and ignores its late res
   delay = true;
   await poll();
   expect(await findActivity("PAGE1")).toBe(first);
-  expect(refresh.textContent).toBe("刷新");
+  expect(refresh.getAttribute("aria-label")).toBe("刷新");
   expect(refresh.getAttribute("aria-busy")).toBe("true");
   expect((next as HTMLButtonElement).disabled).toBe(false);
   fireEvent.click(next);

@@ -9,7 +9,6 @@ import {
   jobDescription,
   jobDuration,
   jobSize,
-  attachmentLabel,
 } from "./operation";
 
 interface Props {
@@ -18,6 +17,20 @@ interface Props {
   active: boolean;
   selected: boolean;
   onSelect: (button: HTMLButtonElement) => void;
+}
+/** The subject leads each row; the operation, source and size follow. */
+function rowTitle(job: Job) {
+  const description = jobDescription(job);
+  if (job.kind === "push" || job.kind === "pull")
+    return description.split(/[\\/]/).filter(Boolean).pop() || description;
+  if (job.kind === "screenshot")
+    return (
+      job.attachments[0]?.name ||
+      (job.result
+        ? `${job.result.width} × ${job.result.height}`
+        : operationLabel(job.kind))
+    );
+  return description || operationLabel(job.kind);
 }
 export function ActivityRow({
   job,
@@ -28,18 +41,17 @@ export function ActivityRow({
 }: Props) {
   const elapsed = jobDuration(job);
   const attachment = job.attachments[0];
-  const hasAttachment = ["push", "pull", "screenshot"].includes(job.kind);
   const description = jobDescription(job);
-  const kindIcon =
-    job.kind === "exec" || job.kind === "stream_exec"
-      ? "terminal"
-      : job.kind === "screenshot"
-        ? "image"
-        : job.kind === "push"
-          ? "down"
-          : job.kind === "pull"
-            ? "up"
-            : "arrow";
+  const command = job.kind === "exec" || job.kind === "stream_exec";
+  const kindIcon = command
+    ? "terminal"
+    : job.kind === "screenshot"
+      ? "image"
+      : job.kind === "push"
+        ? "down"
+        : job.kind === "pull"
+          ? "up"
+          : "arrow";
   return (
     <button
       className={`activity-row ${selected ? "selected" : ""}`}
@@ -47,43 +59,38 @@ export function ActivityRow({
       aria-pressed={selected}
       onClick={(event) => onSelect(event.currentTarget)}
     >
-      <span className="timeline-node">
+      <span className="activity-icon">
         <Icon name={kindIcon} />
       </span>
       <span className="activity-row-content">
-        <span className="activity-row-header">
-          <strong>{operationLabel(job.kind)}</strong>
-          <ActivityState job={job} />
-          <time dateTime={new Date(job.created_at_ms).toISOString()}>
-            {new Date(job.created_at_ms).toLocaleTimeString(formatLocale(), {
-              hour: "2-digit",
-              minute: "2-digit",
-              hour12: false,
-            })}
-          </time>
+        <span
+          className={`activity-row-title ${command || job.kind === "forward" ? "mono" : ""}`}
+          title={description || undefined}
+        >
+          {rowTitle(job)}
         </span>
         <span className="activity-row-meta">
-          {sourceName}
-          {fileSize(jobSize(job))}
-          {elapsed !== null && ` · ${duration(elapsed)}`}
+          <span className="activity-kind">{operationLabel(job.kind)}</span>
+          <span>
+            {sourceName}
+            {fileSize(jobSize(job))}
+            {elapsed !== null && ` · ${duration(elapsed)}`}
+          </span>
         </span>
-        {description && (!hasAttachment || !attachment) && (
-          <span className="activity-row-description mono" title={description}>
-            {description}
-          </span>
-        )}
-        {hasAttachment && (
-          <span
-            className={`attachment-tag ${attachment?.status === "available" ? "available" : ""}`}
-          >
-            <Icon name={job.kind === "screenshot" ? "image" : "folder"} />
-            {attachmentLabel(attachment ?? null)}
-          </span>
-        )}
       </span>
       {job.kind === "screenshot" && attachment && (
         <ScreenshotThumbnail attachment={attachment} active={active} />
       )}
+      <span className="activity-row-side">
+        <ActivityState job={job} />
+        <time dateTime={new Date(job.created_at_ms).toISOString()}>
+          {new Date(job.created_at_ms).toLocaleTimeString(formatLocale(), {
+            hour: "2-digit",
+            minute: "2-digit",
+            hour12: false,
+          })}
+        </time>
+      </span>
     </button>
   );
 }

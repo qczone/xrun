@@ -62,13 +62,15 @@ export function serviceState(status: Status | null): [string, string] {
     : [t("status.stopped"), "neutral"];
 }
 
-export function relayState(status: Status | null): [string, string] {
-  if (!status) return [t("common.checking"), "neutral"];
-  if (!status.local.joined) return [t("status.noNetwork"), "neutral"];
-  if (!status.local.daemon_running) return [t("status.noService"), "neutral"];
-  if (status.local.daemon_connected === null)
-    return [t("status.unavailable"), "neutral"];
-  return status.local.daemon_connected
+/** One summary of this device: blocking states first, then relay connectivity. */
+export function localState(status: Status): [string, string] {
+  const { local, service } = status;
+  if (!local.joined) return [t("status.noNetwork"), "neutral"];
+  if (service.approval_required) return [t("status.systemApproval"), "warning"];
+  if (!local.daemon_running) return [t("status.noService"), "neutral"];
+  if (local.remote_access_paused) return [t("status.paused"), "warning"];
+  if (local.daemon_connected === null) return [t("status.starting"), "neutral"];
+  return local.daemon_connected
     ? [t("status.connected"), "online"]
     : [t("status.reconnecting"), "warning"];
 }

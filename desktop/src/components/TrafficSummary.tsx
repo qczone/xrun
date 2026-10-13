@@ -59,7 +59,7 @@ export function TrafficSummary({
         )}
         <button className="text-button" onClick={() => setOpen(true)}>
           {t("traffic.details")}
-          <Icon name="arrow" />
+          <Icon name="chevron-right" />
         </button>
       </div>
       {traffic.report && !traffic.report.complete && (
@@ -86,6 +86,7 @@ export function TrafficSummary({
           <button
             className="icon-button"
             aria-label={t("common.close")}
+            title={t("common.close")}
             onClick={() => setOpen(false)}
           >
             <Icon name="close" />

@@ -99,7 +99,11 @@ export function NetworkSetup({
   return (
     <section className="network-setup">
       {!joined && (
-        <div className="setup-tabs" aria-label={t("setup.connectionMethod")}>
+        <div
+          className="segmented setup-tabs"
+          role="group"
+          aria-label={t("setup.connectionMethod")}
+        >
           {(["code", "link", "cloudflare"] as const).map((value) => (
             <button
               key={value}

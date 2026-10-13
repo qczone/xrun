@@ -1,10 +1,10 @@
 import { expect, test } from "bun:test";
 import { fireEvent, screen, within, waitFor } from "@testing-library/react";
-import { fixture, openMemberActions, activityJob } from "./fixtures";
+import { fixture, deviceAction, activityJob } from "./fixtures";
 async function openFiles(name: string) {
-  openMemberActions(name);
-  const menu = screen.getByLabelText(`${name} 的更多操作`).closest("details")!;
-  fireEvent.click(within(menu).getByRole("button", { name: "传输文件" }));
+  fireEvent.click(
+    screen.getByRole("button", { name: deviceAction.files(name) }),
+  );
   return await screen.findByRole("dialog", { name: `文件 · ${name}` });
 }
 test("file chooser cancellation does not submit and download intent uses immutable IDs", async () => {

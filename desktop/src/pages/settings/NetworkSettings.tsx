@@ -30,50 +30,63 @@ export function NetworkSettings({
   }, [openRequest]);
   return (
     <details
-      className="settings-disclosure"
+      className="settings-card settings-disclosure"
       id="network-settings"
       ref={details}
     >
       <summary>
-        <span>{t("settings.networkService")}</span>
-        <small>{t("settings.networkSummary")}</small>
-        <Icon name="arrow" />
+        <span className="settings-icon">
+          <Icon name="network" />
+        </span>
+        <span className="settings-disclosure-title">
+          <span>{t("settings.networkService")}</span>
+          <small>{t("settings.networkSummary")}</small>
+        </span>
+        <Icon name="chevron-down" />
       </summary>
       <div className="settings-disclosure-content">
-        <AuthoritySettings status={status} />
-        {network?.is_manager && <MembershipFreshness />}
-        <CloudflareRelays
-          networkId={network?.network_id}
-          manager={!!network?.is_manager}
-        />
-        {network && (
-          <dl className="network-facts">
-            <dt>{t("common.manager")}</dt>
-            <dd>{network.manager_name}</dd>
-            <dt>{t("network.relays")}</dt>
-            <dd>
-              {network.relay_addresses.join("\n") || t("common.unavailable")}
-            </dd>
-            <dt>{t("network.id")}</dt>
-            <dd>
-              <Identifier
-                key={network.network_id}
-                value={network.network_id}
-                label={t("network.id")}
-              />
-            </dd>
-            <dt>{t("common.deviceId")}</dt>
-            <dd>
-              {local?.device_id && (
+        <dl className="network-facts">
+          {network && (
+            <>
+              <dt>{t("common.manager")}</dt>
+              <dd>{network.manager_name}</dd>
+              <dt>{t("network.relays")}</dt>
+              <dd>
+                {network.relay_addresses.join("\n") || t("common.unavailable")}
+              </dd>
+              <dt>{t("network.id")}</dt>
+              <dd>
                 <Identifier
-                  key={local.device_id}
-                  value={local.device_id}
-                  label={t("common.deviceId")}
+                  key={network.network_id}
+                  value={network.network_id}
+                  label={t("network.id")}
                 />
-              )}
-            </dd>
-          </dl>
-        )}
+              </dd>
+              <dt>{t("common.deviceId")}</dt>
+              <dd>
+                {local?.device_id && (
+                  <Identifier
+                    key={local.device_id}
+                    value={local.device_id}
+                    label={t("common.deviceId")}
+                  />
+                )}
+              </dd>
+            </>
+          )}
+          <dt>{t("network.serviceInstall")}</dt>
+          <dd>
+            {t(
+              service?.development
+                ? "network.development"
+                : service?.cli_service_installed
+                  ? "network.cliService"
+                  : local?.daemon_installed
+                    ? "network.appService"
+                    : "network.noService",
+            )}
+          </dd>
+        </dl>
         <div className="setting-row">
           <div>
             <strong>{t("devices.allowAll")}</strong>
@@ -149,22 +162,12 @@ export function NetworkSettings({
         {service?.cli_service_installed && !service.development && (
           <p className="inline-notice">{t("settings.cliServiceHint")}</p>
         )}
-        <div className="setting-row">
-          <span>
-            <strong>{t("network.serviceInstall")}</strong>
-            <small>
-              {t(
-                service?.development
-                  ? "network.development"
-                  : service?.cli_service_installed
-                    ? "network.cliService"
-                    : local?.daemon_installed
-                      ? "network.appService"
-                      : "network.noService",
-              )}
-            </small>
-          </span>
-        </div>
+        {network?.is_manager && <MembershipFreshness />}
+        <CloudflareRelays
+          networkId={network?.network_id}
+          manager={!!network?.is_manager}
+        />
+        <AuthoritySettings status={status} />
         {local?.daemon_installed && (
           <div className="setting-row">
             <span>

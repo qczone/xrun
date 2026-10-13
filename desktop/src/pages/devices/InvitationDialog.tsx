@@ -2,6 +2,7 @@ import { t } from "../../i18n";
 import { useEffect, useRef, type ReactNode } from "react";
 import type { Status } from "../../api";
 import { InvitePanel } from "../../components/InvitePanel";
+import { Icon } from "../../components/Icon";
 
 interface Props {
   open: boolean;
@@ -34,11 +35,12 @@ export function InvitationDialog({
       <div className="dialog-heading">
         <h2 id="invite-title">{t("invite.title")}</h2>
         <button
-          className="text-button"
+          className="icon-button"
           aria-label={t("invite.close")}
+          title={t("common.close")}
           onClick={close}
         >
-          {t("common.close")}
+          <Icon name="close" />
         </button>
       </div>
       {open && (

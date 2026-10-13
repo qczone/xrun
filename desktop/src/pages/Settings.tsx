@@ -104,9 +104,9 @@ export function SettingsPage({
           retry={() => void loadSettings()}
         />
       )}
-      <div className="settings-section">
+      <section className="settings-section">
         <h2>{t("settings.general")}</h2>
-        <section className="panel">
+        <div className="settings-card">
           <LanguageSelect />
           <div className="setting-row">
             <span>
@@ -213,12 +213,13 @@ export function SettingsPage({
                 : t("settings.hideIcon")}
             </button>
           </div>
-        </section>
-      </div>
-      <div className="settings-section">
+        </div>
+      </section>
+      <section className="settings-section">
         <h2>{t("settings.activity")}</h2>
         <form
           id="retention-form"
+          className="settings-card"
           onSubmit={async (event) => {
             event.preventDefault();
             const days = Number(retention);
@@ -277,12 +278,20 @@ export function SettingsPage({
               </p>
             )}
         </form>
-      </div>
-      <details className="settings-disclosure" id="execution-settings">
+      </section>
+      <details
+        className="settings-card settings-disclosure"
+        id="execution-settings"
+      >
         <summary>
-          <span>{t("settings.execution")}</span>
-          <small>{t("settings.executionSummary")}</small>
-          <Icon name="arrow" />
+          <span className="settings-icon">
+            <Icon name="terminal" />
+          </span>
+          <span className="settings-disclosure-title">
+            <span>{t("settings.execution")}</span>
+            <small>{t("settings.executionSummary")}</small>
+          </span>
+          <Icon name="chevron-down" />
         </summary>
         <form
           id="execution-form"
@@ -389,31 +398,33 @@ export function SettingsPage({
       <NetworkSettings status={status} openRequest={networkSettingsRequest} />
       <details className="settings-about">
         <summary>
-          <Icon name="lock" />
           xrun {local?.version}
           <span>·</span>
           {t("settings.about")}
+          <Icon name="chevron-down" />
         </summary>
-        <div className="setting-row">
-          <span>
-            <strong>{t("settings.system")}</strong>
-            <small>
-              {settings ? osName(settings.os) : t("common.loading")}
-            </small>
-          </span>
-        </div>
-        <div className="setting-row data-row">
-          <span>
-            <strong>{t("settings.dataDir")}</strong>
-            <small>{t("settings.dataHint")}</small>
-          </span>
-          <input
-            type="text"
-            readOnly
-            aria-label={t("settings.dataDir")}
-            value={settings?.data_dir || ""}
-            onFocus={(event) => event.target.select()}
-          />
+        <div className="settings-card">
+          <div className="setting-row">
+            <span>
+              <strong>{t("settings.system")}</strong>
+              <small>
+                {settings ? osName(settings.os) : t("common.loading")}
+              </small>
+            </span>
+          </div>
+          <div className="setting-row data-row">
+            <span>
+              <strong>{t("settings.dataDir")}</strong>
+              <small>{t("settings.dataHint")}</small>
+            </span>
+            <input
+              type="text"
+              readOnly
+              aria-label={t("settings.dataDir")}
+              value={settings?.data_dir || ""}
+              onFocus={(event) => event.target.select()}
+            />
+          </div>
         </div>
       </details>
     </>

@@ -128,24 +128,20 @@ export function ActivityPage({
           <h1>{t("activity.title")}</h1>
           <p>{t("activity.description")}</p>
         </div>
-        <RefreshButton
-          refreshing={selection ? detailLoading : refreshing}
-          onClick={refreshActivities}
-        />
       </div>
       {feedback}
       <div className={`activity-layout ${selection ? "has-selection" : ""}`}>
         <div className="activity-list">
           <div className="list-toolbar">
             <div
-              className="filter-tabs"
+              className="segmented"
               role="group"
               aria-label={t("activity.activityState")}
             >
               {(["all", "running", "failed"] as const).map((value) => (
                 <button
                   key={value}
-                  className={`filter-tab ${filter === value ? "selected" : ""}`}
+                  className={filter === value ? "selected" : ""}
                   aria-pressed={filter === value}
                   onClick={() => selectFilter(value)}
                 >
@@ -159,16 +155,23 @@ export function ActivityPage({
                 </button>
               ))}
             </div>
-            <label className="list-search">
-              <Icon name="search" />
-              <input
-                type="text"
-                value={search}
-                aria-label={t("activity.search")}
-                placeholder={t("activity.search")}
-                onChange={(event) => setSearch(event.target.value)}
+            <div className="list-toolbar-actions">
+              <label className="list-search">
+                <Icon name="search" />
+                <input
+                  type="text"
+                  value={search}
+                  aria-label={t("activity.search")}
+                  placeholder={t("activity.search")}
+                  onChange={(event) => setSearch(event.target.value)}
+                />
+              </label>
+              <RefreshButton
+                compact
+                refreshing={selection ? detailLoading : refreshing}
+                onClick={refreshActivities}
               />
-            </label>
+            </div>
           </div>
           <section
             className="activity-record-panel"
@@ -210,25 +213,29 @@ export function ActivityPage({
               </p>
             )}
           </section>
-          <div className="activity-pagination">
-            <button
-              className="text-button"
-              disabled={loading || pagination.index === 0 || selection !== null}
-              onClick={activityFeed.previousPage}
-            >
-              {t("activity.previous")}
-            </button>
-            <span className="muted">
-              {t("activity.page", { page: pagination.index + 1 })}
-            </span>
-            <button
-              className="text-button"
-              disabled={loading || nextCursor === null || selection !== null}
-              onClick={activityFeed.nextPage}
-            >
-              {t("activity.next")}
-            </button>
-          </div>
+          {(pagination.index > 0 || nextCursor !== null) && (
+            <div className="activity-pagination">
+              <button
+                className="text-button"
+                disabled={
+                  loading || pagination.index === 0 || selection !== null
+                }
+                onClick={activityFeed.previousPage}
+              >
+                {t("activity.previous")}
+              </button>
+              <span className="muted">
+                {t("activity.page", { page: pagination.index + 1 })}
+              </span>
+              <button
+                className="text-button"
+                disabled={loading || nextCursor === null || selection !== null}
+                onClick={activityFeed.nextPage}
+              >
+                {t("activity.next")}
+              </button>
+            </div>
+          )}
           {error && (
             <ErrorNotice
               title={t("activity.loadFailed")}

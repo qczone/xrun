@@ -20,7 +20,12 @@ export type IconName =
   | "close"
   | "image"
   | "up"
-  | "down";
+  | "down"
+  | "power"
+  | "transfer"
+  | "camera"
+  | "chevron-right"
+  | "network";
 
 export function Icon({
   name,
@@ -42,6 +47,26 @@ export function IconDefinitions() {
       <defs>
         <symbol id="i-chevron-down" viewBox="0 0 24 24">
           <path d="m6 9 6 6 6-6" />
+        </symbol>
+        <symbol id="i-chevron-right" viewBox="0 0 24 24">
+          <path d="m9 6 6 6-6 6" />
+        </symbol>
+        <symbol id="i-network" viewBox="0 0 24 24">
+          <circle cx="12" cy="5" r="2.5" />
+          <circle cx="5" cy="18" r="2.5" />
+          <circle cx="19" cy="18" r="2.5" />
+          <path d="M10.8 7.2 6.3 15.8m6.9-8.6 4.5 8.6M7.5 18h9" />
+        </symbol>
+        <symbol id="i-power" viewBox="0 0 24 24">
+          <path d="M12 3v8" />
+          <path d="M7.05 6.3a8 8 0 1 0 9.9 0" />
+        </symbol>
+        <symbol id="i-transfer" viewBox="0 0 24 24">
+          <path d="M8 20V5M4 9l4-4 4 4M16 4v15m4-4-4 4-4-4" />
+        </symbol>
+        <symbol id="i-camera" viewBox="0 0 24 24">
+          <path d="M4 8a2 2 0 0 1 2-2h2l1.5-2h5L16 6h2a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2z" />
+          <circle cx="12" cy="12.5" r="3.5" />
         </symbol>
         <symbol id="i-check" viewBox="0 0 24 24">
           <path d="m5 12 4 4L19 6" />

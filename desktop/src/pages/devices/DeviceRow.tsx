@@ -35,6 +35,7 @@ export function DeviceRow({
     !device.revoked &&
     !denied &&
     (individual || (!manager && !!status?.local.allow_all));
+  const online = device.online && !device.revoked;
   const source = device.revoked
     ? t("devices.membershipRevoked")
     : denied
@@ -44,11 +45,32 @@ export function DeviceRow({
         : !manager && status?.local.allow_all
           ? t("devices.fromAll")
           : t("devices.notAllowed");
+  const actions = [
+    {
+      icon: "terminal",
+      label: t("remote.open"),
+      named: t("remote.openNamed", { name: device.name }),
+      open: runCommand,
+    },
+    {
+      icon: "transfer",
+      label: t("files.open"),
+      named: t("files.openNamed", { name: device.name }),
+      open: transferFile,
+    },
+    {
+      icon: "camera",
+      label: t("capture.open"),
+      named: t("capture.openNamed", { name: device.name }),
+      open: captureScreen,
+    },
+  ] as const;
   return (
-    <div className="device-row" key={device.device_id}>
+    <div className={`device-row ${online ? "online" : ""}`}>
       <div className="device-identity">
         <div className="device-icon">
           <Icon name="monitor" />
+          <i className={`dot ${online ? "online" : ""}`} />
         </div>
         <div className="device-details">
           <div className="device-name">
@@ -58,6 +80,13 @@ export function DeviceRow({
             )}
           </div>
           <div className="device-info">
+            <span className="device-presence">
+              {device.revoked
+                ? t("devices.revoked")
+                : device.online
+                  ? t("devices.online")
+                  : t("devices.offline")}
+            </span>
             <span>
               {device.os
                 ? [osName(device.os), archName(device.arch)]
@@ -69,17 +98,20 @@ export function DeviceRow({
           </div>
         </div>
       </div>
-      <div className="device-connection">
-        <span
-          className={`dot ${device.online && !device.revoked ? "online" : ""}`}
-        />
-        <span>
-          {device.revoked
-            ? t("devices.revoked")
-            : device.online
-              ? t("devices.online")
-              : t("devices.offline")}
-        </span>
+      <div className="device-actions">
+        {online &&
+          actions.map((item) => (
+            <button
+              key={item.icon}
+              className="icon-button"
+              aria-label={item.named}
+              title={item.label}
+              disabled={busy}
+              onClick={() => item.open(device)}
+            >
+              <Icon name={item.icon} />
+            </button>
+          ))}
       </div>
       <div className="device-permission">
         <label className="switch">
@@ -119,9 +151,6 @@ export function DeviceRow({
         </small>
       </div>
       <DeviceMenu
-        runCommand={() => runCommand(device)}
-        captureScreen={() => captureScreen(device)}
-        transferFile={() => transferFile(device)}
         device={device}
         manager={manager}
         managerId={network?.manager_id}

@@ -115,11 +115,17 @@ export function Devices({ active, paused, status, members, feedback }: Props) {
   );
   return (
     <>
-      <div className="page-heading">
+      <div className={`page-heading ${joined ? "" : "setup-heading"}`}>
         <div>
           <h1>{t(joined ? "devices.title" : "setup.connectTitle")}</h1>
           <p>
-            {t(joined ? "devices.description" : "setup.connectDescription")}
+            {t(
+              !joined
+                ? "setup.connectDescription"
+                : manager
+                  ? "devices.managerDescription"
+                  : "devices.memberDescription",
+            )}
           </p>
         </div>
         {joined && manager && (
@@ -156,16 +162,20 @@ export function Devices({ active, paused, status, members, feedback }: Props) {
             />
           )}
           <div className="list-toolbar">
-            <div className="filter-tabs" aria-label={t("devices.filter")}>
+            <div
+              className="segmented"
+              role="group"
+              aria-label={t("devices.filter")}
+            >
               {(["all", "online"] as const).map((filter) => (
                 <button
                   key={filter}
-                  className={`filter-tab ${deviceFilter === filter ? "selected" : ""}`}
+                  className={deviceFilter === filter ? "selected" : ""}
                   aria-pressed={deviceFilter === filter}
                   onClick={() => setDeviceFilter(filter)}
                 >
                   {t(filter === "all" ? "devices.all" : "devices.online")}
-                  <span>
+                  <span className="segmented-count">
                     {filter === "all" ? currentMembers.length : onlineCount}
                   </span>
                 </button>
@@ -197,7 +207,7 @@ export function Devices({ active, paused, status, members, feedback }: Props) {
           >
             <div className="list-heading">
               <span>{t("devices.name")}</span>
-              <span>{t("devices.state")}</span>
+              <span />
               <span>{t("devices.access")}</span>
               <span />
             </div>
@@ -249,9 +259,6 @@ export function Devices({ active, paused, status, members, feedback }: Props) {
             active={active && !paused && !inviteOpen}
             devices={devices}
           />
-          {!manager && (
-            <p className="footnote">{t("devices.memberDescription")}</p>
-          )}
         </>
       )}
       {manager && (

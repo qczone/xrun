@@ -9,6 +9,7 @@ import { useOperations } from "../../app/useOperations";
 import { ErrorNotice } from "../../components/ErrorNotice";
 import { errorText } from "../../errors";
 import { t } from "../../i18n";
+import { Icon } from "../../components/Icon";
 export function FileDialog({
   device,
   close,
@@ -60,7 +61,7 @@ export function FileDialog({
   return (
     <dialog
       ref={dialog}
-      className="remote-command-dialog"
+      className="remote-command-dialog file-dialog"
       aria-label={t("files.title", { name: device.name })}
       onCancel={(event) => {
         event.preventDefault();
@@ -69,8 +70,14 @@ export function FileDialog({
     >
       <header className="dialog-heading">
         <h2>{t("files.title", { name: device.name })}</h2>
-        <button disabled={busy} onClick={close}>
-          {t("common.close")}
+        <button
+          className="icon-button"
+          disabled={busy}
+          aria-label={t("common.close")}
+          title={t("common.close")}
+          onClick={close}
+        >
+          <Icon name="close" />
         </button>
       </header>
       <form
@@ -96,7 +103,7 @@ export function FileDialog({
         }}
       >
         <div
-          className="file-direction"
+          className="segmented file-direction"
           role="radiogroup"
           aria-label={t("files.direction")}
         >

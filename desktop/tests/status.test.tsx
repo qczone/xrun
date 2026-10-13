@@ -17,7 +17,12 @@ test("network role and relay addresses remain visible when the relay is offline"
   });
   status.local.daemon_connected = false;
   await poll();
-  expect(screen.getByText(/本机 · 普通设备/)).toBeTruthy();
+  expect(
+    screen.getByText("普通设备", { selector: ".local-device-text span" }),
+  ).toBeTruthy();
+  expect(
+    screen.getByText("正在重连", { selector: ".local-device-state span" }),
+  ).toBeTruthy();
   await page("设置");
   fireEvent.click(screen.getByText("网络与服务", { selector: "summary span" }));
   expect(screen.getByText("manager1")).toBeTruthy();
@@ -26,9 +31,7 @@ test("network role and relay addresses remain visible when the relay is offline"
   status.network!.manager_name = "mac1";
   await poll();
   expect(
-    screen.getByText(/本机 · 管理设备/, {
-      selector: ".local-device-name > span",
-    }),
+    screen.getByText("管理设备", { selector: ".local-device-text span" }),
   ).toBeTruthy();
   await page("设备");
   expect(screen.getByRole("button", { name: "邀请设备" })).toBeTruthy();

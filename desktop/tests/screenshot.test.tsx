@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
-import { fireEvent, screen, waitFor, within } from "@testing-library/react";
-import { fixture, selectOption, openMemberActions } from "./fixtures";
+import { fireEvent, screen, waitFor } from "@testing-library/react";
+import { deviceAction, fixture, selectOption } from "./fixtures";
 
 test("desktop screenshot presets and custom formats send semantic options and show the saved image", async () => {
   const { calls, devices } = await fixture({
@@ -17,11 +17,11 @@ test("desktop screenshot presets and custom formats send semantic options and sh
       captured_at: new Date().toISOString(),
     }),
   });
-  openMemberActions(devices[0].name);
-  const menu = screen
-    .getByLabelText(`${devices[0].name} 的更多操作`)
-    .closest("details")!;
-  fireEvent.click(within(menu).getByRole("button", { name: "截图" }));
+  fireEvent.click(
+    screen.getByRole("button", {
+      name: deviceAction.screenshot(devices[0].name),
+    }),
+  );
   await screen.findByRole("dialog", { name: `截图 · ${devices[0].name}` });
   const preset = screen.getByRole("combobox", { name: "画面大小" });
   await selectOption(preset, "compact");
@@ -60,11 +60,11 @@ test("cancelling the native save dialog does not request a screenshot", async ()
   const { calls, devices } = await fixture({
     choose_screenshot_destination: () => null,
   });
-  openMemberActions(devices[0].name);
-  const menu = screen
-    .getByLabelText(`${devices[0].name} 的更多操作`)
-    .closest("details")!;
-  fireEvent.click(within(menu).getByRole("button", { name: "截图" }));
+  fireEvent.click(
+    screen.getByRole("button", {
+      name: deviceAction.screenshot(devices[0].name),
+    }),
+  );
   await screen.findByRole("dialog", { name: `截图 · ${devices[0].name}` });
   fireEvent.submit(
     screen
