@@ -187,7 +187,7 @@ jobs:
           printf '%s' "$APPLE_API_KEY_P8_BASE64" | tr -d '[:space:]' | base64 --decode > "$notary_dir/AuthKey.p8"
           unset APPLE_API_KEY_P8_BASE64
           umask 022
-          # Tauri signs nested binaries and notarizes/staples the complete App.
+          # Tauri signs nested binaries and notarizes the complete App.
           export APPLE_SIGNING_IDENTITY="$MACOS_SIGN_IDENTITY"
           export APPLE_API_ISSUER="$APPLE_API_ISSUER_ID"
           export APPLE_API_KEY="$APPLE_API_KEY_ID"
@@ -195,9 +195,11 @@ jobs:
           bun run build --target '${{ matrix.target }}' --verbose
           app=../target/${{ matrix.target }}/release/bundle/macos/xrun.app
           codesign --verify --deep --strict "$app"
+          xcrun stapler staple "$app"
           xcrun stapler validate "$app"
           mkdir -p ../dist
-          cp "${app}.zip" ../dist/xrun-app-${{ matrix.platform }}.zip
+          # Archive only after stapling, retaining the App's resource metadata.
+          ditto -c -k --sequesterRsrc --keepParent "$app" ../dist/xrun-app-${{ matrix.platform }}.zip
       - name: Build Windows App installer
         if: runner.os == 'Windows'
         working-directory: desktop
