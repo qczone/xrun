@@ -6842,7 +6842,7 @@ dependencies = [
 
 [[package]]
 name = "xrun"
-version = "0.1.0-rc.9"
+version = "0.1.0-rc.10"
 dependencies = [
  "anyhow",
  "argon2",
@@ -6896,7 +6896,7 @@ dependencies = [
 
 [[package]]
 name = "xrun-desktop"
-version = "0.1.0-rc.9"
+version = "0.1.0-rc.10"
 dependencies = [
  "anyhow",
  "libc",

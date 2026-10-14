@@ -224,28 +224,13 @@ export const en = {
   "service.stopBackground": "Stop background service…",
   "service.title": "Background service",
   "service.settings": "Service settings",
-  "status.check": "Checking status",
-  "status.reading": "Reading device status…",
-  "status.notJoined": "Not joined",
-  "status.joinHint": "Create or join a network to connect your devices.",
-  "status.approval": "Awaiting approval",
-  "status.approvalHint": "Allow xrun to run in the background.",
   "status.stopped": "Stopped",
-  "status.stoppedHint":
-    "The background service is stopped. Other devices cannot access this device.",
   "status.paused": "Access paused",
   "status.pausedHint":
     "Accepted reliable tasks keep running. Streaming executions and forwarded connections close.",
   "status.connected": "Connected",
-  "status.connectedHint":
-    "The background service is running and connected to the relay.",
   "status.running": "Running",
   "status.starting": "Starting…",
-  "status.olderServiceHint":
-    "An older service is running. Update it to see live connection status.",
-  "status.connecting": "Connecting",
-  "status.connectingHint":
-    "Connecting to the relay. It will reconnect automatically when the network recovers.",
   "status.systemApproval": "Awaiting system approval",
   "status.noNetwork": "No network joined",
   "status.noService": "Service stopped",

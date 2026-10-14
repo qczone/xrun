@@ -1,235 +1,369 @@
 # xrun 使用手册
 
-本手册介绍安装、加入、授权和日常使用。`xrun help` 提供速查，`xrun help push` 或 `xrun linux1 push --help` 查看单个命令的参数与短例子。
+xrun 在你自己的 macOS、Windows 和 Linux 设备之间执行程序、管理后台任务、传输文件、截图和转发端口。本手册介绍安装、组网、授权和日常使用。
 
-`xrun doc` 离线输出本手册，`xrun doc --list` 列出章节，`xrun doc access` 等命令查看单章。帮助与文档不需要身份、网络或运行中的 daemon，直接输出文本，可重定向或交给 AI 阅读。
+`xrun help [命令]` 查看命令速查，`xrun doc` 离线输出本手册，`xrun doc <章节>` 只看一章，`xrun doc --list` 列出章节。帮助和手册不需要身份、网络或运行中的服务，可以直接交给 AI 阅读。AI 和脚本的调用流程见 `xrun doc automation`。
 
 | 章节 | 内容 |
 | --- | --- |
 | `install` | 安装 |
 | `quickstart` | 开始使用 |
+| `relay` | 中转部署 |
 | `access` | 访问权限 |
+| `network` | 网络管理 |
 | `execute` | 执行程序 |
 | `jobs` | 任务与日志 |
+| `automation` | 自动化与 AI |
 | `files` | 文件与截图 |
 | `streaming` | 流式执行 |
 | `forward` | 端口转发 |
 | `desktop` | 桌面 App |
-| `relay` | 中转部署 |
 | `config` | 配置与服务 |
 | `errors` | 状态与排错 |
 | `upgrade` | 升级与移除 |
 
 ## 安装
 
-CLI 和 daemon 是同一个 Rust 二进制，运行已构建程序不需要 Rust、Node.js 或 Bun。桌面 App 管理网络、授权与服务，也可直接执行远程命令；文件传输使用 CLI。当前版本为 `0.1.0-rc.9`；本机 CLI 与 daemon 要求发布版本一致，设备与中转按协议范围协商互通。
+| 平台 | 下载文件 | 内容 |
+| --- | --- | --- |
+| macOS 13+ | `xrun-app-darwin-<架构>.zip` | 桌面 App，自带 CLI |
+| Windows | `xrun-app-windows-<架构>.exe` | 当前用户安装程序，包含桌面 App 和 CLI |
+| Linux | `xrun-linux-<架构>.tar.gz` | 只有 `xrun` 一个程序 |
 
-| 平台 | 安装方式 |
-| --- | --- |
-| macOS x86_64 / arm64 | macOS 13+，App ZIP，包含桌面 App 和 CLI |
-| Windows x86_64 / arm64 | 当前用户 NSIS 安装 EXE，包含桌面 App 和 CLI |
-| Linux x86_64 / arm64 | CLI 压缩包，里面只有 `xrun` |
+架构为 `x86_64`（即 AMD64，Intel Mac 选这个）或 `arm64`（Apple Silicon、Windows ARM、ARM Linux）。从 [Release](https://github.com/xrun-sh/xrun/releases) 下载对应文件。CLI、后台服务（daemon）和 Linux 中转是同一个程序，运行时不需要 Rust、Node.js 或 Bun。
 
-按设备架构选择对应包：`x86_64` 即 AMD64，Intel Mac 使用这一版；`arm64` 对应 Apple Silicon、Windows ARM 和 ARM Linux。每个包只包含一种架构。
+- **macOS**：解压得到 `xrun.app`，先移到 `/Applications` 或 `~/Applications` 再打开。首次打开会把 CLI 链接到 `~/.local/bin/xrun`，并为 zsh 和 Bash 配置 PATH，重新打开终端即可运行 `xrun --version`。直接在下载目录打开时，macOS 会从临时隔离位置运行 App，此时不会创建 CLI 入口。
+- **Windows**：运行安装程序。它同时安装 App 和 CLI，并把安装目录下的 `cli` 加入当前用户 PATH；卸载时只移除它自己添加的 PATH 项。
+- **Linux**：把压缩包里的 `xrun` 放到固定位置（例如 `~/.local/bin/`）并加入 PATH。后台服务注册的是程序的绝对路径，安装后不要随意移动。
 
-从 [Release](https://github.com/xrun-sh/xrun/releases) 下载对应系统和架构的文件。Linux 手动安装时，将压缩包中的 `xrun` 放到 `~/.local/bin/` 并加入 PATH。服务注册当前二进制的绝对路径，请将程序放到固定位置。
+### 命令行安装
 
-macOS 解压 App ZIP 后得到 `xrun.app`，双击即可打开，无需安装向导。长期使用建议先放到 `/Applications` 或 `~/Applications`，再打开 App。首次打开会自动把包内 CLI 链接到 `~/.local/bin/xrun`，并配置 zsh 和 Bash 的用户 PATH。重新打开终端即可运行 `xrun --version`，无需先加入网络。已有的独立 CLI 或其他 CLI 链接会保留；重复打开 App 不会重复添加 PATH 配置。macOS 在临时隔离位置运行下载的 App 时不会创建永久 CLI 入口，请先将 App 移到固定目录。
-
-Windows EXE 安装器同时安装桌面 App 和终端 CLI，并自动将安装目录下的 `cli` 目录加入当前用户 PATH。安装后重新打开终端即可运行 `xrun --version`，无需先打开 App 或加入网络。重复安装不重复添加；卸载只清理由安装器添加的 PATH 项，用户原有配置保留。
-
-### AI 和命令行自动安装
-
-[install.sh](../scripts/install.sh) 支持 macOS 和 Linux，[install.ps1](../scripts/install.ps1) 支持 Windows，均自动识别 x86_64 / arm64 设备。指定完整发布版本，macOS、Windows 安装包含 CLI 的桌面 App，Linux 安装 CLI。脚本校验平台、版本、SHA-256 和安装后的程序；macOS App 另检查签名。安装后重新打开终端即可运行 `xrun`，不需要先打开桌面界面。Linux 安装过程需要 curl、tar、sha256sum，以及 jq 或 Python 3 用于读取清单。
-
-从相应版本的 Release 下载安装脚本。例如 macOS / Linux：
+每个 Release 附带 `install.sh`（macOS、Linux）和 `install.ps1`（Windows）。脚本自动识别架构，校验版本、SHA-256 和安装后的程序，macOS 另检查签名，适合 AI 和自动化使用。`<版本>` 替换为 Release 的完整版本号：
 
 ```bash
-curl -fL https://github.com/xrun-sh/xrun/releases/download/v0.1.0-rc.9/install.sh -o install.sh
-bash install.sh --version 0.1.0-rc.9
+curl -fLO https://github.com/xrun-sh/xrun/releases/download/v<版本>/install.sh
+bash install.sh --version <版本>
 ```
 
 ```powershell
-Invoke-WebRequest https://github.com/xrun-sh/xrun/releases/download/v0.1.0-rc.9/install.ps1 -OutFile install.ps1
-powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File .\install.ps1 -Version 0.1.0-rc.9
+Invoke-WebRequest https://github.com/xrun-sh/xrun/releases/download/v<版本>/install.ps1 -OutFile install.ps1
+powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File .\install.ps1 -Version <版本>
 ```
 
-整个过程通过 stdout 返回一条 JSON，失败时 `ok` 为 `false`、包含 `error.code` 和 `error.message`，进程退出码为 1；成功返回版本、安装路径、终端 CLI 的 `executable` 路径、`changed` 和自检结果。Windows 另返回 `helper_executable` 供检查后台 helper。重复安装相同产物时返回 `changed: false`。源码中的安装脚本位于 `scripts/`，也可直接从项目根目录执行。
+| install.sh | install.ps1 | 作用 |
+| --- | --- | --- |
+| `--version` | `-Version` | 必填，完整发布版本 |
+| `--install-dir` | `-InstallDir` | 安装父目录 |
+| `--source-dir` | `-SourceDir` | 从本地产物目录离线安装 |
+| `--base-url` | `-BaseUrl` | 从其他 HTTPS 产物目录下载 |
+| `--arch x86_64` | — | 在装有 Rosetta 的 Apple Silicon Mac 上安装 Intel 版 |
 
-macOS 默认识别设备的真实架构，即使终端通过 Rosetta 运行也会选择 arm64 包。已安装 Rosetta 的 Apple Silicon Mac 可用 `--arch x86_64` 安装 Intel 版，例如 `bash install.sh --version 0.1.0-rc.9 --arch x86_64`；Intel Mac 不支持安装 arm64 版。Windows 和 Linux 按系统架构自动选择原生包。
+默认安装位置：macOS 为 `~/Applications/xrun.app`，CLI 入口为 `~/.local/bin/xrun`；Windows 为 `%LOCALAPPDATA%\Programs\xrun`，CLI 在其 `cli` 子目录；Linux 为 `~/.local/bin/xrun`。Linux 需要 curl、tar、sha256sum，以及 jq 或 Python 3。
 
-默认下载地址是 `https://github.com/xrun-sh/xrun/releases/download/v<完整版本>/`。`--base-url`／`-BaseUrl` 可指定其他 HTTPS 产物目录。每个目录需包含对应的 `xrun-<系统>-<架构>.json` 清单及其引用的文件，系统为 `darwin`、`windows` 或 `linux`，架构为 `x86_64` 或 `arm64`。安装时不需要 Bun；产物准备见 [开发与发布](development.md#发布与内置文档)。
+脚本在 stdout 输出一条 JSON。成功时包含版本、安装路径、CLI 的 `executable` 路径、`changed` 和自检结果，Windows 另有 `helper_executable`；重复安装相同产物返回 `changed: false`。失败时 `ok` 为 `false`，附 `error.code` 和 `error.message`，退出码为 1。
 
-离线安装或验收本地打包产物时，用 `--source-dir`／`-SourceDir` 指定产物目录。例如 macOS：
-
-```bash
-bash scripts/install.sh --version 0.1.0-rc.9 --source-dir ./dist
-```
-
-默认 macOS App 安装到 `~/Applications/xrun.app`，CLI 入口为 `~/.local/bin/xrun`；Windows App 安装到 `%LOCALAPPDATA%\Programs\xrun`，CLI 位于其 `cli` 子目录；Linux CLI 安装到 `~/.local/bin/xrun`。`--install-dir`／`-InstallDir` 可指定父目录，AI 可直接使用 JSON 返回的 `executable` 路径调用程序。脚本安装程序并配置当前用户的终端 PATH；网络加入、设备授权和后台服务的启用继续使用现有 App 或 CLI 命令。
-
-macOS 更新前需关闭已安装的 App，脚本会正常停止旧 daemon，再替换文件；Linux CLI 更新也会先停止 daemon。相同产物的重复安装不停止服务。macOS App 和 Linux CLI 的替换或自检失败会恢复旧文件。Windows App 使用 NSIS 静默安装；服务准备失败时不会弹窗或替换程序，返回 32（更新）或 33（卸载），终端配置失败返回 34，诊断保存在安装目录的 `xrun-install-error.log`。
+更新时，macOS 需先关闭 App；脚本会正常停止旧服务再替换文件，替换或自检失败时恢复旧文件。Linux 同样先停止服务。Windows 静默运行安装程序：服务准备失败时不替换程序，返回 32（更新）或 33（卸载），终端配置失败返回 34，诊断写入安装目录的 `xrun-install-error.log`。脚本只负责安装，加入网络和授权仍使用 App 或 CLI。
 
 ## 开始使用
 
-先准备所有设备可访问的中转，见 `xrun doc relay`。中转部署在哪台服务器，不决定管理设备是谁。
+一个 xrun 网络包括：所有设备都能访问的**中转**、负责签发成员身份的**管理设备**，以及其他**成员设备**。设备都主动连接中转，不需要开放入站端口。
 
-例如在服务器部署 Linux 中转，或在本机授权 Cloudflare 部署中转，二选一：
+下面以 Mac `mac-pro` 为管理设备、Linux `linux1` 为成员设备。两台设备先完成安装；每一步都标明在哪台设备上操作。
+
+**1. 准备中转。** 选择一种部署方式，详见 `xrun doc relay`。
+
+使用 Cloudflare 时，在 Mac 上执行，并在浏览器中完成授权：
 
 ```bash
-xrun relay deploy --provider local --addr <服务器IP>:9528
 xrun relay deploy --provider cloudflare --name xrun-relay
 ```
 
-在你指定的管理设备 Mac 上使用部署输出的完整链接：
+使用自建中转时，在 Linux 服务器上执行：
 
 ```bash
-xrun connect '<完整中转部署链接>' --name mac-pro
+xrun relay deploy --provider local --addr <服务器IP>:9528
+```
+
+成功后输出完整的部署链接：Cloudflare 为 `https://…` 地址，自建中转为 `xrun-relay://…`。记下该链接，下一步在管理设备上使用。
+
+**2. 在 Mac 上创建网络。** 把 `<部署链接>` 换成上一步的完整链接：
+
+```bash
+xrun connect '<部署链接>' --name mac-pro
+```
+
+成功后显示本机名称和设备 ID，Mac 成为管理设备并启动后台服务。中转部署在哪台机器，不影响谁是管理设备；中转会永久绑定第一个在它上面创建的网络，一个中转只服务一个网络。
+
+**3. 在 Mac 上生成接入码：**
+
+```bash
 xrun invite
 ```
 
-`connect` 根据链接自动识别创建或加入。部署链接用于创建网络；本机成为管理设备，准备任务库并启动后台服务。中转验证签名后持久绑定该网络，一个中转只服务一个网络。其他设备必须使用管理设备发出的邀请；不能拿同一个部署链接另建网络。普通部署服务器只负责转发。
-
-`invite` 默认显示中转地址和八位接入码，例如 `K7M4-P9Q2`。在另一台设备手输：
+命令输出中转地址和八位接入码，例如 `K7M4-P9Q2`。在 Linux 上执行，将示例地址和接入码替换为实际输出：
 
 ```bash
-xrun connect 43.153.36.146:8080 K7M4-P9Q2
+xrun connect relay.example.com K7M4-P9Q2 --name linux1 --allow-manager
 ```
 
-支持自建中转的 IP/端口和 Cloudflare 域名，大小写、空格和连接符不影响接入码。设备名称默认使用主机名，可用 `--name` 修改。也可复制同一邀请码的短链接，例如 `xrun://relay.example#K7M4-P9Q2`。只有前两位会话编号发送给中转，后六位由设备之间的 PAKE 验证；通过后使用绑定本机公钥的强随机邀请和固定证书指纹完成注册。
+`--allow-manager` 允许管理设备访问这台新设备，不授予其他权限；省略时交互终端会询问，`--json` 或非交互调用视为拒绝。也可以使用同一接入码的短链接 `xrun://relay.example.com#K7M4-P9Q2`。自动化场景用 `xrun invite --link` 生成完整邀请，再执行 `xrun connect '<邀请>'`。
 
-每份短码十分钟内单次使用，管理设备服务必须在线。最多五次未通过验证的尝试，断线和验证超时也占用次数；中转重连不重置次数。管理设备服务重启会使尚未完成的短码失效。同一设备的接入重试使用本机私有配对回执，其他设备不能复用；已被撤销的密钥不能重入。完整邀请供自动化或传递多个中转地址使用：
+成功后显示 `linux1` 和设备 ID，并启动 Linux 的后台服务。
 
-```bash
-xrun invite --link
-```
-
-在 Linux 或 Windows 上，各用一份新邀请加入，并明确允许管理设备访问本机：
-
-```bash
-xrun connect '<Linux的邀请>' --name linux1 --allow-manager
-xrun connect '<Windows的邀请>' --name win1 --allow-manager
-```
-
-每份邀请 10 分钟内单次使用，加入时管理设备后台服务必须在线。`--allow-manager` 只允许已验证的管理设备访问这台设备，不给管理设备增加反向访问授权，也不授权其他成员。省略这个选项时，交互终端会询问是否允许管理设备访问；`--json` 或非交互调用默认仅注册并明确拒绝管理设备访问本机。之后可以用 `allow-from` 改变授权。
-
-回到管理设备验证：
+**4. 回到 Mac 验证：**
 
 ```bash
 xrun status
 xrun linux1 -- uname -s
-xrun win1 -- cmd /c ver
 ```
 
-没有可用 systemd 用户服务的 Linux 容器，用 `--no-daemon`，随后交给环境进程管理器或在单独终端运行 daemon：
+`status` 中应出现 `linux1`，连接状态为 `relay-connected`；远程命令输出 `Linux` 且退出码为 0，表示连接、授权和执行均已成功。
+
+如果返回 `SOURCE_NOT_ALLOWED`，在 Linux 上执行 `xrun allow-from mac-pro` 后重试；如果返回 `DEVICE_OFFLINE`，先在 Linux 上用 `xrun status` 检查服务，已停止时执行 `xrun daemon start`。其他错误见 `xrun doc errors`。
+
+几条规则：
+
+- 接入码 10 分钟内有效，只能使用一次，最多尝试 5 次；大小写、空格和连字符不影响输入。重新生成会作废上一份，管理设备的服务重启后，未使用的接入码也会失效。
+- 加入时管理设备的服务必须在线。加入网络不等于获得访问权限，见 `xrun doc access`。
+- **管理设备需要保持在线。** 它定期续签成员有效期，默认 15 分钟。离线超过有效期后，网络中新的远程操作返回 `ROSTER_EXPIRED`，已受理的任务继续运行，见 `xrun doc network`。
+- 没有 systemd 用户服务的 Linux 容器，加 `--no-daemon` 只准备身份，再用外部进程管理器运行 `xrun daemon`。
+- 也可以使用显式命令：`xrun up --relay <部署链接>` 创建网络并立即输出一份邀请，`xrun join <邀请>` 只接受成员邀请。
+- 桌面 App 的“新建网络”可以一次完成第 1、2 步，见 `xrun doc desktop`。
+
+## 中转部署
+
+中转接通设备之间的连接，转发端到端加密的数据。两种中转功能相同：
+
+| | Cloudflare | 自建 Linux |
+| --- | --- | --- |
+| 运行位置 | 你的 Cloudflare 账号（Worker + Durable Object） | 所有设备都能访问的 Linux 主机 |
+| 部署命令 | 可在 macOS、Windows、Linux 上运行 | 在中转主机上运行，需要 systemd |
+| 地址 | `https://<名称>.<子域>.workers.dev` 或自定义域名 | `xrun-relay://<地址>/<证书指纹>` |
+| 并发会话 | 每个网络 8 个 | 每个来源 16 个、每个目标 32 个 |
+
+### Cloudflare
 
 ```bash
-xrun connect '<完整成员邀请>' --name linux1 --allow-manager --no-daemon
-xrun daemon
+xrun relay deploy --provider cloudflare --name xrun-relay
 ```
 
-管理设备也可使用 `connect --no-daemon`，但之后必须运行 daemon 才能接受新设备加入。已有成员日常执行不要求管理设备在线，只需要中转、两端在线且证书和授权有效。
+命令会打开浏览器，在 Cloudflare 登录并授权 xrun；有多个账号时在终端选择，或用 `--account <账号ID>` 指定。CLI 直接上传内置的 Worker，不需要源码、Node.js 或 Wrangler。账号还没有 workers.dev 子域名时会自动创建；如果 Cloudflare 仍要求初始化，在控制台打开一次 Workers & Pages 后重试。
 
-显式命令 `up --relay`、`join` 仍可使用：`up` 创建网络并立即生成邀请，`join` 仅接受成员邀请。`join --allow-manager` 可在加入时添加单向授权。
+- 成功后输出完整的 HTTPS 地址。同名重复部署会更新代码，保留地址和数据；同名 Worker 属于其他应用时返回 `ALREADY_EXISTS`，不会覆盖。
+- `--region` 为新建的存储对象提供位置提示：`auto`（默认，按连接位置选择）、`wnam`、`enam`、`sam`、`weur`、`eeur`、`apac`、`apac-ne`、`apac-se`、`oc`、`afr`、`me`。只对首次创建的对象生效，实际位置由 Cloudflare 决定。
+- 授权默认是临时的，操作完成后立即撤销。部署记录保存在 `~/.xrun/cloudflare/`，以后更新和删除都依赖它，请保留。需要经常维护中转时，可以在创建网络后的管理设备上用 `xrun relay login --provider cloudflare --remember` 把登录保存到系统凭据库（macOS 钥匙串、Windows 凭据管理器、Linux Secret Service），其他设备不能记住登录；`xrun relay logout --provider cloudflare` 撤销并删除登录，已部署的中转保留。
+- 自定义域名：在 Cloudflare 控制台的 Worker → Settings → Domains & Routes 中添加 Custom Domain（域名须在你自己的 Cloudflare zone 中），创建网络时直接使用 `https://relay.example.com`。已有网络改用新地址时，在管理设备上停止服务，执行 `xrun up --relay 'https://relay.example.com'`，再启动服务。
+- 每个方向最多 4 MiB 未确认的数据在途，单个文件大小没有固定上限。
 
-## 部署进度与自动化
+### 自建 Linux 中转
 
-Cloudflare 授权回到本机回调页时，桌面 App 自动切回前台。回调只表示授权码收到，之后仍需验证授权、读取账户、部署并检查中转。桌面分别显示这些阶段、累计耗时和可展开的阶段耗时。网络创建与临时授权撤销并行，服务连接也有明确的检查和超时；授权清理失败不会重新创建网络或覆盖连接错误。
+在中转主机上执行：
 
-桌面可选择本机已保存的中转继续创建网络，重试连接时不再次上传 Worker。名称被其他 Worker 占用时展开名称输入，不覆盖未知的远端资源。服务启动失败保留已创建的身份，使用本机启动服务入口重试。
+```bash
+xrun relay deploy --provider local --addr 203.0.113.10:9528
+```
 
-CLI 的普通模式在 stderr 显示阶段与耗时，stdout 保留最终地址和下一步命令。机器模式使用：
+命令安装 systemd 用户服务并启用 linger，中转随开机启动，异常退出后自动重启。默认监听 TCP 9528，仅支持 IPv4，防火墙和安全组的端口需要自行放行。
+
+| 选项 | 作用 |
+| --- | --- |
+| `--addr <主机>:<端口>` | 设备连接的地址，可重复或用逗号分隔，指定后持久保留；域名需要有 A 记录 |
+| `--port <端口>` | 实际监听端口，默认 9528；可以与发布地址中的端口不同（端口映射） |
+| `--no-detect` | 省略 `--addr` 时只使用网卡地址，不查询公网出口 IP |
+
+省略 `--addr` 时自动探测网卡 IPv4 和公网出口地址。出口地址不保证外部可达，长期使用建议固定 IP 或域名。部署链接包含中转证书指纹，可以重复使用，重启后不变；它不是访问凭据。中转主机也可以另外作为普通成员加入网络，两者互不影响。
+
+### 查看、检查与移除
+
+```bash
+xrun relay link --provider cloudflare --name xrun-relay    # 从本机记录读取地址，不联网
+xrun relay check --provider cloudflare --name xrun-relay   # 检查连通和协议，最多 30 秒
+xrun relay remove --provider cloudflare --name xrun-relay --purge
+xrun relay link --provider local
+xrun relay remove --provider local
+```
+
+`relay check` 不重新授权，不上传代码，也不创建网络。删除 Cloudflare 中转必须加 `--purge`，会永久删除 Worker、全部中转数据和流量统计；只接受本机有部署记录、且远端归属标记匹配的实例。删除失败可以重复执行；删除开始后如需重新部署，请换一个名称。`remove --provider local` 卸载服务，保留配置和统计。`xrun relay run --provider local` 在前台运行已配置的本地中转，用于调试或交给外部进程管理。
+
+### 部署进度与自动化
+
+普通模式在 stderr 显示各阶段和耗时，stdout 只输出最终地址和下一步命令。脚本和 AI 使用 `--json`：
 
 ```bash
 xrun relay deploy --provider cloudflare --name xrun-relay --no-browser --json
 xrun relay check --provider cloudflare --name xrun-relay --json
-xrun relay link --provider cloudflare --name xrun-relay --json
 ```
 
-`--json` 下 stdout 仅用于最终 JSON，成功或已保存中转时返回一条结果；创建前失败的错误从 stderr 返回。stderr 是逐行 JSON 的进度和错误，启用 `RUST_LOG` 后诊断日志也为 JSON。进度事件的 `event` 为 `deployment_progress`，包含 `operation_id`、`sequence`、`timestamp_ms`、`stage`、`status`、`elapsed_ms` 和 `stage_elapsed_ms`。等待授权时提供 `authorization_url`，需要选账号时提供 `accounts`，中转保存后提供 `deployment` 与 `next_command` 参数数组；AI 应根据阶段和错误码操作，而不是分析提示文案。授权码、访问令牌、刷新令牌和 PKCE verifier 不出现在这些事件中。
-
-`--no-browser` 仅关闭自动打开浏览器，命令继续等待授权，默认最长 5 分钟；授权页必须在执行命令的同一台机器打开。AI 可将 `authorization_url` 交给人完成授权并继续读取进度。无人值守部署可通过 `CLOUDFLARE_API_TOKEN` 提供用户配置的 API Token，并用 `--account` 或 `CLOUDFLARE_ACCOUNT_ID` 明确账户。JSON 模式不会进入终端账户选择；多个账户未指定时返回 `INTERACTIVE_REQUIRED`。
-
-部署结果包含 `deployed`、`ready`、`authorization_cleanup` 和 `next_command`。Worker 已保存但连接检查或授权清理失败时，stdout 仍返回已创建中转、`ready` 状态及 `error`，退出码保持非零；不要据此换名重复创建。`relay check` 不要求重新授权，不上传代码、不创建身份、不认领中转，最多等待 30 秒；传输证书和协议校验继续生效。连接恢复后，用原地址执行 `xrun up --relay <地址> --name <设备名> --json` 创建网络；邀请链接和有效期从最终结果读取。桌面 `NETWORK_CREATED_CLEANUP_FAILED` 表示网络已连接，仅需重试撤销授权。未知同名 Worker 返回 `ALREADY_EXISTS`，须更换名称。
-
-Ctrl+C 取消 Cloudflare 操作并以 130 退出；已有部署记录保留，可用同一 `--name` 继续。取消期间会尝试结束临时授权，再次 Ctrl+C 强制结束；强制退出或授权撤销失败后，可在 Cloudflare 账号中撤销 xrun 应用授权。临时 `relay login` 只验证授权并撤销，重复维护且希望保留登录的管理设备使用 `relay login --provider cloudflare --remember`。
-
-阶段耗时记录在 `~/.xrun/deployment.log`，最多保留约 1 MiB，只记录时间、操作编号、阶段、状态、耗时和错误码，不记录授权 URL、令牌或错误正文。错误参数和 `--dry-run` 不创建此日志；这些本机诊断文件不参与活动附件保留策略。
+- stdout 只有一条最终 JSON，stderr 是逐行 JSON 事件。进度事件的 `event` 为 `deployment_progress`，包含 `operation_id`、`sequence`、`timestamp_ms`、`stage`、`status`、`elapsed_ms` 和 `stage_elapsed_ms`；等待授权时附 `authorization_url`，需要选择账号时附 `accounts`，中转保存后附 `deployment` 和 `next_command`。事件中不含授权码或令牌。请按阶段和错误码判断，不要解析提示文字。
+- `--no-browser` 只是不自动打开浏览器，命令仍会等待授权，最长 5 分钟。授权页必须在运行命令的同一台机器上打开，回调使用 `127.0.0.1` 的 8976、8977 或 8978 端口。
+- 无人值守部署可以用 `CLOUDFLARE_API_TOKEN` 提供 API Token，并用 `--account` 或 `CLOUDFLARE_ACCOUNT_ID` 指定账号；令牌不会写入部署记录。JSON 模式下有多个账号但未指定时，返回 `INTERACTIVE_REQUIRED`。
+- 结果包含 `deployed`、`ready`、`authorization_cleanup` 和 `next_command`。Worker 已保存、但连接检查或授权清理失败时，stdout 仍返回已创建的中转和 `error`，退出码非零。此时不要换名重新部署：先运行 `relay check`，恢复后执行 `xrun up --relay <地址> --name <设备名> --json`。
+- Ctrl+C 取消操作并以 130 退出，已有的部署记录保留，用同一 `--name` 即可继续。强制退出或授权撤销失败时，可以在 Cloudflare 账号中手动撤销 xrun 的授权。
+- `--dry-run --json` 只检查内置的 Worker，不登录，也不修改 Cloudflare。
+- 各阶段耗时记录在 `~/.xrun/deployment.log`（约 1 MiB 封顶），不含授权地址、令牌或错误正文。
 
 ## 访问权限
 
-管理设备签发成员身份，被控设备决定访问授权，中转接通连接并转发密文。成员身份不自动授予执行、文件、截图、任务查询或转发权限。
+xrun 把三件事分开：管理设备决定**谁是成员**（邀请、撤销），目标设备决定**谁能访问自己**，中转只负责转发。成员身份本身不带任何执行、文件、截图或转发权限。
 
-`connect` 自动识别链接：`xrun-relay://` 部署链接或 Cloudflare HTTPS 地址用于创建网络，`xrun://` 成员邀请用于加入。部署链接可用于同一管理设备重试；成员邀请 10 分钟内单次使用。完整链接应通过可信渠道传递。
-
-在被控设备执行，例如 Linux 允许或拒绝 Mac：
+在目标设备上授权，例如允许 mac-pro 访问本机：
 
 ```bash
-xrun allow-from mac1
-xrun deny-from mac1
+xrun allow-from mac-pro    # 允许
+xrun deny-from mac-pro     # 拒绝，并关闭它的现有会话
+xrun allow-from --all      # 信任所有成员，包括以后加入的
+xrun deny-from --all       # 关闭全体信任，保留单独的允许和拒绝
+xrun daemon pause          # 暂停全部远程访问
+xrun daemon resume         # 按原授权恢复
 ```
 
-只允许管理设备生成邀请和撤销成员：`xrun invite`、`xrun revoke win1`。希望管理设备访问新成员时，用 `xrun invite --allow` 或 `xrun up --allow` 申请，由新设备明确确认。双向访问需要双方分别执行 `xrun allow-from <来源设备>`；邀请不会自动允许新成员访问管理设备。允许访问等于目标设备当前用户的命令执行权，应只授权可信设备。
+- **允许访问，就是交出目标设备当前用户的权限**：执行命令、读写文件、截图和端口转发。只授权可信的设备。
+- 判断顺序：未撤销的成员 → 本机未暂停 → 未被单独拒绝 → 在允许列表中，或开启了全体信任。授权保存在本机，重启后保留。
+- 授权是单向的，双向访问需要两台设备分别 `allow-from` 对方。`xrun invite --allow`（或 `up --allow`）只是请求新设备允许管理设备访问，由新设备确认；邀请从不让新成员获得访问管理设备的权限。
+- 管理设备默认拒绝远程操作，可以逐台 `allow-from`，但不接受 `allow-from --all`（返回 `MANAGER_PROTECTED`）。被允许的设备能接触管理设备上的网络管理密钥，请格外谨慎。
+- 设备名只是别名，授权和记录都使用不可变的设备 ID；命令也接受 32 位十六进制的设备 ID。
+- `deny-from` 和暂停会关闭现有会话、流式执行和端口转发；已受理的可靠任务继续运行。
 
-管理设备默认拒绝远程操作，但可以逐台允许可信成员访问本机。管理设备上执行 `xrun allow-from win1` 后，win1 可以用 `xrun mac-pro -- <程序> <参数>` 操作管理设备，包括命令、文件、截图和转发；`xrun deny-from win1` 关闭该授权。桌面在“设备”列表打开该成员的“允许访问本机”开关。授权在服务重启后保留；管理设备不支持 `allow-from --all`。管理身份和邀请权限不因该授权转移；获准操作管理设备当前用户的成员可以接触本机管理密钥，因此应只授权可信设备。
-
-撤销使用管理设备签名的成员清单，通过设备间加密连接同步，并报告未确认收到的设备；已收到记录的设备拒绝被撤销来源。离线设备或被中转隔离的设备可能尚未收到记录，紧急阻断在目标本机执行 `deny-from` 或暂停访问。已受理的可靠任务继续按任务语义处理。
-
-全体信任、暂停和恢复同样在被控设备操作：
+撤销成员只能在管理设备上执行：
 
 ```bash
-xrun allow-from --all
-xrun deny-from --all
-xrun daemon pause
-xrun daemon resume
+xrun revoke win1
 ```
 
-设备名是别名，认证、白名单和去重使用不可变设备 ID；命令也接受不带前缀的 32 位十六进制设备 ID。daemon 以当前用户权限运行。`allow-from --all` 包含当前和未来加入的未撤销成员，单独拒绝优先；`deny-from --all` 只关闭全体信任，保留单独允许和拒绝记录。
+管理设备签署新的成员清单，同步给中转和在线设备，并列出尚未确认收到的设备。收到更新的设备立即拒绝被撤销的设备；已受理的任务不会被取消或回滚。离线设备上线后才能收到更新，需要立即阻断时，在目标设备上执行 `deny-from` 或暂停访问。被撤销的密钥不能重新加入。
 
-`deny-from` 拒绝指定来源；`pause` 暂停本机远程访问并使已有业务会话失效，恢复后按原授权重新建立会话。两者都保留已受理的可靠任务，但会清理流式进程和转发连接。`revoke` 则撤销网络成员身份，在收到签名更新的设备上生效，不取消已有可靠任务或回滚副作用。
+### 安全模型
+
+- 设备之间在中转隧道内建立双向 TLS，用网络自己的根证书验证身份。命令、参数、环境变量、输入输出、文件和截图只有通信两端可见。
+- 中转能看到网络 ID、连接时出示的成员证书、来源 IP、在线状态、连接时间和流量大小；它保存网络归属、管理设备签名的成员清单（设备 ID、名称、密钥指纹和撤销状态）及其有效期，以及流量统计。中转不能伪造成员、授予权限或解密业务数据，但可以中断连接或延迟转发更新。
+- 网络根私钥只在管理设备上。丢失后无法再签发或撤销成员，请用 `xrun network backup` 加密备份。
+- 本机数据目录 `~/.xrun` 包含私钥、数据库和日志，应按敏感数据保管。远端输出原样传回，终端控制字符和提示注入需要调用方自行防范。
+
+## 网络管理
+
+`xrun network` 管理成员有效期、局域网直连、传输压缩和管理身份。桌面 App 在“设置”中提供相同的选项。
+
+### 成员有效期
+
+```bash
+xrun network lease       # 查看
+xrun network lease 60    # 在管理设备上设为 60 分钟（1–1440）
+```
+
+管理设备在线时，大约每过三分之一有效期就续签一次成员清单，默认有效期 15 分钟。设备和中转只接受有效期内的清单：管理设备离线超过有效期后，新的远程操作（包括任务查询）返回 `ROSTER_EXPIRED`；已受理的任务继续运行，本机活动照常可看。管理设备恢复在线后自动续签。
+
+有效期越长，管理设备可以离线越久；但中转如果扣住撤销更新，旧清单也能继续使用更久。各设备的时钟应保持同步。此外，成员证书最长有效 365 天，剩余不足 30 天时自动续期，续期同样需要管理设备在线。
+
+### 局域网直连
+
+```bash
+xrun network direct                 # 列出本机内网 IPv4 接口和当前设置
+xrun network direct 192.168.1.10    # 在该内网地址上启用直连
+xrun network direct --off
+```
+
+两台设备都选择了同一内网的接口时，连接会优先尝试直连。直连只在所选地址的随机端口上监听，不扫描网络，也不做 UPnP；地址只通过已认证的加密连接交换，身份验证和授权与走中转时相同。直连失败时，在发送请求前自动改走中转。直连流量不计入中转统计，设备信息会显示上次连接是“直连”还是“中转”。
+
+### 传输压缩
+
+```bash
+xrun network compression          # 查看
+xrun network compression auto     # 默认：至少节省 1/8 时才压缩
+xrun network compression none     # 不压缩
+xrun network compression zstd     # 总是尝试 zstd，但不会让数据变大
+```
+
+设置只影响本机发出的文件和日志。PNG、JPEG、WebP、ZIP、GZIP、Zstd 和 MP4 等已压缩格式会直接跳过，压缩也不改变落盘的内容。
+
+### 备份与交接管理身份
+
+以下命令在终端中输入隐藏密码，密码至少 12 个字符。自动化可以用 `--password-stdin` 从 stdin 读取一行。备份包含管理身份、网络根私钥和成员数据库快照，不包含 Cloudflare 登录凭据。
+
+下文用 CLI 服务命令演示启停；由 App 管理的服务，可在“设置 → 网络与服务”中完成启停。
+
+#### 备份与恢复
+
+在当前管理设备上生成加密备份，并将文件和密码分别妥善保存：
+
+```bash
+xrun network backup ./xrun-manager.backup
+```
+
+需要恢复时，先把备份复制到恢复用的设备，再在该设备上执行：
+
+```bash
+xrun daemon stop
+xrun network restore ./xrun-manager.backup --json
+xrun daemon start
+xrun status --json
+```
+
+新安装、尚未注册服务的设备可以省略 `stop`，恢复后用 `xrun daemon install` 代替 `start`。成功后，`restore` 返回的 `manager_id` 应与 `status --json` 中的 `local.device_id` 一致；服务连接后，`local.daemon_connected` 为 `true`。
+
+密码错误或文件损坏时不会覆盖现有身份。恢复会核对中转上的最新成员清单，保留之后发生的撤销，并清空允许访问列表，需要重新 `allow-from`。同一份管理身份恢复到另一台机器后，原机器发现新的管理代次时会删除根私钥并停止服务。
+
+#### 交接给已有成员
+
+下面把管理身份交给已加入网络的 Linux 设备 `linux1`。先确认它允许当前管理设备访问，然后在**旧管理设备**上生成并传送交接文件：
+
+```bash
+xrun network migrate linux1 --out ./xrun-handover.backup
+xrun linux1 push ./xrun-handover.backup /tmp/xrun-handover.backup --no-overwrite
+```
+
+生成文件后，旧管理设备照常工作。文件传送成功后，在 **linux1 本机**停止服务、导入并重新启动：
+
+```bash
+xrun daemon stop
+xrun network restore /tmp/xrun-handover.backup --json
+xrun daemon start
+xrun status --json
+```
+
+确认 `restore` 返回的 `manager_id` 与 `status --json` 中的 `local.device_id` 一致，且 `local.daemon_connected` 为 `true`。旧管理设备收到更新后会自动撤销 Cloudflare 登录、删除根私钥，成为普通成员。其他设备的访问授权不会自动转给 linux1，需要在各目标设备上单独 `allow-from linux1`。
+
+密码错误或校验失败时保留原有身份，可修正后重新导入。网络始终只有一台管理设备，不支持多管理设备或根密钥轮换。
 
 ## 执行程序
-
-在调用设备指定目标、远端工作目录、程序和参数：
 
 ```bash
 xrun linux1 -C /home/user/demo -- cargo test
 xrun win1 -C 'D:\demo' -- cargo build
-xrun linux1 --env MODE=test --env RUST_LOG=info -C /home/user/demo -- ./demo
+xrun linux1 --env RUST_LOG=info --env MODE=test -C /home/user/demo -- ./demo
 ```
 
-`--` 分隔 xrun 选项和远端程序参数。目标 daemon 使用自己的 PATH 查找程序，调用设备的 PATH 不会自动传过去；必要时用完整路径。Shell 的管道、变量展开、重定向需要显式选择 Shell，否则由调用设备的 Shell 解释。
+`--` 之后的内容原样交给远端程序。xrun 直接启动程序，不经过 Shell，所以管道、重定向和变量展开都由本机 Shell 处理。目标用自己后台服务的 PATH 查找程序（见 `xrun doc config`），找不到时请写完整路径。
 
-前台可靠执行在提交命令的同一会话中接收日志和最终结果。本机运行 daemon 时，CLI 自动复用同一设备对的加密通道，每条通道最多并行 32 个独立操作流；每次操作仍检查授权。每台本机最多保留三条空闲通道，每个目标一条，空闲 5 分钟后关闭。当前协议 1 的中转在满额时可回收最早归还的空闲缓存，正在执行的会话不受影响；复用前先确认通道仍有效，缓存失效时重新建连，不重发业务请求。本机未运行 daemon 时仍可直接发起调用。
-
-执行默认超时 30 分钟，`start` 默认不限时；用 `--timeout 秒` 覆盖，0 表示不限时。`wait --timeout 秒` 只限制等待，不取消任务。`-C` 必须是远端绝对目录，省略时使用 daemon 默认目录。`--env KEY=VALUE` 可重复指定；`--stdin` 提交前读完输入，最多 1 MiB。
-
-执行不会隐式启动 Shell。脚本从 stdin 读取，Shell 名称必填，支持 sh、bash、zsh、powershell、pwsh 和 cmd。PowerShell 脚本使用 UTF-8；cmd 脚本仅接受 ASCII，其脚本参数不接受双引号或换行：
+需要 Shell 时，用 `--script` 从 stdin 传入脚本，并明确指定 `sh`、`bash`、`zsh`、`powershell`、`pwsh` 或 `cmd`：
 
 ```bash
 xrun linux1 -C /repo --script bash < ./build.sh
 xrun win1 -C 'D:\demo' --script powershell < ./build.ps1
+printf 'hello\n' | xrun linux1 --stdin -- cat
 ```
 
-可靠输入示例：
+PowerShell 脚本使用 UTF-8；cmd 脚本只接受 ASCII，脚本参数不能包含双引号或换行。Windows 批处理文件需要通过 `--script cmd` 或 `cmd.exe /C` 运行，否则返回 `SHELL_REQUIRED`。
 
-```bash
-printf '%s\n' 'hello' | xrun linux1 --stdin -- cat
-```
+| 选项 | 作用 |
+| --- | --- |
+| `-C <目录>` | 远端绝对工作目录，省略时使用目标的默认目录（默认为主目录） |
+| `--env KEY=VALUE` | 设置远端环境变量，可重复 |
+| `--stdin` | 提交前读完本地 stdin 并一起发送，最多 1 MiB |
+| `--script <shell>` | 从 stdin 读取脚本，最多 1 MiB |
+| `--timeout <秒>` | 超时时间，前台执行默认 1800，0 表示不限 |
+| `--request-id <ID>` | 恢复同一次提交，见 `xrun doc errors` |
+| `-i` | 流式执行，见 `xrun doc streaming` |
 
-普通执行属于可靠任务；受理后任务和结果在目标保存。需要立即返回用 `start`，需要与连接一同结束用 `-i`。
+前台执行原样输出远端的 stdout 和 stderr，并以远端退出码退出。它是**可靠任务**：一旦受理，目标会执行到结束并保存结果，CLI 断线不影响任务。CLI 会在 30 秒内尝试重连并补读日志，仍无法确认结果时返回 75。
+
+目标默认最多同时运行 4 个命令（含流式执行），已满时返回 `DEVICE_BUSY`，不排队。本机后台服务运行时，CLI 会复用到同一目标的加密连接，省去重复握手。
 
 ## 任务与日志
 
-在调用设备启动后台任务：
+`start` 在任务受理后立即返回任务引用，例如 `linux1/ABC123`；后台任务默认不限时：
 
 ```bash
 xrun linux1 start -C /home/user/demo -- ./server
-```
-
-返回包含目标和六字符任务 ID 的任务引用。以下 ABC123 替换为实际返回值，也可使用完整任务引用，无需预生成 UUID。
-
-```bash
 xrun linux1 jobs --running
 xrun linux1 jobs ABC123 --json
 xrun linux1 logs ABC123 --tail 40
@@ -238,174 +372,232 @@ xrun linux1 wait ABC123 --timeout 60
 xrun linux1 kill ABC123
 ```
 
-`jobs` 查询目标设备上由本机身份提交的所有操作 Job，默认每页 50 条，可用 `--limit`、`--offset` 分页；`recent` 只列本机最近 24 小时的提交记录，不代表远端任务当前状态。App 的「活动」读取本机作为目标执行的记录。
+把 ABC123 换成实际返回的六位 ID，也可以直接使用完整引用。自动化可以用 `start --json` 读取任务 ID。
 
-`jobs` 指定 ID 时不能同时用 `--running` 或 `--request-id` 列表过滤条件。`logs` 只适用于普通可靠 exec，流式命令、文件、截图和转发没有命令输出日志。`logs` 默认读快照，`--follow` 补读后跟随，`--after N` 从日志序号之后读，`--tail N` 由目标端截取末尾行，避免下载整份日志；`--after` 与 `--tail` 互斥。缺失、截断、过期或不完整日志会提示。
+- `jobs` 列出本机在目标上提交的所有操作，包括命令、流式执行、文件传输、截图和端口转发。默认每页 50 条，用 `--limit`、`--offset` 翻页，`--running`、`--request-id` 过滤。指定 ID 时查看单个任务，此时不能使用过滤选项。
+- `logs` 只适用于普通命令。默认读取当前快照；`--follow` 补读后持续跟随；`--after N` 从序号 N 之后读；`--tail N` 只取最后 N 行，由目标端截取。`--after` 和 `--tail` 不能同时使用。
+- `wait` 等到任务结束，再显示最后 40 行（用 `--tail` 修改）。`--timeout` 只限制等待时间，不取消任务；无法确认结果时返回 75。
+- `kill` 请求取消并等待确认。Unix 先发 SIGTERM，5 秒后发 SIGKILL；Windows 结束任务的整个进程树。
+- 每台设备只能查询和控制自己提交的任务。
+- `xrun recent` 列出本机最近 24 小时的提交记录，用于找回 request_id；它不代表远端任务的当前状态。
 
-`wait` 默认不限等待时间，显示最后 40 行；`--timeout` 同时限制任务等待和尾部日志读取，不取消任务。任务结果未确认时返回 75；任务结果已经确认、只有日志读取失败或超时时，保留任务退出码，并在 `logs_error` 或 stderr 说明。`kill` 请求取消并等待确认。可靠任务不随 CLI / 中转断线结束；daemon 正常停止会取消本机任务，崩溃重启后未完成任务，以及启动后无法保存最终结果的任务标记 lost，不自动重跑。
+| 状态 | 含义 |
+| --- | --- |
+| `accepted` / `running` | 已受理 / 正在运行 |
+| `succeeded` | 成功 |
+| `failed` | 失败，包括非零退出；结果中保留退出码和错误 |
+| `canceled` / `timed_out` | 已取消 / 已超时，受管理的进程都已停止 |
+| `interrupted` | 文件传输中断，等待用 `resume` 继续 |
+| `lost` | 目标服务崩溃等原因导致结果无法确认，可能已经执行过 |
 
-任务查询、日志和取消只操作当前来源提交的任务，不授予其他来源的任务控制权。结果恢复见状态与排错章节。
+任务不会自动重跑。目标服务正常停止时会取消运行中的任务；崩溃重启后，未完成的任务标记为 `lost`。每个任务最多保存 64 MiB 日志（超出部分标记 `TRUNCATED`），全部日志最多 1 GiB；已结束任务的日志保留 7 天，任务记录本身长期保留。
+
+## 自动化与 AI
+
+先用 `xrun doc --list` 找章节、用 `xrun help <命令>` 确认参数。组网完成后，以下流程可用于 AI agent 和脚本；示例目标是已授权的 Linux 设备 `linux1`。
+
+### 提交、查询与等待
+
+**1. 检查本机与目标。** 在发起操作的设备上执行：
+
+```bash
+xrun status --json
+xrun linux1 info --json
+```
+
+`status` 用于发现设备和检查本机状态；它正常退出时仍可能带有非空的 `server_error`，此时先处理发现错误。确认 `info` 返回的 `online` 为 `true` 后再提交。首次组网见 `xrun doc quickstart`，Cloudflare 自动部署见 `xrun doc relay`。
+
+**2. 提交任务。** 为每个新任务生成并保存一个唯一的 `request_id`，重试时沿用。下面的 UUID 仅作示例：
+
+```bash
+xrun linux1 start --json --request-id 9cb402ae-47fa-4a58-94ac-e84ffac87ca9 -- echo xrun-ok
+```
+
+退出码为 0 表示任务已受理。stdout 是 Job 对象，例如（仅保留关键字段）：
+
+```json
+{
+  "job_id": "ABC123",
+  "request_id": "9cb402ae-47fa-4a58-94ac-e84ffac87ca9",
+  "state": "accepted"
+}
+```
+
+**3. 用返回的 `job_id` 查询或等待。** 将 ABC123 换成实际值：
+
+```bash
+xrun linux1 jobs ABC123 --json
+xrun linux1 wait ABC123 --timeout 60 --json
+```
+
+`jobs <ID>` 返回 Job 对象，`jobs --request-id <ID>` 返回 Job 数组，`wait` 返回包含 `job`、`logs` 和 `logs_error` 的对象。任务成功后，`wait` 的 stdout 例如（仅保留关键字段）：
+
+```json
+{
+  "job": {
+    "job_id": "ABC123",
+    "state": "succeeded",
+    "result": { "exit_code": 0, "signal": null }
+  },
+  "logs": [
+    { "seq": 1, "stream": "stdout", "data_base64": "eHJ1bi1vawo=" }
+  ],
+  "logs_error": null
+}
+```
+
+日志中的 Base64 解码为 `xrun-ok\n`。`start` 成功后还需检查最终的 `job.state` 和 `job.result`；`wait` 的退出码反映任务结果。`logs_error` 表示读取日志遇到问题，不改变已确认的任务结果。
+
+### 失败后的下一步
+
+例如，`wait --timeout 60 --json` 等待超时，退出码为 75、stdout 为空，stderr 返回：
+
+```json
+{
+  "type": "error",
+  "code": "WAIT_TIMEOUT",
+  "message": "waiting for task timed out; query jobs/logs for its result"
+}
+```
+
+等待超时不会取消或重新启动任务。根据操作选择下一步：
+
+| 情况 | 下一步 |
+| --- | --- |
+| `start` 返回 75，尚未拿到 `job_id` | 用原 `request_id` 执行 `jobs --request-id <ID> --json`；找到后查询或等待该 Job |
+| `wait` 返回 75，尚无已确认的终态 Job | 再次查询或等待同一个 Job |
+| 已确认 `failed`、`timed_out` 或 `canceled` | 读取结果和日志，决定是否用新的 `request_id` 发起新任务 |
+| `lost` 或 `DB_RESET` | 结果无法确认，核实实际操作结果后再决定是否重新执行 |
+| 文件传输中断 | 使用 `xrun <设备> resume <request_id>`，见 `xrun doc files` |
+
+先检查 stdout 中是否已有终态 Job：远端程序本身也可能返回 75，此时按已确认的任务结果处理。查不到 Job 不代表操作未执行。需要恢复同一次命令提交时，保持原目标、参数、输入和 `request_id`，见 `xrun doc errors`；不要因为查询失败就换新 ID 重跑。
+
+stdout 和 stderr 分开读取，按退出码、结构化字段和错误码判断。stderr 可能包含多条诊断或进度事件，部分参数错误仍为文本，不要把整段 stderr 当成一个 JSON。安装脚本使用 `ok` 字段，上述 CLI 命令直接返回各自的数据结构。
 
 ## 文件与截图
 
-在调用设备执行，路径按源、目标排列：
+push 和 pull 一次传一个文件，参数按“源、目标”的顺序：
 
 ```bash
 xrun linux1 pull /home/user/demo/config.json ./config.json --json
-# 本地编辑后上传
-xrun linux1 push ./config.json /home/user/demo/config.json
-xrun linux1 push ./result.txt /home/user/demo/output/result.txt --mkdir
-xrun win1 screenshot ./screen.png --json
+xrun linux1 push ./config.json /home/user/demo/config.json --expect '<pull 返回的 sha256>'
+xrun linux1 push ./result.txt /home/user/demo/out/result.txt --mkdir
+xrun linux1 pull /repo/config.json -               # 输出到 stdout
+printf 'hello\n' | xrun linux1 push - /repo/note.txt
 ```
 
-`--mkdir` 创建远端目标父目录。相对远端路径在目标默认目录解析，或用 `-C` 指定远端绝对目录；本地路径以调用设备当前目录为准。
+- 原样传输字节，不转换编码、BOM 或换行。按 64 KiB 分块传输，文件大小没有固定上限。完整接收并通过 SHA-256 校验后才原子替换目标，传输中断不会损坏已有文件。
+- 远端相对路径相对于 `-C` 或目标的默认目录，本地相对路径相对于当前目录。`--mkdir` 创建远端父目录。pull 省略本地路径时保存到临时文件，stdout 输出它的绝对路径。
+- `--expect <sha256>` 只在远端文件仍是该内容时覆盖，否则返回 `STALE`；`--no-overwrite` 要求目标不存在，否则返回 `ALREADY_EXISTS`。两者不能同时使用。
+- 上传内容与远端文件完全相同时跳过数据传输，但仍记录一次操作。
+- pull 保存到本地时拒绝写入符号链接；push 写入远端时跟随符号链接。
+- 传输中断后，CLI 会提示 `xrun <设备> resume <request_id>`。24 小时内可以从首次传输时保存的副本继续同一次传输；网络、数据库、身份或内容摘要变化时拒绝继续。源文件已经改动时，请重新 push。push 的响应丢失时不会自动重发，请先 pull 确认目标内容。
+- 传输目录可以把 tar 与流式执行组合使用，见 `xrun doc streaming`；查看目录用远端命令，例如 `xrun linux1 -- ls -la /repo`。
 
-push、pull 按 64 KiB 分块读写单个文件，不设固定文件大小上限，不把整个文件装入内存，不转换 BOM 或换行。保留 SHA-256 校验，接收完整且校验通过后才保存目标文件或输出到 stdout。push 两条路径必填；pull 省略本地目标时保存到唯一临时文件。`-` 表示本地 stdin/stdout：
+截图拍摄目标的主显示器：
 
 ```bash
-xrun linux1 pull /repo/config.json -
-printf '%s\n' 'hello' | xrun linux1 push - /repo/note.txt
-xrun linux1 push ./config.json /repo/config.json --expect '<pull返回的sha256>'
+xrun win1 screenshot ./screen.png
+xrun win1 screenshot ./screen.jpg --format jpeg --max-width 1600 --quality 80
 ```
 
-pull 和截图保存到指定本地文件时，拒绝目标文件的符号链接；保存目录需由调用方信任。远端 push 仍跟随符号链接，写入链接指向的文件。
+默认保存原始尺寸的 PNG。`--format` 可选 `png`、`jpeg`、`webp`；`--quality`（1–100）只用于 JPEG 和 WebP；`--max-width` 只缩小、不放大。省略路径时保存到临时文件，stdout 输出路径，可以直接交给 AI 看图。
 
-`--expect` 可防止覆盖修改后的目标；`--no-overwrite` 要求目标不存在，两者互斥。截图保存 PNG，省略目标路径时使用唯一临时文件。Linux 截图仅支持 X11；macOS 需要屏幕录制权限，Windows 需要可访问的交互桌面。网页截图可以在无桌面的设备上通过项目的无头浏览器脚本生成，再用 pull 取回。
+| 平台 | 要求 |
+| --- | --- |
+| macOS | 服务运行在用户登录会话中，并已获得“屏幕录制”权限，否则返回 `PERMISSION_DENIED` |
+| Windows | 服务运行在交互桌面中；锁屏时返回 `SCREEN_LOCKED` |
+| Linux | 仅支持 X11；Wayland 返回 `SCREENSHOT_UNAVAILABLE`，没有图形会话返回 `NO_DISPLAY` |
 
-网页截图使用项目现有脚本并下载图片：
-
-```bash
-xrun linux1 -C /home/user/demo -- node scripts/screenshot.js
-xrun linux1 pull /home/user/demo/artifacts/page.png ./page.png
-```
-
-目录查询、编辑和 Git 同步使用现有工具。
+网页截图不依赖桌面：在远端运行项目自己的无头浏览器脚本，再用 pull 取回图片。目标设备会为收发的文件和截图保留一份附件副本，见 `xrun doc desktop`。
 
 ## 流式执行
 
-`-i` 实时传递 stdin、stdout 和 stderr，适合大输入或与本地管道组合。输入没有可靠任务的 1 MiB 总量限制：
+`-i` 实时传递 stdin、stdout 和 stderr，适合大量输入或与本地管道组合，输入没有 1 MiB 的限制：
 
 ```bash
 xrun linux1 -i -- cat < ./large.bin > ./copy.bin
-xrun linux1 -i -C /repo --timeout 600 -- tar -cf - artifacts > ./artifacts.tar
+xrun linux1 -i -C /repo -- tar -cf - artifacts > ./artifacts.tar
 ```
 
-这是非终端流式执行，不提供 PTY 或交互 Shell。stdin 结束后仍可接收输出；Ctrl+C 或连接断开会清理远端受管理进程，不自动重跑。它创建 stream_exec Job，可以通过 jobs/wait 查询、kill 取消，日志不留存；logs 返回 LOG_UNAVAILABLE，也不提供文件摘要校验；与 `start`、`--json`、`--stdin`、`--script`、`--request-id` 互斥。需要断线后继续运行时使用普通执行或 `start`。
+- 不提供终端（PTY），不能运行交互式 Shell 或全屏程序。
+- 本地 stdin 结束后，远端 stdin 随之关闭，输出继续传回。默认超时 1800 秒。
+- Ctrl+C（返回 130）或断线都会结束远端进程，不会自动重跑。需要断线后继续运行时，请使用普通执行或 `start`。
+- 会创建一条任务记录，可以使用 `jobs`、`wait` 和 `kill`；但输出不保存，`logs` 返回 `LOG_UNAVAILABLE`。
+- 不能与 `start`、`--json`、`--stdin`、`--script` 或 `--request-id` 同时使用。
 
 ## 端口转发
 
-`forward` 将远端回环端口映射到本机回环端口，例如访问远端的开发服务：
+`forward` 把远端的回环端口映射到本机的回环端口，例如在本机浏览器中访问远端的开发服务：
 
 ```bash
-xrun linux1 forward 8080:3000
-# 或让系统分配本地端口，并输出 JSON 中的 local_address
-xrun linux1 forward 0:3000 --json
+xrun linux1 forward 8080:3000       # 本机 127.0.0.1:8080 → linux1 的 127.0.0.1:3000
+xrun linux1 forward 3000            # 两端使用相同端口
+xrun linux1 forward 0:3000 --json   # 由系统分配本地端口，JSON 返回 local_address
 ```
 
-第一个例子在本机监听 `127.0.0.1:8080`，每条连接接到 linux1 的 `127.0.0.1:3000`，必要时尝试远端 `::1`。省略本地端口时使用相同端口，例如 `forward 3000`。命令保持前台运行，Ctrl+C 结束监听及已有连接；中断的连接不恢复，后续新连接重新接通。转发需要目标授权，每条 TCP 连接独占一个中转会话，仍受中转并发上限约束。
+- 本机只监听 `127.0.0.1`，目标只连接自己的 `127.0.0.1`（失败时尝试 `::1`），不能访问对方网络中的其他主机。
+- 命令保持前台运行，Ctrl+C 结束监听和所有连接。中断的连接不会恢复，新的连接会重新接通。
+- 每条 TCP 连接占用一个中转会话，每个转发最多 32 条连接；Cloudflare 中转每个网络最多 8 个会话。
+- 本机的其他进程也能访问这个端口。目标暂停访问、拒绝或撤销来源时，转发连接随即关闭。
 
 ## 桌面 App
 
-在「设置 → 启动与显示 → 语言」中选择「跟随系统」「中文」或「English」，切换后立即生效并保存，托盘菜单同步切换。默认跟随系统首选界面语言：中文使用中文，其余语言或读取失败时使用英文。跟随系统时，修改系统语言后重新启动 App 生效。
+macOS 和 Windows 的桌面 App 负责组网、授权、后台服务和本机活动，也可以向其他设备执行命令、传输文件和截图，安装见 `xrun doc install`。App 只运行一个实例，关闭窗口后留在菜单栏或系统托盘中。
 
-macOS 13 及以上解压 App ZIP 后打开 `xrun.app`，长期使用建议先放到“应用程序”目录；Windows 运行安装 EXE，安装到当前用户的目录。两者自带 CLI。打开 App 后，在“设备 → 接入码”输入中转地址和接入码，或直接粘贴短链接；“使用链接”接受完整部署链接和成员邀请，自动识别创建或加入；本机名称默认填入系统主机名，可修改。加入时可勾选“允许管理设备访问本机”，不勾选则明确拒绝管理设备访问，即使邀请附带互相访问授权也不会覆盖这个选择。完成后自动启动服务。已有 CLI 身份和配置会直接复用。
+**连接设备。** 未加入网络时，App 显示“连接你的设备”：
 
-在“设备 → 新建网络”点击“授权并创建”，App 在浏览器发起 Cloudflare 授权，随后部署包内 Worker、创建网络并启动服务；不需要源码或编译环境。有多个 Cloudflare 账户时先在界面选择账户，中转名称位于“中转选项”。等待授权时可重新打开浏览器或取消授权；账户不符或登录被撤销时，可点击“重新授权”重新选择 Cloudflare 登录。部署完成后若创建网络失败，重试会使用已部署的中转继续创建；若身份已保存但服务启动失败，只需点击启动服务，不会重新消费邀请。已完成的本机部署记录在“设置 → 网络与服务”展示，并可复制完整部署链接。
+- **接入码**：输入中转地址和接入码，或粘贴短链接。
+- **使用链接**：粘贴部署链接或成员邀请，自动识别是创建还是加入。
+- **新建网络**：点击“授权并创建”，在浏览器授权 Cloudflare 后，App 自动部署中转、创建网络并启动服务。“中转选项”中可以修改中转名称和区域；有多个账号时先选择账号。中转已部署但网络创建失败时，重试会继续使用这个中转。
 
-App 分为设备、活动、设置三个页面。顶部固定显示本机名称、后台服务、中转连接和远程访问状态，可启动服务或暂停、恢复访问；更多菜单可停止服务或打开网络设置。设备页按列表管理其他设备对本机的访问，支持在线筛选和搜索，管理设备可生成接入码，显示地址和有效期，并复制接入命令或短链接；重新生成会撤销上一份邀请码。今日流量显示为一行摘要，点击“详情”查看周期、趋势和设备统计。
+加入时可以勾选“允许管理设备访问本机”；不勾选则明确拒绝，即使邀请中附带了访问请求。本机名称默认使用主机名。已有的 CLI 身份会直接沿用。
 
-设备名称下显示系统、架构和短 ID。设备、网络 ID 隐去类型前缀并缩短显示，点击复制图标可复制完整 ID；设备搜索支持名称、系统和 ID。更多菜单可查看版本与最近观察时间，并可在在线且未撤销的设备上选择“执行命令”。系统信息从已验证的设备连接获取，离线后保留最后一次结果；从未读取过信息的离线设备显示“信息待同步”。
+**界面。** 侧栏包含“设备”“活动”“设置”三个页面和本机卡片（名称、角色、状态和“暂停访问”按钮），点击卡片进入网络设置。需要系统授权、后台服务已停止或远程访问已暂停时，页面顶部会提示并提供对应操作。
 
-远程命令窗口支持脚本、解释器、工作目录与超时，展示 stdout/stderr、任务状态和退出码，也可取消任务。任务提交前保存请求编号；返回不确定时可查询结果，不会自动重跑。关闭窗口后已受理任务继续执行，重新打开可从“最近提交”恢复过去 24 小时内最近 20 条命令；这些记录复用 CLI 的提交库，目标结果仍保存在目标设备。“允许访问本机”控制其他设备访问本机，执行远程命令还需要对方允许本机访问。
+- **设备**：列出网络中的其他设备，可以按在线状态筛选和搜索。每台设备显示系统、架构和短 ID，“允许访问本机”开关控制它能否访问本机。在线设备可以直接“执行命令”“传输文件”和“截图”，前提是对方允许本机访问。菜单中可以查看设备 ID、版本、最近在线时间和上次连接方式（直连／中转），管理设备还可以撤销成员；已撤销的成员单独折叠显示。管理设备通过“邀请设备”生成接入码，并可复制接入命令或短链接。页面底部显示今日流量，点击“详情”查看趋势和各设备统计。
+- **执行命令**：填写命令、解释器、远程工作目录和超时，查看输出、状态和退出码，可以取消任务。关闭窗口不影响已受理的任务；“最近提交”保留 24 小时内的最近 20 条，结果不确定时可以查询结果，不会重复执行。
+- **传输文件**：上传或下载单个文件，可以创建目录、允许覆盖；中断的传输可以“继续”或“放弃”。
+- **截图**：可选原图 PNG、省流，或自定义格式、最大宽度和画质。
+- **活动**：其他设备在本机执行的所有操作，按日期分组，可以按进行中、失败筛选，并搜索当前页。详情显示工作目录、耗时、退出结果和输出；文件和截图附件可以预览（8 MiB 以内的 PNG/JPEG、1 MiB 以内的文本），或另存为。活动读取本机数据库，服务停止或断网时也能查看。
+- **设置**：
+  - 通用：语言（跟随系统、中文、English）、局域网直连、省流量、登录时显示 xrun 图标、隐藏菜单栏／托盘图标。
+  - 活动与附件：附件保留时间，默认 30 天，0 表示长期保留。
+  - 执行环境：默认工作目录、同时运行的任务数和 PATH，保存后对新任务生效。
+  - 网络与服务：网络信息、允许全体成员访问本机、启动或停止服务、成员有效期（管理设备）、本机部署的中转（授权账号、记住登录、复制部署链接）、管理身份（备份、交接、恢复）和移除后台服务。
+  - 关于：版本、系统和数据目录。
 
-“活动”将其他设备在本机执行的命令、流式命令、文件传输、截图和端口转发按受理时间倒序排列，按日期分组，可以按进行中或失败筛选、搜索本页内容。每条操作都是 Job，从受理开始可见；命令详情显示工作目录、耗时、退出结果和 stdout/stderr，其他操作显示对应结果和附件。文件与截图附件保留独立副本，支持预览、查看大图和另存为，期限默认 30 天，可在设置修改。
+**菜单栏与托盘。** 菜单显示本机状态，提供“打开 xrun”“活动”“设置…”，以及随状态变化的主操作：加入网络…、启动服务、暂停访问或恢复访问。Windows 上双击图标也能打开窗口。隐藏图标后，重新打开 App 即可恢复。
 
-窗口可见时，运行中的详情每 3 秒刷新；隐藏或最小化时暂停，重新显示时刷新。向上滚动会暂停输出自动滚动，可点击“回到最新输出”继续。活动查询只读取本机数据库，服务停止或网络断开仍可查看。
+**后台服务。** 执行和传输由独立的后台服务完成：
 
-设置的“执行环境”中可以选择默认工作目录、修改同时运行的任务数和工具搜索路径 PATH；保存后对新任务生效，无需重启。其他环境变量和已有权限保留。
-
-已加入时，启动 App 默认显示菜单栏或系统托盘图标；点击图标展开菜单，顶部显示本机名称和运行状态。“打开 xrun”恢复窗口，“活动”和“设置”直接进入对应页面。未加入时显示“加入网络…”，服务停止时显示“启动服务”，运行时显示“暂停访问”或“恢复访问”。Windows 双击图标也可打开窗口。关闭窗口会留在托盘。设置中的“隐藏图标”同时隐藏窗口，重新打开 App 会恢复图标和窗口。App 只有一个实例，重新打开不会启动第二个 daemon。
-
-菜单中的“退出 xrun”只退出界面，后台服务继续独立运行。暂停访问保留已有授权，恢复后沿用原授权。“停止服务”位于窗口顶部的更多菜单和“设置 → 网络与服务”中，确认后正常结束 daemon 和本机运行中的任务，保留任务结果，服务会在下次登录时再启动。“移除后台服务”取消服务的登录启动并保留本机数据。“登录时显示 xrun 图标”单独控制托盘界面的登录启动。
-
-macOS App 通过 SMAppService 注册包内 LaunchAgent，系统登录项会关联到 xrun App。更换 App 后，下次启动已停止的后台服务会重新登记当前包内程序，避免系统仍使用旧版本的签名信息；需要授权时界面会提示前往系统设置。Windows 后台程序运行在当前用户的登录会话中，不显示控制台窗口。纯 CLI 安装继续使用原来的系统服务。
-
-从当前 CLI 服务切换到 App 服务时，先停止服务再在 App 中启动，App 会替换服务注册。所有服务均通过当前 IPC 安全停止。App 管理的 macOS 服务请在 App 中移除。
-
-## 中转部署
-
-中转统一使用 `xrun relay deploy --provider <cloudflare|local>` 部署，`link` 查看地址，`remove` 移除部署。`--provider` 必填；命令和 JSON 输出都明确区分后端，部署与地址查询统一返回 `link` 字段。Cloudflare 的 `--name`、`--account`、`--no-browser`、`--dry-run` 与本地的 `--port`、`--addr`、`--no-detect` 不能混用。
-
-部署 Cloudflare 中转，在 macOS、Windows 或 Linux 运行：
-
-```bash
-xrun relay deploy --provider cloudflare --name xrun-relay
-```
-
-命令自动打开浏览器，请在 Cloudflare 登录并授权 xrun；多账号时在终端选择账号，也可通过 `--account <账号 ID>` 指定。CLI 直接上传包内预编译的 Worker 和 Durable Object，用户无需源码、Bun、Node.js、Wrangler 或编译环境。上传前先检查 workers.dev 子域名，账号尚无子域名时自动创建一个；如果 Cloudflare 仍要求初始化账号，打开该账号的 Workers & Pages 页面后重试。
-
-成功后输出完整 HTTPS 地址。同名重复部署保留域名与 DO 数据，不覆盖其他应用的同名 Worker。部署记录和登录凭据保存在 `~/.xrun/cloudflare/`，应保留该目录。把完整地址粘贴到 App，或创建网络：
-
-```bash
-xrun up --relay 'https://<Worker 域名>' --name mac1
-```
-
-也可以在 Cloudflare 的 Worker 设置 → Domains & Routes → Add → Custom Domain 中绑定自己的子域名，例如 `relay.example.com`。域名须属于自己的有效 Cloudflare zone。绑定完成后，直接把 `https://relay.example.com` 粘贴到 App 或用于 `xrun up --relay`。当前部署命令不自动绑定自定义域名；已经组网的网络若要改用新地址，由管理设备执行 `xrun up --relay 'https://relay.example.com'` 明确更新。配置方式见 [Cloudflare 自定义域名文档](https://developers.cloudflare.com/workers/configuration/routing/custom-domains/)。
-
-可单独执行 `xrun relay login --provider cloudflare` 授权，`xrun relay logout --provider cloudflare` 撤销并移除本地登录凭据，保留已部署中转。`xrun relay deploy --provider cloudflare --dry-run --json` 仅检查包内 Worker，不登录或修改 Cloudflare。无浏览器自动打开能力时使用 `--no-browser`，手动打开命令输出的授权地址；浏览器须能访问本机 127.0.0.1 的回调，程序依次尝试端口 8976、8977、8978，自动跳过被占用的端口。自动化环境可以通过 `CLOUDFLARE_API_TOKEN` 和 `CLOUDFLARE_ACCOUNT_ID` 指定账号，令牌不会写入部署记录。
-
-Cloudflare 使用公共 HTTPS 证书，设备间仍使用独立的网络根证书和双向 TLS。中转持久化网络归属、根签名成员状态和流量汇总，不保存命令任务、日志或文件内容。单文件大小不设固定上限；每方向 4 MiB 的传输窗口限制尚未确认的密文，每个网络最多同时保留 8 个中转会话。开发者源码部署与检查说明见 [cloudflare/README.md](../cloudflare/README.md)。
-
-如果使用自建 Linux 中转，在 Linux 主机上执行：
-
-```bash
-xrun relay deploy --provider local --addr 192.168.1.10:9528
-```
-
-替换为其他设备可访问的 IPv4 地址或有 A 记录的域名，并放行 TCP 9528。省略 `--addr` 时自动探测地址；手动地址持久保留。此命令安装 systemd 用户服务并启用 linger，负责开机启动和异常重启中转。中转只接通连接、转发设备间的 TLS 密文，网络管理密钥不保存在中转。
-
-本地部署链接保留中转证书指纹，不含随机路径，可以重复使用，重启后保留。在中转主机可查看链接、前台运行已配置中转或移除服务：
-
-```bash
-xrun relay link --provider local
-xrun relay run --provider local
-xrun relay remove --provider local
-```
-
-复制完整部署链接到管理设备运行 `up --relay` 创建网络。部署链接与 `join` 使用的成员邀请不同。无 systemd 的环境不能直接使用 `relay deploy --provider local` 完成服务安装，应使用有 systemd 的主机或 Cloudflare。
-
-Cloudflare 中转的地址查询不联网；按本机保存的部署名称查看或删除：
-
-```bash
-xrun relay link --provider cloudflare --name xrun-relay
-xrun relay remove --provider cloudflare --name xrun-relay --purge
-```
-
-Cloudflare 删除会永久移除 Worker、DO 命名空间和流量统计，需要显式 `--purge`，且只接受本机有部署记录、远端归属标记匹配的实例。失败后可重复运行同一删除命令；删除开始后再次部署请换一个名称。本地 `remove --provider local` 卸载 systemd 服务并保留本地配置和统计。`logout --provider cloudflare` 仅撤销 xrun 的登录，保留已部署的中转。
-
-`login` / `logout` 只支持 `--provider cloudflare`，前台 `run` 只支持 `--provider local`。使用开发者脚本部署的实例，其删除命令仍见 Cloudflare 子项目文档。
+- “退出 xrun”只退出界面，服务继续运行。
+- “停止服务”（设置 → 网络与服务）正常结束服务，并取消本机正在运行的任务；下次登录时服务会再次启动。
+- “移除后台服务”取消登录启动，保留本机数据。
+- macOS 通过系统登录项注册服务，首次可能需要在“系统设置 → 通用 → 登录项”中允许 xrun；截图需要“屏幕录制”权限。更换 App 后，下次启动服务时会重新登记当前程序。
+- Windows 的服务运行在当前用户的登录会话中，不显示控制台窗口。
+- 从 CLI 安装的服务切换到 App：先执行 `xrun daemon stop`，再在 App 中启动服务，App 会替换服务注册。
 
 ## 配置与服务
 
-`up` / `join` 默认安装服务：Linux systemd 用户服务和 linger，macOS 纯 CLI LaunchAgent，Windows 当前用户登录计划任务。daemon 以当前用户运行，默认同时最多 4 个任务。App 服务管理见桌面 App 章节。
-
-Linux 容器缺少 `systemctl` / `loginctl` 或可用用户会话时，使用 `--no-daemon`，交由外部管理器运行 `xrun daemon`。`daemon_installed` 反映注册文件或标记存在，不能单独证明服务管理器正常，结合 `daemon_running` 和 `daemon_connected` 判断。
+`connect`、`up` 和 `join` 默认安装后台服务，以当前用户身份运行：Linux 为 systemd 用户服务（并启用 linger），macOS 为 LaunchAgent，Windows 为登录时运行的计划任务。桌面 App 使用自己的服务注册，见 `xrun doc desktop`。
 
 ```bash
-xrun daemon install
+xrun daemon install      # 注册并启动服务（需要已有设备身份）
 xrun daemon start
-xrun daemon stop
-xrun daemon uninstall
-xrun daemon
+xrun daemon stop         # 正常停止，取消本机运行中的任务
+xrun daemon uninstall    # 移除注册，保留数据
+xrun daemon              # 在前台运行
+xrun daemon reset        # 服务停止时重建任务库，保留设备身份
 ```
 
-`daemon install` 需要已准备好的设备身份；`daemon start` 启动已有服务；`daemon stop` 正常停止并取消本机运行中的任务；`daemon uninstall` 移除注册并保留数据。`daemon` 前台运行，关闭终端是否结束取决于外部管理方式。正常停止等待任务结果保存及文件操作清理，超时会明确报错；macOS CLI 服务已加载但停止时，重新 install 会启动它，运行中更换程序路径需要先停止。
+没有 systemd 用户会话的 Linux 容器，用 `--no-daemon` 加入，再由外部进程管理器运行 `xrun daemon`。`status` 中的 `daemon_installed` 只表示服务注册存在，请结合 `daemon_running` 和 `daemon_connected` 判断。
 
-配置、身份和数据库在 `~/.xrun`（Windows 为 `%USERPROFILE%\.xrun`）。工具链 PATH、默认目录和来源白名单写入 `daemon.toml`：
+配置、身份和数据库位于 `~/.xrun`（Windows 为 `%USERPROFILE%\.xrun`），只有当前用户可以访问。执行环境和授权写在 `daemon.toml` 中：
 
 ```toml
 allow_from = ["b63c4960932e4b46afdb8028e9490cc8"]
-default_cwd = "/path/to/repo"
+default_cwd = "/home/user/repo"
 max_concurrent_jobs = 4
 attachment_retention_days = 30
 
@@ -413,113 +605,113 @@ attachment_retention_days = 30
 PATH = "/home/user/.cargo/bin:/home/user/.local/bin:/usr/local/bin:/usr/bin:/bin"
 ```
 
-远端命令保留符号链接入口，支持 rustup 的 cargo、rustc 等按启动名称分派的工具。任务继承 daemon 的正常环境，但过滤隐式的 `CARGO_TARGET_DIR`、`CARGO_BUILD_TARGET`、`RUSTUP_TOOLCHAIN`、`RUST_RECURSION_COUNT`、`RUSTC`、`RUSTDOC`、`RUSTC_WRAPPER`、`RUSTC_WORKSPACE_WRAPPER`、`RUSTFLAGS`、`CARGO_ENCODED_RUSTFLAGS`；工具目录、PATH 和代理等配置保留。需要指定构建目录、工具链或编译参数时，写入 `[env]` 或通过 `--env` 显式传入，请求值优先。开发版和发布版采用相同规则。
+- 修改后对新任务生效，无需重启服务；程序保存设置时会保留其他字段。路径中的 `~` 不会展开，请写目标用户的实际主目录；Windows 的 PATH 用分号分隔。
+- 后台服务通常不加载交互 Shell 的配置，工具链目录（如 `~/.cargo/bin`）需要写进 `[env]` 的 PATH。
+- 任务继承服务的环境，但不继承这些构建变量：`CARGO_TARGET_DIR`、`CARGO_BUILD_TARGET`、`RUSTUP_TOOLCHAIN`、`RUST_RECURSION_COUNT`、`RUSTC`、`RUSTDOC`、`RUSTC_WRAPPER`、`RUSTC_WORKSPACE_WRAPPER`、`RUSTFLAGS`、`CARGO_ENCODED_RUSTFLAGS`。需要时写入 `[env]`，或用 `--env` 传入。
+- `max_concurrent_jobs` 是同时运行的命令数，范围 1–64。
+- 目标设备为收发的文件和截图保留独立的附件副本。`attachment_retention_days` 默认 30，0 表示长期保留，最大 3650；每 10 分钟清理一次到期的副本，活动摘要保留。
 
-配置热更新对新任务生效。修改原文件中的所需字段，保留其他环境、允许 / 拒绝记录与暂停状态。PATH 使用目标系统格式，Windows 用分号分隔；确认目标工具目录如 `~/.cargo/bin`、`~/.local/bin` 在 PATH 中。上面的 `/home/user` 应替换为目标用户的实际主目录，配置中的 `~` 不会自动展开。
-
-桌面端的“活动”按时间倒序统一展示其他设备在本机执行的命令、文件传输、截图、流式命令和端口转发，点击记录可查看详情、命令输出或留存附件。文件与截图保存独立副本，修改或删除原文件不会影响副本。PNG/JPEG 和小型 UTF-8 文本支持直接预览，其他附件可“另存为”后查看。
-
-在设置的“活动与附件”中配置保留天数，默认 30 天；0 表示长期保留，最大 3650 天。缩短时间立即清理到期附件，之后每 10 分钟检查。清理只删除附件副本，活动摘要和原文件保留，已清理附件无法恢复。后台服务与 App 都未运行时，下次运行再清理。手动编辑 `attachment_retention_days` 会在下一次清理时生效；无需重启服务。
-
-服务输出与任务 `logs` 不同。macOS 纯 CLI 服务日志在 `~/.xrun/daemon-service.log`；Linux 可用 `journalctl --user -u xrun-daemon.service` 查看；无 systemd 使用外部管理器日志或启动时重定向输出。
+服务日志与任务日志不同：macOS 上 CLI 安装的服务写入 `~/.xrun/daemon-service.log`，Linux 用 `journalctl --user -u xrun-daemon.service` 查看，其他情况请查看外部进程管理器的日志。
 
 ## 状态与排错
 
+```bash
+xrun status --json          # 本机服务、授权和在线设备
+xrun linux1 info --json     # 连接目标，读取系统、版本、主机名和默认目录
+xrun recent --json          # 本机最近的提交
+xrun traffic --period today
+```
+
+`status` 的在线状态来自中转，只说明设备连着中转，不保证能执行命令；要确认目标是否可用，请用 `info`。突然断网的设备通常在 45–60 秒后显示为离线。
+
+`--json` 的数据写到 stdout，诊断信息写到 stderr。前台执行不支持 `--json`，原样传递远端的输出。
+
+### 退出码
+
+| 退出码 | 含义 |
+| --- | --- |
+| 0–255 | 远端程序的退出码（Windows 上大于 255 时为 1，完整值在任务结果中） |
+| 128+N | 远端进程被信号 N 结束 |
+| 124 | 超时，进程已停止 |
+| 130 | Ctrl+C：已确认取消，或请求尚未受理 |
+| 75 | **结果未确认**：请求可能已经送达，先查询再决定是否重试 |
+| 125 | 连接、身份、授权或执行层错误 |
+| 2 | 本地参数错误 |
+| 1 | 文件、截图等操作已确认失败 |
+
+远端程序也可能返回这些数值，请结合 stderr 中的 `[xrun]` 诊断、错误码和任务状态判断。
+
+### 结果未确认（75）
+
+先查询，不要直接重新执行：
+
+```bash
+xrun recent                                   # 找到 request_id
+xrun win1 jobs --request-id '<request_id>'
+xrun win1 wait <任务ID>
+```
+
+要恢复同一次提交，用原参数、原输入和原 `--request-id` 重新执行：目标按来源和请求 ID 去重，已受理的请求不会再次运行。普通调用总会生成新的 request_id。目标的任务库已重建时返回 `DB_RESET`。
+
+Ctrl+C 会尝试取消可靠任务，无法确认时返回 75；SIGTERM 和 SIGHUP 不会取消已提交的任务。
+
 ### 流量统计
 
-```bash
-xrun traffic
-xrun traffic --period today
-xrun traffic --period all --json
-xrun traffic --period month --limit 50 --offset 50
-```
+`xrun traffic` 查询中转记录的流量，不需要本机服务运行。管理设备可以看到全网总量和各设备明细，其他成员只能看到自己。`--period` 可选 `today`、`month`（默认）和 `all`，按 UTC 日期统计；设备明细用 `--limit`（1–256）和 `--offset` 翻页，JSON 中的 `next_offset` 指向下一页。
 
-`traffic` 查询当前中转的持久化流量记录，不要求本机 daemon 正在运行。管理设备查看本网络入站、出站和设备收发明细；普通成员只查看本机发送、接收量。默认查询本月，`today`、`month` 按 UTC 自然日／自然月统计，`all` 查询全部已记录流量。设备明细按设备 ID 排序，默认每页 50 条，最多 256 条，JSON 的 `next_offset` 指向下一页。
+统计的是设备之间的加密数据（含 TLS 握手和协议开销），不含认证、确认和心跳。入站指设备发给中转的数据，出站指中转发给设备的数据；计算转发量时只看出站，不要与入站相加。统计从中转开始运行时累积，更换中转不会合并，直连流量也不计入。录入出错时报告 `complete: false`。这些数字不是计费账单，xrun 也没有流量额度或限速。
 
-入站指设备发给中转，出站指中转交给设备的发送队列。只计有效密文二进制帧，包含设备间 TLS 握手、协议与传输开销；外层认证、ACK、缓存状态和心跳不计入。网络出站已计一次转发，不应再与入站相加当作同一份传输量。出站计数不是完整送达回执，也不等于云厂商网卡账单。
+### 常见错误码
 
-桌面概览页展示同一份统计、每日趋势与管理设备可见的设备明细。累计视图的趋势只显示最近 30 个 UTC 日期，累计总量仍覆盖全部记录。页面可见时每 10 秒刷新；读取失败保留上次快照并显示错误，统计没有记录时显示零。
-
-统计从中转开始运行时累积，Rust 保存在中转数据目录的 `traffic.sqlite`，Cloudflare 保存在对应网络的 DO SQLite 中。重启、关闭或复用连接不清零；换中转不自动合并其他中转的数据。匿名加入通道计入网络和已认证目标设备，不给匿名来源分配虚假设备身份。存储录入失败继续转发，报告 `complete: false`；存储无法读取返回 `STORAGE_ERROR`。当前只提供统计，不配置额度或速度限制。
-
-### 连接状态
-
-`status` 读取中转报告的连接列表，并按本机已验证的成员清单过滤；“已连接”不保证目标能执行命令，也不表示已同步最新成员变更。查看主机名、系统、版本等详情时，用 `xrun <设备> info` 单独连接目标验证。撤销送达仍以端点签名回执为准。
-
-```bash
-xrun status --json
-xrun linux1 info --json
-xrun recent --json
-```
-
-当前没有持久保存离线时间历史。`info` 的 `last_seen` 是目标响应查询时的时间，离线后不保留。Rust 中转每 15 秒检查心跳，突然断网通常约 45–60 秒后识别。
-
-多数查询 / 操作的 `--json` 数据写到 stdout，错误诊断写到 stderr；普通前台执行仍传递远端 stdout / stderr。帮助、文档和参数解析错误保持文本。
-
-前台执行原样输出远端 stdout/stderr，并保留远端退出码。超时为 124，本地参数错误为 2，连接、身份或执行层错误为 125；已确认的文件或截图操作失败为 1。日志不完整会注明原因。
-
-本地提交记录补写失败时，已确认的远端任务引用仍会输出；不要因为这个本地记录错误重新执行任务。
-
-返回 **75 表示结果未确认**。已知任务 ID 就查询 `jobs` 或 `wait`；只有请求 ID 时：
-
-```bash
-xrun recent
-xrun win1 jobs --request-id '<request_id>'
-```
-
-恢复同一次提交时提供原参数、原输入和原 `--request-id`。daemon 按来源设备与请求 ID 去重，不重新运行已受理任务；数据库重建后返回 `DB_RESET`。普通调用会生成新请求 ID。
-
-可靠执行的 CLI 或中转连接断开时任务继续运行，前台 CLI 会尝试重连并按日志序号补读，最多恢复 30 秒；仍无法确认结果时返回 75。Ctrl+C 会尝试取消可靠任务，无法确认取消时也返回 75；SIGTERM、SIGHUP 不取消已提交任务。daemon 正常停止会取消任务，崩溃后重启则将未完成任务标记为 lost，不重跑。流式执行和转发随连接结束清理。
-
-`push` 响应丢失时不自动重发，先 `pull` 确认目标内容。连接缓存和重连不会自动重放已经提交的执行、上传或取消请求。
-
-| 诊断 | 检查与处理 |
+| 错误码 | 处理 |
 | --- | --- |
-| SOURCE_NOT_ALLOWED | 在被控设备 allow-from 来源 |
-| INVALID_CODE | 核对中转地址和接入码后重试 |
-| CODE_EXPIRED | 在管理设备重新生成接入码；管理服务重启后旧码失效 |
-| CODE_LOCKED | 验证次数已用完，在管理设备重新生成 |
-| CODE_IN_USE | 为另一台设备生成新码；同一设备使用原有私有回执重试 |
-| PAIRING_BUSY | 稍后重试，或重新生成邀请码 |
-| RELAY_CLAIMED | 中转已绑定网络，请向该网络的管理设备获取成员邀请后 join |
-| RELAY_UNCLAIMED | 在选定的管理设备上用 up --relay 创建网络，或启动已有管理设备的服务完成认领 |
-| ACCESS_PAUSED | 在被控设备 daemon resume |
-| DEVICE_OFFLINE / 连接失败 | 检查目标 daemon、中转和网络，不排队执行 |
-| VERSION_MISMATCH | 检查网络组件是否支持共同协议；本机 CLI/App helper 与 daemon 需使用同一发布版本并重启服务 |
-| INVALID_SIGNATURE | 检查签名与数据完整性；正式发布前仅支持当前签名格式 1 |
-| PROGRAM_NOT_FOUND | 检查目标 PATH，或用程序完整路径 |
-| INVALID_CWD | -C 使用目标存在的绝对目录 |
-| NO_DISPLAY | 目标需要可访问桌面；网页可用无头浏览器 |
-| DB_RESET | 原任务库已重建，不能重放或推断原任务 |
-| DB_SCHEMA_MISMATCH | 数据库结构与程序不匹配，停止服务并按升级章节处理；不会自动重建或清空 |
-
-确认取消或提交前 Ctrl+C 返回 130，远端被信号结束返回 128 + 信号。wait 超时 / 断线且不能确认已有任务结果时返回 75，不取消任务。业务程序也可以返回相同数值，要结合诊断、错误码与任务状态判断。
+| `SOURCE_NOT_ALLOWED` | 在目标设备上 `allow-from <来源>` |
+| `ACCESS_PAUSED` | 目标暂停了访问，在目标上 `xrun daemon resume` |
+| `ROSTER_EXPIRED` | 管理设备离线超过成员有效期，启动管理设备的服务 |
+| `DEVICE_OFFLINE` | 检查目标服务、中转和网络；xrun 不排队执行 |
+| `DEVICE_BUSY` | 目标同时运行的命令已满，稍后用原 request_id 重试 |
+| `DEVICE_REVOKED` | 目标或本机已被撤销 |
+| `INVALID_CODE`、`CODE_EXPIRED`、`CODE_LOCKED` | 核对中转地址和接入码；过期或次数用完时重新生成 |
+| `CODE_IN_USE`、`PAIRING_BUSY` | 接入码正被其他设备使用，为这台设备生成新码，或稍后重试 |
+| `RELAY_CLAIMED` | 中转已属于另一个网络，向该网络的管理设备索取邀请 |
+| `RELAY_UNCLAIMED` | 中转尚未绑定网络，在管理设备上创建网络，或启动管理设备的服务 |
+| `NOT_MANAGER`、`MANAGER_PROTECTED` | 只能在管理设备上执行；管理设备不接受全体信任 |
+| `VERSION_MISMATCH` | 本机 CLI、App 与服务版本不一致，或设备之间协议不兼容；统一升级并重启服务 |
+| `PROGRAM_NOT_FOUND`、`SHELL_REQUIRED` | 检查目标的 PATH 或写完整路径；批处理使用 `--script cmd` |
+| `INVALID_CWD` | `-C` 需要是目标上存在的绝对目录 |
+| `STALE`、`ALREADY_EXISTS` | 远端文件已变化或已存在，先 pull 确认 |
+| `PERMISSION_DENIED`、`SCREEN_LOCKED`、`NO_DISPLAY` | 缺少截图权限、屏幕已锁定或没有图形会话 |
+| `INTERACTIVE_REQUIRED` | 需要交互终端，或补充 `--account`、`--password-stdin` 等参数 |
+| `DB_RESET` | 目标的任务库已重建，原任务无法查询或重放 |
+| `DB_SCHEMA_MISMATCH` | 数据库格式与程序版本不符，程序不会改动原数据，见 `xrun doc upgrade` |
 
 ## 升级与移除
 
-正式发布前不维护历史业务协议兼容。参与操作的设备统一更新 CLI、App helper 与 daemon，替换程序后重启 daemon。中转协商的协议范围只表示外层传输能力。
+当前仍为预发布版本（`-rc`），不同 RC 之间不保证协议或数据兼容。升级时，将所有设备上的 CLI、App、后台服务，以及中转统一到同一 RC 版本后再继续操作。
 
-更新前等待任务结束、停止本机服务，替换固定位置程序，启动并检查。
+同一台设备上的 CLI、App 和后台服务必须是同一版本，替换程序后需要重启服务。当前协议、签名格式和数据库 schema 的编号均为 1，共用编号不代表不同 RC 可以混用。正式版的兼容范围和升级方式会在正式发布时明确。
 
 ```bash
-xrun daemon stop
-# 替换程序或运行匹配版本的安装脚本
+xrun daemon stop       # 会取消运行中的任务，请先等它们结束
+# 替换程序，或运行新版本的安装脚本
 xrun --version
 xrun daemon start
 xrun status
 ```
 
-桌面版替换 App 后打开时，会通过当前 IPC 停止发布号不匹配的服务，并换用配套 helper 恢复运行；原来停止的服务保持停止。服务替换不转换数据格式。
+安装脚本会自动停止服务并替换程序。桌面 App 更新后打开时，会停止版本不符的服务，换用新版本重新启动；原本已停止的服务保持停止。
 
-数据库统一使用 schema 1，只支持当前格式，不迁移或自动重建历史数据。正式发布前的开发状态需要停止服务后单独清理；未知格式返回 `DB_SCHEMA_MISMATCH`，原数据保持不变。活动页出错时不要删除身份或成员清单。
-
-成员清单库 `roster.db` 包含最高已知撤销状态，重构 Job 时保留它。需要彻底重新初始化本机时，执行下面的 `xrun down --purge`；它也会删除身份、提交记录和管理设备的网络权威数据，管理设备随后重新创建网络，成员重新加入并授权。
-
-移除本机服务保留数据使用 `down`，清理本机数据使用 `down --purge`，需要交互终端确认：
+移除服务和数据：
 
 ```bash
-xrun down
-xrun down --purge
+xrun down            # 移除本机服务，保留数据
+xrun down --purge    # 交互确认后删除本机身份和全部数据
 ```
 
-macOS App 管理的服务在 App 中移除。Linux `down` 同时移除本机中转服务。`daemon reset` 要求 daemon 已停止，只重建任务数据库并保留设备身份；旧任务引用不能用于新库。
+- Linux 上 `down` 同时移除本机的中转服务。由 App 管理的服务，请在 App 中“移除后台服务”。
+- 管理设备执行 `--purge` 会删除网络根私钥，之后无法再签发或撤销成员；除非能从备份恢复，否则需要重新创建网络，所有成员重新加入和授权。
+- 成员设备执行 `--purge` 后只能作为新设备重新加入，旧身份应由管理设备撤销。
+- 只想清空任务记录时，停止服务后执行 `xrun daemon reset`：设备身份保留，旧的任务引用不能用于新库。
+- 遇到 `DB_SCHEMA_MISMATCH` 时，不要删除身份文件或 `roster.db`，后者保存着最新的撤销状态。
+
+卸载程序：macOS 先移除后台服务，再删除 `xrun.app` 和 `~/.local/bin/xrun`；Windows 在系统设置的“应用”中卸载；Linux 删除 `xrun` 程序即可。

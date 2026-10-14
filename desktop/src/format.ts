@@ -36,23 +36,6 @@ export function duration(ms: number | null) {
   });
 }
 
-export function serviceLabel(status: Status | null): [string, string] {
-  if (!status) return [t("status.check"), t("status.reading")];
-  const { local, service } = status;
-  if (!local.joined) return [t("status.notJoined"), t("status.joinHint")];
-  if (service.approval_required)
-    return [t("status.approval"), t("status.approvalHint")];
-  if (!local.daemon_running)
-    return [t("status.stopped"), t("status.stoppedHint")];
-  if (local.remote_access_paused)
-    return [t("status.paused"), t("status.pausedHint")];
-  if (local.daemon_connected === true)
-    return [t("status.connected"), t("status.connectedHint")];
-  if (local.daemon_connected === null)
-    return [t("status.running"), t("status.olderServiceHint")];
-  return [t("status.connecting"), t("status.connectingHint")];
-}
-
 export function serviceState(status: Status | null): [string, string] {
   if (!status) return [t("common.checking"), "neutral"];
   if (status.service.approval_required)

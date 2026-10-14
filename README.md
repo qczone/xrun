@@ -16,68 +16,74 @@
   <a href="docs/development.md">开发与发布</a>
 </p>
 
-xrun 是面向开发者和 AI 的跨设备工具。通过同一套 CLI，使用已授权的 macOS、Windows 和 Linux 设备完成构建、测试、后台运行、文件传输、端口转发和截图。新设备可通过中转地址和八位接入码加入网络。桌面 App 提供网络创建、访问权限、后台服务、本机活动和远程命令界面，支持中英文和明暗主题。
+xrun 是面向开发者和 AI 的跨设备工具。用同一套命令，在自己的 macOS、Windows 和 Linux 设备上构建、测试、运行后台任务、传输文件、截图和转发端口。桌面 App 负责组网、授权、后台服务和活动记录，支持中英文和明暗主题。
+
+```bash
+xrun linux1 -C /home/user/demo -- cargo test       # 在 Linux 上运行测试
+xrun win1 start -C 'D:\demo' -- cargo build        # 在 Windows 上启动后台构建
+xrun win1 pull 'D:\demo\target\debug\app.exe' ./app.exe
+xrun win1 screenshot ./screen.png
+xrun linux1 forward 8080:3000                      # 在本机访问远端的开发服务
+```
 
 ## 能做什么
 
-- **跨平台执行**：从 Mac 调用 Windows 构建程序，或在 Linux 上运行测试并接收输出和退出结果。
-- **管理后台任务**：启动远端程序，随后查询状态、读取日志、等待完成或取消执行。
-- **传输文件**：取回构建产物和报告，在本地编辑文件后再上传。
-- **检查远端界面与服务**：截取远端屏幕，或把远端开发服务的端口转发到本机浏览器。
-- **交给 AI 操作**：通过 CLI、稳定错误码和 JSON 结果决定下一步；帮助与完整手册均可离线读取。
+- **跨平台执行**：在目标设备上运行程序或脚本，实时取回输出和退出码。
+- **后台任务**：启动后随时查询状态、读取日志、等待完成或取消；断线不影响任务。
+- **文件与截图**：传输单个文件，支持校验、续传和防覆盖；截取远端屏幕。
+- **端口转发**：把远端的开发服务映射到本机浏览器。
+- **交给 AI**：稳定的退出码、错误码和 JSON 输出；`xrun help` 和 `xrun doc` 离线可读。
 
-设备加入网络并授权后，可以从 Mac 发起：
+目前不支持 PTY 终端、目录同步和离线任务排队。
 
-```bash
-xrun linux1 -C /home/user/demo -- cargo test
-xrun win1 start -C 'D:\demo' -- cargo build
-xrun win1 screenshot ./screen.png
-xrun linux1 forward 8080:3000
-```
+## 开始使用
 
-任务、输出日志和文件操作记录保存在目标设备，桌面 App 可以查看本机记录。当前文件传输以单文件为单位，截图覆盖主显示器；尚不支持 PTY 终端、目录同步和离线任务排队。
+下面以 Mac `mac-pro` 管理 Linux `linux1` 为例，两台设备都需先安装 xrun。
 
-## 连接与授权
+1. 从 [Release](https://github.com/xrun-sh/xrun/releases) 下载对应平台的文件，或使用[命令行安装](docs/usage.md#命令行安装)。
+2. 在 Mac 上部署中转，再用输出的完整地址创建网络，Mac 成为管理设备：
 
-所有设备主动连接同一个中转，无需向设备开放入站端口。中转可选择自建 Linux Rust 服务或 Cloudflare Worker + Durable Object，负责接通连接、转发设备间的端到端加密数据，并保存按网络与设备汇总的流量计数，不保存成员清单、任务、日志或文件。
+   ```bash
+   xrun relay deploy --provider cloudflare --name xrun-relay
+   xrun connect '<输出的中转地址>' --name mac-pro
+   ```
 
-创建网络的设备是管理设备，负责签发邀请和撤销成员。**加入网络不等于获得访问权限**：目标设备单独决定允许谁访问本机，所有操作以目标设备的当前用户权限运行。
+3. 在 Mac 上运行 `xrun invite` 生成接入码，然后在 Linux 上加入，并允许 Mac 访问：
 
-每个中转只服务一个网络。部署中转的服务器不会自动成为管理设备；在你选择的 Mac、Windows 或 Linux 设备上首次创建网络后，中转会持久绑定该网络和管理设备。其他设备需要管理设备发出的邀请才能加入，不能拿同一个中转链接另建网络。
+   ```bash
+   xrun connect <中转地址> <接入码> --name linux1 --allow-manager
+   ```
 
-加入网络时管理设备需要在线；已加入设备的日常执行只需要中转、双方在线且身份和授权有效。
+4. 回到 Mac，查看连接并运行第一条远程命令：
 
-## 平台与安装
+   ```bash
+   xrun status
+   xrun linux1 -- uname -s
+   ```
 
-当前版本为 `0.1.0-rc.9`。
+   看到 `Linux` 且命令退出码为 0，就完成了一次远程执行。遇到问题见[状态与排错](docs/usage.md#状态与排错)。
 
-| 平台 | 下载与安装 |
+桌面 App 的“新建网络”可以在界面中完成部署和创建。中转也可以自建在 Linux 主机上，见 [中转部署](docs/usage.md#中转部署)。
+
+## 平台
+
+| 平台 | 下载 |
 | --- | --- |
-| macOS 13+ · x86_64 / arm64 | App ZIP，解压后打开 `xrun.app`，自带 CLI |
-| Windows · x86_64 / arm64 | 当前用户安装 EXE，包含桌面 App 和 CLI |
-| Linux · x86_64 / arm64 | CLI 压缩包，里面只有 `xrun` |
+| macOS 13+ · x86_64 / arm64 | App ZIP，自带 CLI |
+| Windows · x86_64 / arm64 | 安装程序 EXE，包含 App 和 CLI |
+| Linux · x86_64 / arm64 | CLI 压缩包 |
 
-每种系统分别提供两种架构的包：`x86_64` 即 AMD64，`arm64` 对应 Apple Silicon、Windows ARM 和 ARM Linux。
+中转可以部署到 Cloudflare（Worker + Durable Object，在任意系统上用一条命令完成），也可以自建在 Linux 主机上。
 
-CLI、设备后台服务和 Linux Rust 中转使用同一个二进制。运行发布包不需要安装 Rust、Node.js 或 Bun。
+## 安全
 
-部署 Cloudflare 中转可运行 `xrun relay deploy --provider cloudflare --name xrun-relay`，在浏览器授权后，CLI 直接上传包内的 Worker，无需源码、Wrangler 或编译环境。命令返回完整中转地址，供 App 或 `xrun connect` 创建网络使用。桌面端也可在“新建网络”直接授权、部署并创建；授权返回会打开 App，并显示各阶段进度。AI 可用 `--no-browser --json` 接力授权，部署中断后通过 `relay check` 和本机保存的中转继续。[部署进度与自动化](docs/usage.md#部署进度与自动化)。
-
-[Release](https://github.com/xrun-sh/xrun/releases) 提供各平台的独立下载文件、安装脚本和校验清单。[查看安装说明](docs/usage.md#安装)。三个平台均支持命令安装，自动识别架构、校验指定版本及 SHA-256，并返回 JSON 结果，详见 [自动安装](docs/usage.md#ai-和命令行自动安装)。
-
-安装 CLI 后，`xrun help` 查看简洁帮助，`xrun doc` 查看完整离线手册，`xrun doc --list` 列出章节。内置手册与仓库使用同一份文件，随程序发布。
+- **端到端加密**：设备之间在中转隧道内使用双向 TLS。中转保存网络归属、管理设备签名的成员清单（设备名称、密钥指纹和撤销状态）以及流量计数，看不到命令、输出、文件和截图。
+- **加入不等于授权**：每台设备自己决定允许谁访问。被允许的设备拥有本机当前用户的全部权限，请只授权可信设备。
+- **管理设备需要在线**：它负责邀请、撤销和续签成员有效期（默认 15 分钟，最长可设为 24 小时）。离线超过有效期后，新的远程操作会被拒绝，已开始的任务继续运行。
 
 ## 文档
 
-| 文档 | 内容 |
-| --- | --- |
-| [使用手册](docs/usage.md) | 安装、加入、授权、执行、任务、文件、服务与排错 |
-| [开发与发布](docs/development.md) | 源码构建、检查、测试、打包和发布产物 |
-| [设计文档](docs/design.md) | 架构、协议、行为契约与验收边界 |
-| [Cloudflare 中转](cloudflare/README.md) | Worker 开发、部署和测试 |
-
-## 开发
-
-核心使用 Rust，桌面端使用 Tauri 2、React 和 TypeScript，Web 脚本与测试使用 Bun。构建与检查使用仓库固定的工具链，详见 [开发说明](docs/development.md)。
+- [使用手册](docs/usage.md)：安装、组网、授权、日常使用和排错，也可以用 `xrun doc` 离线阅读；AI 和脚本从 [`xrun doc automation`](docs/usage.md#自动化与-ai) 开始。
+- [开发与发布](docs/development.md)：构建、测试、发布流程，以及架构、协议和兼容规则。
 
 [MIT License](LICENSE)
