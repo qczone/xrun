@@ -20,7 +20,7 @@ fn labels(language: Language) -> [(&'static str, &'static str); 4] {
     [
         ("show", language.text("Open xrun", "打开 xrun")),
         ("activity", language.text("Activity", "活动")),
-        ("settings", language.text("Settings…", "设置…")),
+        ("settings", language.text("Settings", "设置")),
         ("quit", language.text("Quit xrun", "退出 xrun")),
     ]
 }
@@ -159,13 +159,7 @@ pub(super) fn build<R: tauri::Runtime>(app: &tauri::App<R>) -> tauri::Result<()>
             )?)?;
             menu.append(&PredefinedMenuItem::separator(app)?)?;
         }
-        menu.append(&MenuItem::with_id(
-            app,
-            id,
-            label,
-            true,
-            (id == "settings").then_some("CmdOrCtrl+,"),
-        )?)?;
+        menu.append(&MenuItem::with_id(app, id, label, true, None::<&str>)?)?;
     }
     app.manage(TrayMenu {
         menu: menu.clone(),

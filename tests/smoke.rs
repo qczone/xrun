@@ -11,6 +11,10 @@ async fn packaged_binary_contains_the_offline_manual_and_remote_help() {
         ok(cli(home.path(), &["doc"]).await),
         include_str!("../docs/usage.md")
     );
+    assert_eq!(
+        ok(cli(home.path(), &["doc", "--lang", "zh"]).await),
+        include_str!("../docs/usage.zh-CN.md")
+    );
     let help = ok(cli(home.path(), &["help", "push"]).await);
     assert!(help.contains("<LOCAL> <REMOTE>") && help.contains("--expect"));
     let help = ok(cli(home.path(), &["relay", "deploy", "--help"]).await);

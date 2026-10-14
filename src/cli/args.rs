@@ -21,12 +21,12 @@ use std::path::PathBuf;
         "  <DEVICE> forward [LOCAL:]REMOTE          Forward a TCP port\n",
         "\n",
         "Examples:\n",
-        "  xrun linux1 -C /home/user/demo -- cargo test\n",
-        "  xrun linux1 push ./config.json /home/user/demo/config.json\n",
-        "  xrun allow-from mac1                    Run on the device mac1 will control\n",
+        "  xrun ubuntu -C /home/user/demo -- cargo test\n",
+        "  xrun ubuntu push ./config.json /home/user/demo/config.json\n",
+        "  xrun allow-from macbook                 Run on the device macbook will control\n",
         "\n",
-        "Command help: xrun help push; xrun linux1 push --help\n",
-        "Offline manual: xrun doc; xrun doc --list"
+        "Command help: xrun help push; xrun ubuntu push --help\n",
+        "Offline manual: xrun doc; xrun doc --list; xrun doc --lang zh"
     )
 )]
 pub(super) struct LocalCli {
@@ -41,8 +41,8 @@ pub(super) enum Local {
     /// Connect using a relay deployment link or a member invitation
     #[command(after_help = concat!(
         "Examples:\n  xrun connect relay.example K7M4-P9Q2\n",
-        "  xrun connect '<deployment link>' --name mac-pro\n",
-        "  xrun connect '<invitation>' --name linux1 --allow-manager\n",
+        "  xrun connect '<deployment link>' --name macbook\n",
+        "  xrun connect '<invitation>' --name ubuntu --allow-manager\n",
         "The link selects creation or joining. --allow-manager grants access to this device only.\n",
         "Full documentation: xrun doc quickstart"
     ))]
@@ -64,7 +64,7 @@ pub(super) enum Local {
     /// Create a network; this device becomes its manager
     #[command(
         after_help = concat!(
-        "Example: xrun up --relay '<complete relay address>' --name mac1\n",
+        "Example: xrun up --relay '<complete relay address>' --name macbook\n",
         "The returned member invitation is used by xrun join.\n",
         "Full documentation: xrun doc quickstart"
     )
@@ -96,7 +96,7 @@ pub(super) enum Local {
     /// Join a network using a one-use invitation
     #[command(
         after_help = concat!(
-        "Example: xrun join '<complete xrun:// invitation>' --name linux1\n",
+        "Example: xrun join '<complete xrun:// invitation>' --name ubuntu\n",
         "The manager must be online. Allow a caller on this device with xrun allow-from <SOURCE>.\n",
         "Full documentation: xrun doc quickstart"
     )
@@ -133,8 +133,8 @@ pub(super) enum Local {
     /// Allow a source device to control this machine
     #[command(
         after_help = concat!(
-        "Example: xrun allow-from mac1\n",
-        "Run this on the device mac1 will control. --all trusts current and future members; individual denials take precedence.\n",
+        "Example: xrun allow-from macbook\n",
+        "Run this on the device macbook will control. --all trusts current and future members; individual denials take precedence.\n",
         "Full documentation: xrun doc access"
     )
     )]
@@ -142,7 +142,7 @@ pub(super) enum Local {
     /// Deny a source device access to this machine
     #[command(
         after_help = concat!(
-        "Example: xrun deny-from mac1\n",
+        "Example: xrun deny-from macbook\n",
         "--all disables all-member trust while retaining individual permissions.\n",
         "Full documentation: xrun doc access"
     )
@@ -189,7 +189,10 @@ pub(super) enum Local {
     },
     /// Print the full offline manual or one chapter
     #[command(
-        after_help = "Examples: xrun doc; xrun doc --list; xrun doc access\nNo identity, network or running daemon is required."
+        after_help = concat!(
+            "Examples: xrun doc; xrun doc --list; xrun doc access; xrun doc access --lang zh\n",
+            "English is the default. Both languages are embedded; no identity, network or running daemon is required."
+        )
     )]
     Doc {
         /// Chapter to read (omit for the complete manual)
@@ -198,6 +201,9 @@ pub(super) enum Local {
         /// List available chapters
         #[arg(long, conflicts_with = "topic")]
         list: bool,
+        /// Manual language (English by default)
+        #[arg(long, value_enum, default_value = "en")]
+        lang: super::docs::Language,
     },
     /// Show concise help for a local or remote command
     Help {
@@ -375,8 +381,8 @@ pub(super) struct PermissionArgs {
     after_help = concat!(
         "Run a program: xrun <DEVICE> [OPTIONS] -- <PROGRAM> [ARGS]...\n",
         "Examples:\n",
-        "  xrun linux1 -C /home/user/demo -- cargo test\n",
-        "  xrun linux1 start -C /home/user/demo -- ./server\n",
+        "  xrun ubuntu -C /home/user/demo -- cargo test\n",
+        "  xrun ubuntu start -C /home/user/demo -- ./server\n",
         "Execution options: xrun help run\n",
         "Offline manual: xrun doc execute"
     )
@@ -398,9 +404,9 @@ pub(super) enum Remote {
         override_usage = "xrun <DEVICE> [OPTIONS] -- <PROGRAM> [ARGS]...\n       xrun <DEVICE> [OPTIONS] --script <SHELL> < script",
         after_help = concat!(
         "Examples:\n",
-        "  xrun linux1 -C /home/user/demo -- cargo test\n",
-        "  xrun win1 -C 'D:\\demo' -- cargo build\n",
-        "  xrun linux1 --script bash < ./build.sh\n",
+        "  xrun ubuntu -C /home/user/demo -- cargo test\n",
+        "  xrun windows -C 'D:\\demo' -- cargo build\n",
+        "  xrun ubuntu --script bash < ./build.sh\n",
         "Accepted tasks survive connection loss. Exit 75 means the result is unconfirmed; query the original task before retrying.\n",
         "Full documentation: xrun doc execute; xrun doc errors"
     )
@@ -409,22 +415,22 @@ pub(super) enum Remote {
     /// Start a background job and return its reference
     #[command(
         after_help = concat!(
-        "Example: xrun linux1 start -C /home/user/demo -- ./server\n",
+        "Example: xrun ubuntu start -C /home/user/demo -- ./server\n",
         "Use the returned job reference with jobs, wait, logs or kill.\n",
         "Full documentation: xrun doc jobs"
     )
     )]
     Start(Execute),
     /// Query live device details (unavailable details are empty when offline)
-    #[command(after_help = "Example: xrun linux1 info --json\nFull documentation: xrun doc errors")]
+    #[command(after_help = "Example: xrun ubuntu info --json\nFull documentation: xrun doc errors")]
     Info,
     /// List jobs, or show one job's details
     #[command(
         after_help = concat!(
         "Examples:\n",
-        "  xrun linux1 jobs --running\n",
-        "  xrun linux1 jobs ABC123 --json\n",
-        "  xrun linux1 jobs --request-id '<request_id>'\n",
+        "  xrun ubuntu jobs --running\n",
+        "  xrun ubuntu jobs ABC123 --json\n",
+        "  xrun ubuntu jobs --request-id '<request_id>'\n",
         "Only tasks submitted by this device identity are visible.\n",
         "Full documentation: xrun doc jobs"
     )
@@ -448,7 +454,7 @@ pub(super) enum Remote {
     /// Wait for a job result and print its last output lines
     #[command(
         after_help = concat!(
-        "Example: xrun linux1 wait ABC123 --timeout 60\n",
+        "Example: xrun ubuntu wait ABC123 --timeout 60\n",
         "Exit 75 means the result is unconfirmed. A wait timeout does not cancel the job.\n",
         "Full documentation: xrun doc jobs"
     )
@@ -465,7 +471,7 @@ pub(super) enum Remote {
     },
     /// Read job output or follow new output
     #[command(
-        after_help = "Examples:\n  xrun linux1 logs ABC123 --tail 40\n  xrun linux1 logs ABC123 --follow\nFull documentation: xrun doc jobs"
+        after_help = "Examples:\n  xrun ubuntu logs ABC123 --tail 40\n  xrun ubuntu logs ABC123 --follow\nFull documentation: xrun doc jobs"
     )]
     Logs {
         /// Job ID or the returned DEVICE/ID reference
@@ -483,7 +489,7 @@ pub(super) enum Remote {
     /// Cancel a job and wait for confirmation
     #[command(
         after_help = concat!(
-        "Example: xrun linux1 kill ABC123\n",
+        "Example: xrun ubuntu kill ABC123\n",
         "Exit 75 means cancellation is unconfirmed; query the original job.\n",
         "Full documentation: xrun doc jobs"
     )
@@ -496,8 +502,8 @@ pub(super) enum Remote {
     #[command(
         after_help = concat!(
         "Examples:\n",
-        "  xrun linux1 push ./config.json /home/user/demo/config.json\n",
-        "  xrun linux1 push ./result.txt /home/user/demo/output/result.txt --mkdir\n",
+        "  xrun ubuntu push ./config.json /home/user/demo/config.json\n",
+        "  xrun ubuntu push ./result.txt /home/user/demo/output/result.txt --mkdir\n",
         "Files are streamed in chunks with SHA-256 verification.\n",
         "Full documentation: xrun doc files"
     )
@@ -524,8 +530,8 @@ pub(super) enum Remote {
     #[command(
         after_help = concat!(
         "Examples:\n",
-        "  xrun linux1 pull /home/user/demo/config.json ./config.json --json\n",
-        "  xrun linux1 pull /home/user/demo/config.json -\n",
+        "  xrun ubuntu pull /home/user/demo/config.json ./config.json --json\n",
+        "  xrun ubuntu pull /home/user/demo/config.json -\n",
         "Files are streamed in chunks with SHA-256 verification. Pulling to stdout cannot use --json.\n",
         "Full documentation: xrun doc files"
     )
@@ -544,7 +550,7 @@ pub(super) enum Remote {
     /// Capture the main display as PNG, JPEG or WebP
     #[command(
         after_help = concat!(
-        "Example: xrun win1 screenshot ./screen.png --json\n",
+        "Example: xrun windows screenshot ./screen.png --json\n",
         "Requires a usable desktop: macOS screen-recording permission, Windows interactive session, or Linux X11.\n",
         "Full documentation: xrun doc files"
     )
@@ -563,8 +569,8 @@ pub(super) enum Remote {
     #[command(
         after_help = concat!(
         "Examples:\n",
-        "  xrun linux1 forward 8080:3000\n",
-        "  xrun linux1 forward 0:3000 --json\n",
+        "  xrun ubuntu forward 8080:3000\n",
+        "  xrun ubuntu forward 0:3000 --json\n",
         "Listens on local loopback; keep this command running. Ctrl+C closes the listener and its connections.\n",
         "Full documentation: xrun doc forward"
     )
@@ -646,10 +652,10 @@ mod tests {
         assert_eq!(device_selector(&id).unwrap(), id.to_ascii_lowercase());
         assert!(!valid_name(&id.to_ascii_lowercase()));
         assert!(valid_name(&"x".repeat(32)));
-        assert_eq!(device_selector("mac1").unwrap(), "mac1");
+        assert_eq!(device_selector("macbook").unwrap(), "macbook");
         for invalid in [
             "",
-            "../mac1",
+            "../macbook",
             "Mac 1",
             "dev_123",
             "dev_gggggggggggggggggggggggggggggggg",

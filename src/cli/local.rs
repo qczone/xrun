@@ -246,7 +246,7 @@ pub(super) async fn run(cli: LocalCli) -> Result<i32> {
                 crate::client::pause_access(false).await?;
             }
         },
-        Local::Doc { topic, list } => super::docs::print(topic, list),
+        Local::Doc { topic, list, lang } => super::docs::print(topic, list, lang),
         Local::Help { command } => return super::help::run(&command),
     }
     Ok(0)

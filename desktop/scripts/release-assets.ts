@@ -131,7 +131,8 @@ export async function prepareRelease(
       `每个平台提供 x86_64 / arm64 两种架构。安装脚本自动选择设备架构并验证版本与 SHA-256。\n\n` +
       `macOS / Linux 命令安装：\n\n\`\`\`bash\ncurl -fL '${base}/install.sh' -o install.sh\nbash install.sh --version ${version}\n\`\`\`\n\n` +
       `Windows PowerShell 命令安装：\n\n\`\`\`powershell\nInvoke-WebRequest '${base}/install.ps1' -OutFile install.ps1\npowershell.exe -NoProfile -ExecutionPolicy Bypass -File .\\install.ps1 -Version ${version}\n\`\`\`\n\n` +
-      `完整说明：[使用手册](https://github.com/${repository}/blob/v${version}/docs/usage.md#安装)。\n`,
+      `完整说明：[English](https://github.com/${repository}/blob/v${version}/docs/usage.md#installation) · ` +
+      `[简体中文](https://github.com/${repository}/blob/v${version}/docs/usage.zh-CN.md#安装)。\n`,
   );
   return version;
 }

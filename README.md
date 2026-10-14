@@ -6,84 +6,86 @@
 </p>
 
 <p align="center">
-  <strong>在你的设备之间执行程序、管理任务和传输文件。</strong>
+  <strong>Run programs, manage jobs, and transfer files across your devices.</strong>
 </p>
 
 <p align="center">
-  <a href="docs/usage.md#安装">安装</a> ·
-  <a href="docs/usage.md#开始使用">开始使用</a> ·
-  <a href="docs/usage.md">使用手册</a> ·
-  <a href="docs/development.md">开发与发布</a>
+  <a href="docs/usage.md#installation">Install</a> ·
+  <a href="docs/usage.md#quick-start">Quick start</a> ·
+  <a href="docs/usage.md">User manual</a> ·
+  <a href="docs/development.md">Development</a>
 </p>
 
-xrun 是面向开发者和 AI 的跨设备工具。用同一套命令，在自己的 macOS、Windows 和 Linux 设备上构建、测试、运行后台任务、传输文件、截图和转发端口。桌面 App 负责组网、授权、后台服务和活动记录，支持中英文和明暗主题。
+<p align="center">English · <a href="README.zh-CN.md">简体中文</a></p>
+
+xrun is a tool for developers and AI agents working across their own macOS, Windows, and Linux devices. Use the same commands to build, test, run background jobs, transfer files, capture screenshots, and forward ports. The desktop app manages networks, permissions, background services, and activity, with English and Chinese interfaces and light and dark themes.
 
 ```bash
-xrun linux1 -C /home/user/demo -- cargo test       # 在 Linux 上运行测试
-xrun win1 start -C 'D:\demo' -- cargo build        # 在 Windows 上启动后台构建
-xrun win1 pull 'D:\demo\target\debug\app.exe' ./app.exe
-xrun win1 screenshot ./screen.png
-xrun linux1 forward 8080:3000                      # 在本机访问远端的开发服务
+xrun ubuntu -C /home/user/demo -- cargo test       # Run tests on Linux
+xrun windows start -C 'D:\demo' -- cargo build     # Start a background build on Windows
+xrun windows pull 'D:\demo\target\debug\app.exe' ./app.exe
+xrun windows screenshot ./screen.png
+xrun ubuntu forward 8080:3000                      # Open a remote dev server locally
 ```
 
-## 能做什么
+## What you can do
 
-- **跨平台执行**：在目标设备上运行程序或脚本，实时取回输出和退出码。
-- **后台任务**：启动后随时查询状态、读取日志、等待完成或取消；断线不影响任务。
-- **文件与截图**：传输单个文件，支持校验、续传和防覆盖；截取远端屏幕。
-- **端口转发**：把远端的开发服务映射到本机浏览器。
-- **交给 AI**：稳定的退出码、错误码和 JSON 输出；`xrun help` 和 `xrun doc` 离线可读。
+- **Cross-platform execution**: run programs or scripts on a target device and stream their output and exit codes back.
+- **Background jobs**: check status, read logs, wait, or cancel after submission. Jobs keep running if you disconnect.
+- **Files and screenshots**: transfer individual files with checksums, resume support, and overwrite protection; capture remote displays.
+- **Port forwarding**: open a remote development service in your local browser.
+- **AI automation**: defined exit codes, error codes, and JSON output. `xrun help` and `xrun doc` work offline.
 
-目前不支持 PTY 终端、目录同步和离线任务排队。
+PTY terminals, directory synchronization, and offline job queues are not supported.
 
-## 开始使用
+## Quick start
 
-下面以 Mac `mac-pro` 管理 Linux `linux1` 为例，两台设备都需先安装 xrun。
+This example uses a Mac named `macbook` to manage a Linux device named `ubuntu`. Install xrun on both devices first.
 
-1. 从 [Release](https://github.com/xrun-sh/xrun/releases) 下载对应平台的文件，或使用[命令行安装](docs/usage.md#命令行安装)。
-2. 在 Mac 上部署中转，再用输出的完整地址创建网络，Mac 成为管理设备：
+1. Download your platform's package from [Releases](https://github.com/xrun-sh/xrun/releases), or use the [command-line installer](docs/usage.md#command-line-installation).
+2. On the Mac, deploy a relay, then create a network using the complete address it returns. The Mac becomes the manager:
 
    ```bash
    xrun relay deploy --provider cloudflare --name xrun-relay
-   xrun connect '<输出的中转地址>' --name mac-pro
+   xrun connect '<returned relay address>' --name macbook
    ```
 
-3. 在 Mac 上运行 `xrun invite` 生成接入码，然后在 Linux 上加入，并允许 Mac 访问：
+3. Run `xrun invite` on the Mac to generate an access code. On Linux, join the network and allow the Mac to access this device:
 
    ```bash
-   xrun connect <中转地址> <接入码> --name linux1 --allow-manager
+   xrun connect <relay-address> <access-code> --name ubuntu --allow-manager
    ```
 
-4. 回到 Mac，查看连接并运行第一条远程命令：
+4. Back on the Mac, check the connection and run your first remote command:
 
    ```bash
    xrun status
-   xrun linux1 -- uname -s
+   xrun ubuntu -- uname -s
    ```
 
-   看到 `Linux` 且命令退出码为 0，就完成了一次远程执行。遇到问题见[状态与排错](docs/usage.md#状态与排错)。
+   If the command prints `Linux` and exits with code 0, remote execution is working. See [Status and troubleshooting](docs/usage.md#status-and-troubleshooting) if it fails.
 
-桌面 App 的“新建网络”可以在界面中完成部署和创建。中转也可以自建在 Linux 主机上，见 [中转部署](docs/usage.md#中转部署)。
+The desktop app's **New network** flow can deploy a relay and create a network for you. You can also host a relay on Linux; see [Relay deployment](docs/usage.md#relay-deployment).
 
-## 平台
+## Platforms
 
-| 平台 | 下载 |
+| Platform | Download |
 | --- | --- |
-| macOS 13+ · x86_64 / arm64 | App ZIP，自带 CLI |
-| Windows · x86_64 / arm64 | 安装程序 EXE，包含 App 和 CLI |
-| Linux · x86_64 / arm64 | CLI 压缩包 |
+| macOS 13+ · x86_64 / arm64 | App ZIP with CLI |
+| Windows · x86_64 / arm64 | Installer EXE with app and CLI |
+| Linux · x86_64 / arm64 | CLI archive |
 
-中转可以部署到 Cloudflare（Worker + Durable Object，在任意系统上用一条命令完成），也可以自建在 Linux 主机上。
+Deploy a relay to Cloudflare (Worker + Durable Object) with one command from any supported system, or host it on Linux.
 
-## 安全
+## Security
 
-- **端到端加密**：设备之间在中转隧道内使用双向 TLS。中转保存网络归属、管理设备签名的成员清单（设备名称、密钥指纹和撤销状态）以及流量计数，看不到命令、输出、文件和截图。
-- **加入不等于授权**：每台设备自己决定允许谁访问。被允许的设备拥有本机当前用户的全部权限，请只授权可信设备。
-- **管理设备需要在线**：它负责邀请、撤销和续签成员有效期（默认 15 分钟，最长可设为 24 小时）。离线超过有效期后，新的远程操作会被拒绝，已开始的任务继续运行。
+- **End-to-end encryption**: devices use mutual TLS inside the relay tunnel. The relay stores network ownership, the manager-signed roster (device names, key fingerprints, and revocations), and traffic counters. It cannot read commands, output, files, or screenshots.
+- **Membership does not grant access**: each device decides who may access it. An allowed device has all the permissions of the current local user. Only allow devices you trust.
+- **Keep the manager online**: it handles invitations, revocations, and roster lease renewal (15 minutes by default, configurable up to 24 hours). Once the lease expires while the manager is offline, new remote operations are rejected. Accepted jobs keep running.
 
-## 文档
+## Documentation
 
-- [使用手册](docs/usage.md)：安装、组网、授权、日常使用和排错，也可以用 `xrun doc` 离线阅读；AI 和脚本从 [`xrun doc automation`](docs/usage.md#自动化与-ai) 开始。
-- [开发与发布](docs/development.md)：构建、测试、发布流程，以及架构、协议和兼容规则。
+- [User manual](docs/usage.md): installation, networking, permissions, everyday use, and troubleshooting. Read it offline with `xrun doc`, or use `xrun doc --lang zh` for Chinese. AI agents and scripts can start with [`xrun doc automation`](docs/usage.md#automation-and-ai).
+- [Development and releases](docs/development.md): builds, tests, release workflow, architecture, protocol, and compatibility rules.
 
 [MIT License](LICENSE)

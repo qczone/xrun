@@ -22,7 +22,7 @@ async fn offline_help_routes_local_remote_and_device_queries_without_creating_st
         "screenshot",
         "forward",
     ] {
-        let direct = ok(cli(home.path(), &["linux1", operation, "--help"]).await);
+        let direct = ok(cli(home.path(), &["ubuntu", operation, "--help"]).await);
         assert_eq!(
             direct,
             ok(cli(home.path(), &["help", operation]).await),
@@ -30,16 +30,16 @@ async fn offline_help_routes_local_remote_and_device_queries_without_creating_st
         );
         assert_eq!(
             direct,
-            ok(cli(home.path(), &["help", "linux1", operation]).await),
+            ok(cli(home.path(), &["help", "ubuntu", operation]).await),
             "{operation}"
         );
         assert_eq!(
             direct,
-            ok(cli(home.path(), &["linux1", "help", operation]).await),
+            ok(cli(home.path(), &["ubuntu", "help", operation]).await),
             "{operation}"
         );
     }
-    let device = ok(cli(home.path(), &["linux1", "--help"]).await);
+    let device = ok(cli(home.path(), &["ubuntu", "--help"]).await);
     assert!(
         device.contains("push") && device.contains("forward") && device.contains("xrun help run")
     );
@@ -60,7 +60,7 @@ async fn offline_help_routes_local_remote_and_device_queries_without_creating_st
     for (arguments, expected) in [
         (vec!["--help"], overview),
         (
-            vec!["linux1", "push", "--help"],
+            vec!["ubuntu", "push", "--help"],
             ok(cli(home.path(), &["help", "push"]).await),
         ),
         (
@@ -82,7 +82,7 @@ async fn offline_help_routes_local_remote_and_device_queries_without_creating_st
     }
     for arguments in [
         &["help", "missing"][..],
-        &["help", "linux1", "missing"],
+        &["help", "ubuntu", "missing"],
         &["help", "relay", "missing"],
         &["help", "guide"],
     ] {
@@ -94,36 +94,79 @@ async fn offline_help_routes_local_remote_and_device_queries_without_creating_st
 }
 
 #[tokio::test]
-async fn embedded_manual_and_chapters_are_available_without_identity_or_network() {
+async fn bilingual_manual_and_chapters_are_available_without_identity_or_network() {
     let home = tempfile::tempdir().unwrap();
     let manual = ok(cli(home.path(), &["doc"]).await);
     assert_eq!(manual, include_str!("../docs/usage.md"));
     assert_ne!(manual, include_str!("../README.md"));
-    let list = ok(cli(home.path(), &["doc", "--list"]).await);
-    for (topic, title) in [
-        ("install", "安装"),
-        ("quickstart", "开始使用"),
-        ("relay", "中转部署"),
-        ("access", "访问权限"),
-        ("network", "网络管理"),
-        ("execute", "执行程序"),
-        ("jobs", "任务与日志"),
-        ("automation", "自动化与 AI"),
-        ("files", "文件与截图"),
-        ("streaming", "流式执行"),
-        ("forward", "端口转发"),
-        ("desktop", "桌面 App"),
-        ("config", "配置与服务"),
-        ("errors", "状态与排错"),
-        ("upgrade", "升级与移除"),
+    let output = common::command(home.path(), &["doc"])
+        .env("LANG", "zh_CN.UTF-8")
+        .env("LC_ALL", "zh_CN.UTF-8")
+        .env("LANGUAGE", "zh_CN")
+        .output()
+        .await
+        .unwrap();
+    assert_eq!(ok(output), manual);
+    let help = ok(cli(home.path(), &["doc", "--help"]).await);
+    assert!(help.contains("--lang") && help.contains("[default: en]"));
+    let topics = [
+        ("install", "Installation", "安装"),
+        ("quickstart", "Quick start", "开始使用"),
+        ("relay", "Relay deployment", "中转部署"),
+        ("access", "Access control", "访问权限"),
+        ("network", "Network management", "网络管理"),
+        ("execute", "Running programs", "执行程序"),
+        ("jobs", "Jobs and logs", "任务与日志"),
+        ("automation", "Automation and AI", "自动化与 AI"),
+        ("files", "Files and screenshots", "文件与截图"),
+        ("streaming", "Streaming execution", "流式执行"),
+        ("forward", "Port forwarding", "端口转发"),
+        ("desktop", "Desktop app", "桌面 App"),
+        ("config", "Configuration and services", "配置与服务"),
+        ("errors", "Status and troubleshooting", "状态与排错"),
+        ("upgrade", "Upgrading and removal", "升级与移除"),
+    ];
+    for (lang, expected) in [
+        ("en", include_str!("../docs/usage.md")),
+        ("zh", include_str!("../docs/usage.zh-CN.md")),
     ] {
-        assert!(list.contains(topic) && list.contains(title));
-        let chapter = ok(cli(home.path(), &["doc", topic]).await);
-        assert!(chapter.starts_with(&format!("## {title}\n")));
-        assert!(manual.contains(chapter.trim_end()));
-        assert!(!chapter.contains("\n## "));
+        assert_eq!(
+            ok(cli(home.path(), &["doc", "--lang", lang]).await),
+            expected
+        );
+        let list = ok(cli(home.path(), &["doc", "--list", "--lang", lang]).await);
+        if lang == "en" {
+            assert_eq!(ok(cli(home.path(), &["doc", "--list"]).await), list);
+        } else {
+            assert!(list.contains("xrun doc <TOPIC> --lang zh"));
+        }
+        for (topic, en, zh) in topics {
+            let title = if lang == "en" { en } else { zh };
+            assert!(list.contains(topic) && list.contains(title));
+            let chapter = ok(cli(home.path(), &["doc", topic, "--lang", lang]).await);
+            assert!(chapter.starts_with(&format!("## {title}\n")));
+            assert!(expected.contains(chapter.trim_end()));
+            assert!(!chapter.contains("\n## "));
+            if lang == "en" {
+                assert_eq!(ok(cli(home.path(), &["doc", topic]).await), chapter);
+            }
+        }
     }
-    for arguments in [&["doc", "missing"][..], &["doc", "files", "--list"]] {
+    assert_eq!(
+        ok(cli(home.path(), &["doc", "--lang", "zh-CN"]).await),
+        include_str!("../docs/usage.zh-CN.md")
+    );
+    assert!(
+        ok(cli(home.path(), &["doc", "--lang", "zh", "files"]).await)
+            .starts_with("## 文件与截图\n")
+    );
+    for arguments in [
+        &["doc", "missing"][..],
+        &["doc", "files", "--list"],
+        &["doc", "--lang", "fr"],
+        &["doc", "--lang"],
+        &["doc", "--lang", "zh", "files", "--list"],
+    ] {
         let output = cli(home.path(), arguments).await;
         assert_eq!(output.status.code(), Some(2));
         assert!(output.stdout.is_empty());

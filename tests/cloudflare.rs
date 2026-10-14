@@ -1,10 +1,10 @@
 mod common;
-use anyhow::{Context, Result, ensure};
+use anyhow::{Context, Result};
 use common::*;
 use std::{
     path::{Path, PathBuf},
     process::{Output, Stdio},
-    time::{Duration, Instant},
+    time::Duration,
 };
 use tokio::{
     io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader},
@@ -125,51 +125,16 @@ async fn lab() -> Result<CloudLab> {
     Ok(lab)
 }
 
-async fn command_samples(lab: &CloudLab, count: usize) -> Result<Vec<f64>> {
-    let binary = binary().to_string_lossy().into_owned();
-    let mut samples = Vec::with_capacity(count);
-    for _ in 0..count {
-        let started = Instant::now();
-        assert_eq!(
-            ok(run(&lab.source, &["target1", "--", &binary, "--version"]).await).trim(),
-            format!("xrun {VERSION}")
-        );
-        samples.push(started.elapsed().as_secs_f64() * 1000.0);
-    }
-    Ok(samples)
-}
-
-async fn command_measurements(lab: &mut CloudLab) -> Result<serde_json::Value> {
-    if std::env::var_os("XRUN_BENCH_RELAY_OUTPUT").is_none() {
-        let samples = command_samples(lab, 1).await?;
-        println!("short command: {:.3}s", samples[0] / 1000.0);
-        return Ok(serde_json::Value::Null);
-    }
-    let count = std::env::var("XRUN_BENCH_RELAY_SAMPLES")
-        .unwrap_or_else(|_| "20".into())
-        .parse()?;
-    ensure!((1..=100).contains(&count), "sample count must be 1..100");
-    // Without the source daemon every CLI invocation establishes its own
-    // relay and peer TLS connection. The target daemon remains online.
-    stop_daemon(&lab.source, &mut lab.manager).await?;
-    let cold = command_samples(lab, count).await?;
-    println!("cold command samples: {count}");
-    lab.manager = logged(&lab.source, &["daemon"], "cf-benchmark-manager")?.spawn()?;
-    cloud_online(&lab.source, "source1").await?;
-    // Warm the source pool before measuring commands over reused sessions.
-    command_samples(lab, 1).await?;
-    let warm = command_samples(lab, count).await?;
-    println!("warm command samples: {count}");
-    Ok(serde_json::json!({"cold_ms":cold,"warm_ms":warm}))
-}
-
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 #[ignore = "run via cloudflare test:interop, or set XRUN_TEST_CF_LINK_FILE for a deployed relay"]
 async fn public_relay_executes_transfers_streams_and_rejects_route_takeover() -> Result<()> {
     tokio::time::timeout(Duration::from_secs(600), async {
         let mut lab = lab().await?;
         let binary = binary().to_string_lossy().into_owned();
-        let commands = command_measurements(&mut lab).await?;
+        assert_eq!(
+            ok(run(&lab.source, &["target1", "--", &binary, "--version"]).await).trim(),
+            format!("xrun {VERSION}")
+        );
         let job = json(run(&lab.source, &["target1", "start", "--json", "--", &binary, "--version"]).await);
         let job_id = job["job_id"].as_str().context("job ID")?;
         let completed = json(run(&lab.source, &["target1", "wait", job_id, "--json"]).await);
@@ -193,7 +158,7 @@ async fn public_relay_executes_transfers_streams_and_rejects_route_takeover() ->
         assert!(matches!(xrun::testing::net::receive(&mut anonymous).await?, RelayMessage::Error { code, .. } if code == "UNAUTHENTICATED"));
         cloud_online(&lab.source, "target1").await?;
         println!("certificate interoperability and route takeover rejection: passed");
-        // This case measures a known uncompressed ciphertext lower bound.
+        // Exercise the large payload with compression disabled.
         ok(run(&lab.source,&["network","compression","none"]).await);
         ok(run(&lab.target,&["network","compression","none"]).await);
         // Cross the former file-size cap without changing the relay's bounded windows.
@@ -201,14 +166,9 @@ async fn public_relay_executes_transfers_streams_and_rejects_route_takeover() ->
         let local = lab.root.path().join("upload.bin"); let remote = lab.target.join("artifact.bin"); let download = lab.root.path().join("download.bin");
         std::fs::write(&local, &content)?;
         println!("starting 65 MiB upload");
-        let started = Instant::now();
         ok(run(&lab.source, &["target1", "push", &local.to_string_lossy(), &remote.to_string_lossy(), "--no-overwrite"]).await);
-        let upload_seconds = started.elapsed().as_secs_f64();
-        println!("65 MiB upload: {upload_seconds:.3}s; starting download");
-        let started = Instant::now();
+        println!("65 MiB upload complete; starting download");
         let result = json(run(&lab.source, &["target1", "pull", &remote.to_string_lossy(), &download.to_string_lossy(), "--json"]).await);
-        let download_seconds = started.elapsed().as_secs_f64();
-        println!("65 MiB download: {download_seconds:.3}s");
         assert_eq!(result["sha256"], sha256(&content));
         assert_eq!(sha256(&std::fs::read(download)?), sha256(&content));
         println!("65 MiB file transfer in both directions: passed");
@@ -257,19 +217,6 @@ async fn public_relay_executes_transfers_streams_and_rejects_route_takeover() ->
             assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
             assert_eq!(sha256(&output.stdout), sha256(bytes));
             println!("binary streaming: passed");
-        }
-        if let Some(path) = std::env::var_os("XRUN_BENCH_RELAY_OUTPUT") {
-            let measurements = serde_json::json!({
-                "platform":std::env::consts::OS,
-                "architecture":std::env::consts::ARCH,
-                "relay_label":std::env::var("XRUN_BENCH_RELAY_LABEL").unwrap_or_else(|_| "public relay".into()),
-                "command_latency":commands,
-                "file_bytes":FILE_BYTES,
-                "upload_seconds":upload_seconds,
-                "download_seconds":download_seconds,
-                "sha256_verified":true,
-            });
-            std::fs::write(path, serde_json::to_vec_pretty(&measurements)?)?;
         }
         stop_daemon(&lab.source, &mut lab.manager).await?;
         stop_daemon(&lab.target, &mut lab.member).await?;

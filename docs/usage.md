@@ -1,145 +1,147 @@
-# xrun 使用手册
+# xrun user manual
 
-xrun 在你自己的 macOS、Windows 和 Linux 设备之间执行程序、管理后台任务、传输文件、截图和转发端口。本手册介绍安装、组网、授权和日常使用。
+English · [简体中文](usage.zh-CN.md)
 
-`xrun help [命令]` 查看命令速查，`xrun doc` 离线输出本手册，`xrun doc <章节>` 只看一章，`xrun doc --list` 列出章节。帮助和手册不需要身份、网络或运行中的服务，可以直接交给 AI 阅读。AI 和脚本的调用流程见 `xrun doc automation`。
+xrun runs programs, manages background jobs, transfers files, captures screenshots, and forwards ports between your own macOS, Windows, and Linux devices. This manual covers installation, networking, permissions, and everyday use.
 
-| 章节 | 内容 |
+Use `xrun help [command]` for command reference, `xrun doc` for the complete offline manual, `xrun doc <topic>` for one chapter, and `xrun doc --list` to list chapters. English is the default; add `--lang zh` for Chinese, for example `xrun doc automation --lang zh`. Both manuals are embedded in the executable. Help and documentation require no identity, network, or running service, so AI agents can read them directly. For an automation workflow, start with `xrun doc automation`.
+
+| Topic | Contents |
 | --- | --- |
-| `install` | 安装 |
-| `quickstart` | 开始使用 |
-| `relay` | 中转部署 |
-| `access` | 访问权限 |
-| `network` | 网络管理 |
-| `execute` | 执行程序 |
-| `jobs` | 任务与日志 |
-| `automation` | 自动化与 AI |
-| `files` | 文件与截图 |
-| `streaming` | 流式执行 |
-| `forward` | 端口转发 |
-| `desktop` | 桌面 App |
-| `config` | 配置与服务 |
-| `errors` | 状态与排错 |
-| `upgrade` | 升级与移除 |
+| `install` | Installation |
+| `quickstart` | Quick start |
+| `relay` | Relay deployment |
+| `access` | Access control |
+| `network` | Network management |
+| `execute` | Running programs |
+| `jobs` | Jobs and logs |
+| `automation` | Automation and AI |
+| `files` | Files and screenshots |
+| `streaming` | Streaming execution |
+| `forward` | Port forwarding |
+| `desktop` | Desktop app |
+| `config` | Configuration and services |
+| `errors` | Status and troubleshooting |
+| `upgrade` | Upgrading and removal |
 
-## 安装
+## Installation
 
-| 平台 | 下载文件 | 内容 |
+| Platform | Download | Contents |
 | --- | --- | --- |
-| macOS 13+ | `xrun-app-darwin-<架构>.zip` | 桌面 App，自带 CLI |
-| Windows | `xrun-app-windows-<架构>.exe` | 当前用户安装程序，包含桌面 App 和 CLI |
-| Linux | `xrun-linux-<架构>.tar.gz` | 只有 `xrun` 一个程序 |
+| macOS 13+ | `xrun-app-darwin-<arch>.zip` | Desktop app with CLI |
+| Windows | `xrun-app-windows-<arch>.exe` | Per-user installer with desktop app and CLI |
+| Linux | `xrun-linux-<arch>.tar.gz` | A single `xrun` executable |
 
-架构为 `x86_64`（即 AMD64，Intel Mac 选这个）或 `arm64`（Apple Silicon、Windows ARM、ARM Linux）。从 [Release](https://github.com/xrun-sh/xrun/releases) 下载对应文件。CLI、后台服务（daemon）和 Linux 中转是同一个程序，运行时不需要 Rust、Node.js 或 Bun。
+Architectures are `x86_64` (AMD64; choose this for Intel Macs) and `arm64` (Apple Silicon, Windows ARM, and ARM Linux). Download the appropriate file from [Releases](https://github.com/xrun-sh/xrun/releases). The CLI, background service (daemon), and Linux relay use the same executable. Rust, Node.js, and Bun are not required at runtime.
 
-- **macOS**：解压得到 `xrun.app`，先移到 `/Applications` 或 `~/Applications` 再打开。首次打开会把 CLI 链接到 `~/.local/bin/xrun`，并为 zsh 和 Bash 配置 PATH，重新打开终端即可运行 `xrun --version`。直接在下载目录打开时，macOS 会从临时隔离位置运行 App，此时不会创建 CLI 入口。
-- **Windows**：运行安装程序。它同时安装 App 和 CLI，并把安装目录下的 `cli` 加入当前用户 PATH；卸载时只移除它自己添加的 PATH 项。
-- **Linux**：把压缩包里的 `xrun` 放到固定位置（例如 `~/.local/bin/`）并加入 PATH。后台服务注册的是程序的绝对路径，安装后不要随意移动。
+- **macOS**: extract `xrun.app`, move it to `/Applications` or `~/Applications`, then open it. The first launch links the CLI to `~/.local/bin/xrun` and configures PATH for zsh and Bash. Open a new terminal to run `xrun --version`. Opening the app directly from Downloads may make macOS run it from a temporary translocation location, where the CLI entry is not created.
+- **Windows**: run the installer. It installs the app and CLI and adds the installation's `cli` directory to your user PATH. Uninstalling removes only the PATH entry the installer added.
+- **Linux**: place the archived `xrun` executable in a permanent location, such as `~/.local/bin/`, and add it to PATH. The service registers the executable's absolute path, so avoid moving it after installation.
 
-### 命令行安装
+### Command-line installation
 
-每个 Release 附带 `install.sh`（macOS、Linux）和 `install.ps1`（Windows）。脚本自动识别架构，校验版本、SHA-256 和安装后的程序，macOS 另检查签名，适合 AI 和自动化使用。`<版本>` 替换为 Release 的完整版本号：
+Each Release includes `install.sh` (macOS and Linux) and `install.ps1` (Windows). The scripts detect the architecture, verify the version and SHA-256, and check the installed executable. On macOS, they also check the signature. They are suitable for AI agents and automation. Replace `<version>` with the full Release version:
 
 ```bash
-curl -fLO https://github.com/xrun-sh/xrun/releases/download/v<版本>/install.sh
-bash install.sh --version <版本>
+curl -fLO https://github.com/xrun-sh/xrun/releases/download/v<version>/install.sh
+bash install.sh --version <version>
 ```
 
 ```powershell
-Invoke-WebRequest https://github.com/xrun-sh/xrun/releases/download/v<版本>/install.ps1 -OutFile install.ps1
-powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File .\install.ps1 -Version <版本>
+Invoke-WebRequest https://github.com/xrun-sh/xrun/releases/download/v<version>/install.ps1 -OutFile install.ps1
+powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File .\install.ps1 -Version <version>
 ```
 
-| install.sh | install.ps1 | 作用 |
+| install.sh | install.ps1 | Purpose |
 | --- | --- | --- |
-| `--version` | `-Version` | 必填，完整发布版本 |
-| `--install-dir` | `-InstallDir` | 安装父目录 |
-| `--source-dir` | `-SourceDir` | 从本地产物目录离线安装 |
-| `--base-url` | `-BaseUrl` | 从其他 HTTPS 产物目录下载 |
-| `--arch x86_64` | — | 在装有 Rosetta 的 Apple Silicon Mac 上安装 Intel 版 |
+| `--version` | `-Version` | Required; the complete release version |
+| `--install-dir` | `-InstallDir` | Parent installation directory |
+| `--source-dir` | `-SourceDir` | Install offline from a local artifact directory |
+| `--base-url` | `-BaseUrl` | Download from another HTTPS artifact directory |
+| `--arch x86_64` | — | Install the Intel build on an Apple Silicon Mac with Rosetta |
 
-默认安装位置：macOS 为 `~/Applications/xrun.app`，CLI 入口为 `~/.local/bin/xrun`；Windows 为 `%LOCALAPPDATA%\Programs\xrun`，CLI 在其 `cli` 子目录；Linux 为 `~/.local/bin/xrun`。Linux 需要 curl、tar、sha256sum，以及 jq 或 Python 3。
+Default locations: macOS uses `~/Applications/xrun.app` with a CLI entry at `~/.local/bin/xrun`; Windows uses `%LOCALAPPDATA%\Programs\xrun` with the CLI in its `cli` subdirectory; Linux uses `~/.local/bin/xrun`. Linux requires curl, tar, sha256sum, and either jq or Python 3.
 
-脚本在 stdout 输出一条 JSON。成功时包含版本、安装路径、CLI 的 `executable` 路径、`changed` 和自检结果，Windows 另有 `helper_executable`；重复安装相同产物返回 `changed: false`。失败时 `ok` 为 `false`，附 `error.code` 和 `error.message`，退出码为 1。
+The script writes one JSON object to stdout. On success, it includes the version, installation path, CLI `executable` path, `changed`, and self-check results. Windows also includes `helper_executable`. Reinstalling the same artifacts returns `changed: false`. On failure, `ok` is `false`, `error.code` and `error.message` describe the error, and the script exits with code 1.
 
-更新时，macOS 需先关闭 App；脚本会正常停止旧服务再替换文件，替换或自检失败时恢复旧文件。Linux 同样先停止服务。Windows 静默运行安装程序：服务准备失败时不替换程序，返回 32（更新）或 33（卸载），终端配置失败返回 34，诊断写入安装目录的 `xrun-install-error.log`。脚本只负责安装，加入网络和授权仍使用 App 或 CLI。
+For updates, close the macOS app first. The script stops the old service before replacing files and restores the old files if replacement or verification fails. Linux also stops the service first. Windows runs the installer silently: if service preparation fails, it leaves the executables in place and returns 32 for an update or 33 for an uninstall. Terminal configuration failure returns 34. Diagnostics are written to `xrun-install-error.log` in the installation directory. The scripts only install xrun; use the app or CLI to join a network and grant access.
 
-## 开始使用
+## Quick start
 
-一个 xrun 网络包括：所有设备都能访问的**中转**、负责签发成员身份的**管理设备**，以及其他**成员设备**。设备都主动连接中转，不需要开放入站端口。
+An xrun network has a **relay** reachable by every device, a **manager device** that issues member identities, and other **member devices**. Devices make outbound connections to the relay, so they do not need inbound ports open.
 
-下面以 Mac `mac-pro` 为管理设备、Linux `linux1` 为成员设备。两台设备先完成安装；每一步都标明在哪台设备上操作。
+Examples use the device names `macbook`, `ubuntu`, and `windows`; choose your own names if you prefer. Here, the Mac `macbook` is the manager and the Linux device `ubuntu` is a member. Install xrun on both first. Each step specifies where to run it.
 
-**1. 准备中转。** 选择一种部署方式，详见 `xrun doc relay`。
+**1. Prepare a relay.** Choose one deployment method; see `xrun doc relay` for details.
 
-使用 Cloudflare 时，在 Mac 上执行，并在浏览器中完成授权：
+For Cloudflare, run this on the Mac and authorize xrun in your browser:
 
 ```bash
 xrun relay deploy --provider cloudflare --name xrun-relay
 ```
 
-使用自建中转时，在 Linux 服务器上执行：
+For a self-hosted relay, run this on the Linux server:
 
 ```bash
-xrun relay deploy --provider local --addr <服务器IP>:9528
+xrun relay deploy --provider local --addr <server-ip>:9528
 ```
 
-成功后输出完整的部署链接：Cloudflare 为 `https://…` 地址，自建中转为 `xrun-relay://…`。记下该链接，下一步在管理设备上使用。
+On success, the command returns a complete deployment link: an `https://…` address for Cloudflare or an `xrun-relay://…` link for a self-hosted relay. Save it for the next step on the manager device.
 
-**2. 在 Mac 上创建网络。** 把 `<部署链接>` 换成上一步的完整链接：
+**2. Create the network on the Mac.** Replace `<deployment link>` with the complete link from the previous step:
 
 ```bash
-xrun connect '<部署链接>' --name mac-pro
+xrun connect '<deployment link>' --name macbook
 ```
 
-成功后显示本机名称和设备 ID，Mac 成为管理设备并启动后台服务。中转部署在哪台机器，不影响谁是管理设备；中转会永久绑定第一个在它上面创建的网络，一个中转只服务一个网络。
+On success, xrun displays the local name and device ID. The Mac becomes the manager and starts its background service. Hosting the relay on a particular machine does not make that machine the manager. A relay permanently binds to the first network created on it and serves only that network.
 
-**3. 在 Mac 上生成接入码：**
+**3. Generate an access code on the Mac:**
 
 ```bash
 xrun invite
 ```
 
-命令输出中转地址和八位接入码，例如 `K7M4-P9Q2`。在 Linux 上执行，将示例地址和接入码替换为实际输出：
+The command prints the relay address and an eight-character access code, such as `K7M4-P9Q2`. On Linux, replace the sample address and code with that output:
 
 ```bash
-xrun connect relay.example.com K7M4-P9Q2 --name linux1 --allow-manager
+xrun connect relay.example.com K7M4-P9Q2 --name ubuntu --allow-manager
 ```
 
-`--allow-manager` 允许管理设备访问这台新设备，不授予其他权限；省略时交互终端会询问，`--json` 或非交互调用视为拒绝。也可以使用同一接入码的短链接 `xrun://relay.example.com#K7M4-P9Q2`。自动化场景用 `xrun invite --link` 生成完整邀请，再执行 `xrun connect '<邀请>'`。
+`--allow-manager` allows the manager to access this new device and grants no other permissions. If omitted, an interactive terminal asks for consent; `--json` and noninteractive calls treat omission as refusal. You can also use the short link `xrun://relay.example.com#K7M4-P9Q2` for the same code. For automation, generate a complete invitation with `xrun invite --link`, then run `xrun connect '<invitation>'`.
 
-成功后显示 `linux1` 和设备 ID，并启动 Linux 的后台服务。
+On success, xrun displays `ubuntu` and its device ID and starts the Linux background service.
 
-**4. 回到 Mac 验证：**
+**4. Back on the Mac, verify the setup:**
 
 ```bash
 xrun status
-xrun linux1 -- uname -s
+xrun ubuntu -- uname -s
 ```
 
-`status` 中应出现 `linux1`，连接状态为 `relay-connected`；远程命令输出 `Linux` 且退出码为 0，表示连接、授权和执行均已成功。
+`status` should list `ubuntu` as `relay-connected`. If the remote command prints `Linux` and exits with code 0, the connection, permission, and execution checks have all succeeded.
 
-如果返回 `SOURCE_NOT_ALLOWED`，在 Linux 上执行 `xrun allow-from mac-pro` 后重试；如果返回 `DEVICE_OFFLINE`，先在 Linux 上用 `xrun status` 检查服务，已停止时执行 `xrun daemon start`。其他错误见 `xrun doc errors`。
+For `SOURCE_NOT_ALLOWED`, run `xrun allow-from macbook` on Linux and retry. For `DEVICE_OFFLINE`, check the service on Linux with `xrun status`; if stopped, run `xrun daemon start`. See `xrun doc errors` for other errors.
 
-几条规则：
+A few rules:
 
-- 接入码 10 分钟内有效，只能使用一次，最多尝试 5 次；大小写、空格和连字符不影响输入。重新生成会作废上一份，管理设备的服务重启后，未使用的接入码也会失效。
-- 加入时管理设备的服务必须在线。加入网络不等于获得访问权限，见 `xrun doc access`。
-- **管理设备需要保持在线。** 它定期续签成员有效期，默认 15 分钟。离线超过有效期后，网络中新的远程操作返回 `ROSTER_EXPIRED`，已受理的任务继续运行，见 `xrun doc network`。
-- 没有 systemd 用户服务的 Linux 容器，加 `--no-daemon` 只准备身份，再用外部进程管理器运行 `xrun daemon`。
-- 也可以使用显式命令：`xrun up --relay <部署链接>` 创建网络并立即输出一份邀请，`xrun join <邀请>` 只接受成员邀请。
-- 桌面 App 的“新建网络”可以一次完成第 1、2 步，见 `xrun doc desktop`。
+- Access codes are valid for 10 minutes, can be used once, and allow at most 5 attempts. Case, spaces, and hyphens do not matter. Generating a new code invalidates the previous one. Restarting the manager's service also invalidates unused codes.
+- The manager's service must be online when a device joins. Membership does not grant access; see `xrun doc access`.
+- **Keep the manager online.** It regularly renews the roster lease, which defaults to 15 minutes. Once the lease expires while the manager is offline, new remote operations return `ROSTER_EXPIRED`. Accepted jobs keep running. See `xrun doc network`.
+- For Linux containers without a systemd user service, add `--no-daemon` to prepare the identity only, then run `xrun daemon` under an external process manager.
+- Explicit commands are also available: `xrun up --relay <deployment-link>` creates a network and immediately prints an invitation; `xrun join <invitation>` accepts member invitations only.
+- The desktop app's **New network** flow combines steps 1 and 2. See `xrun doc desktop`.
 
-## 中转部署
+## Relay deployment
 
-中转接通设备之间的连接，转发端到端加密的数据。两种中转功能相同：
+A relay connects devices and forwards end-to-end encrypted data. Both relay implementations offer the same features:
 
-| | Cloudflare | 自建 Linux |
+| | Cloudflare | Self-hosted Linux |
 | --- | --- | --- |
-| 运行位置 | 你的 Cloudflare 账号（Worker + Durable Object） | 所有设备都能访问的 Linux 主机 |
-| 部署命令 | 可在 macOS、Windows、Linux 上运行 | 在中转主机上运行，需要 systemd |
-| 地址 | `https://<名称>.<子域>.workers.dev` 或自定义域名 | `xrun-relay://<地址>/<证书指纹>` |
-| 并发会话 | 每个网络 8 个 | 每个来源 16 个、每个目标 32 个 |
+| Runs in | Your Cloudflare account (Worker + Durable Object) | A Linux host reachable by all devices |
+| Deployment command | Runs on macOS, Windows, or Linux | Runs on the relay host; requires systemd |
+| Address | `https://<name>.<subdomain>.workers.dev` or a custom domain | `xrun-relay://<address>/<certificate-fingerprint>` |
+| Concurrent sessions | 8 per network | 16 per source, 32 per target |
 
 ### Cloudflare
 
@@ -147,149 +149,149 @@ xrun linux1 -- uname -s
 xrun relay deploy --provider cloudflare --name xrun-relay
 ```
 
-命令会打开浏览器，在 Cloudflare 登录并授权 xrun；有多个账号时在终端选择，或用 `--account <账号ID>` 指定。CLI 直接上传内置的 Worker，不需要源码、Node.js 或 Wrangler。账号还没有 workers.dev 子域名时会自动创建；如果 Cloudflare 仍要求初始化，在控制台打开一次 Workers & Pages 后重试。
+The command opens a browser for Cloudflare sign-in and authorization. If you have multiple accounts, choose one in the terminal or pass `--account <account-id>`. The CLI uploads its embedded Worker directly; source code, Node.js, and Wrangler are not required. If the account has no workers.dev subdomain, xrun creates one. If Cloudflare still requires initialization, open Workers & Pages in the dashboard once and retry.
 
-- 成功后输出完整的 HTTPS 地址。同名重复部署会更新代码，保留地址和数据；同名 Worker 属于其他应用时返回 `ALREADY_EXISTS`，不会覆盖。
-- `--region` 为新建的存储对象提供位置提示：`auto`（默认，按连接位置选择）、`wnam`、`enam`、`sam`、`weur`、`eeur`、`apac`、`apac-ne`、`apac-se`、`oc`、`afr`、`me`。只对首次创建的对象生效，实际位置由 Cloudflare 决定。
-- 授权默认是临时的，操作完成后立即撤销。部署记录保存在 `~/.xrun/cloudflare/`，以后更新和删除都依赖它，请保留。需要经常维护中转时，可以在创建网络后的管理设备上用 `xrun relay login --provider cloudflare --remember` 把登录保存到系统凭据库（macOS 钥匙串、Windows 凭据管理器、Linux Secret Service），其他设备不能记住登录；`xrun relay logout --provider cloudflare` 撤销并删除登录，已部署的中转保留。
-- 自定义域名：在 Cloudflare 控制台的 Worker → Settings → Domains & Routes 中添加 Custom Domain（域名须在你自己的 Cloudflare zone 中），创建网络时直接使用 `https://relay.example.com`。已有网络改用新地址时，在管理设备上停止服务，执行 `xrun up --relay 'https://relay.example.com'`，再启动服务。
-- 每个方向最多 4 MiB 未确认的数据在途，单个文件大小没有固定上限。
+- On success, the command prints the complete HTTPS address. Deploying again with the same name updates the code while retaining the address and data. If a Worker with that name belongs to another application, it returns `ALREADY_EXISTS` without overwriting it.
+- `--region` provides a location hint for new storage objects: `auto` (default, based on the connecting location), `wnam`, `enam`, `sam`, `weur`, `eeur`, `apac`, `apac-ne`, `apac-se`, `oc`, `afr`, or `me`. It only affects objects when first created; Cloudflare decides their actual location.
+- Authorization is temporary by default and is revoked when the operation finishes. Deployment records are stored in `~/.xrun/cloudflare/`; keep them, as updates and removal depend on them. For regular maintenance, after creating the network, run `xrun relay login --provider cloudflare --remember` on the manager to save the login in the system credential store (macOS Keychain, Windows Credential Manager, or Linux Secret Service). Other devices cannot remember a login. `xrun relay logout --provider cloudflare` revokes and removes the login while keeping the deployed relay.
+- Custom domains: in the Cloudflare dashboard, go to Worker → Settings → Domains & Routes and add a Custom Domain from a zone in your account. Use `https://relay.example.com` when creating the network. To change an existing network's address, stop the service on the manager, run `xrun up --relay 'https://relay.example.com'`, then restart the service.
+- Each direction allows up to 4 MiB of unacknowledged data in flight. Individual files have no fixed size limit.
 
-### 自建 Linux 中转
+### Self-hosted Linux relay
 
-在中转主机上执行：
+Run this on the relay host:
 
 ```bash
 xrun relay deploy --provider local --addr 203.0.113.10:9528
 ```
 
-命令安装 systemd 用户服务并启用 linger，中转随开机启动，异常退出后自动重启。默认监听 TCP 9528，仅支持 IPv4，防火墙和安全组的端口需要自行放行。
+The command installs a systemd user service and enables linger, so the relay starts at boot and restarts after unexpected exits. It listens on TCP 9528 by default and supports IPv4 only. Open the port in your firewall and security group yourself.
 
-| 选项 | 作用 |
+| Option | Purpose |
 | --- | --- |
-| `--addr <主机>:<端口>` | 设备连接的地址，可重复或用逗号分隔，指定后持久保留；域名需要有 A 记录 |
-| `--port <端口>` | 实际监听端口，默认 9528；可以与发布地址中的端口不同（端口映射） |
-| `--no-detect` | 省略 `--addr` 时只使用网卡地址，不查询公网出口 IP |
+| `--addr <host>:<port>` | Published device connection address; repeat or comma-separate values. Explicit addresses are persisted. Domains need an A record. |
+| `--port <port>` | Listening port, default 9528; may differ from the published port when using port mapping |
+| `--no-detect` | When `--addr` is omitted, use interface addresses only without querying the public egress IP |
 
-省略 `--addr` 时自动探测网卡 IPv4 和公网出口地址。出口地址不保证外部可达，长期使用建议固定 IP 或域名。部署链接包含中转证书指纹，可以重复使用，重启后不变；它不是访问凭据。中转主机也可以另外作为普通成员加入网络，两者互不影响。
+Without `--addr`, xrun detects interface IPv4 addresses and the public egress address. An egress address is not necessarily reachable from outside; use a fixed IP or domain for long-term deployments. The deployment link contains the relay certificate fingerprint, remains unchanged after restarts, and is reusable. It is not an access credential. The relay host can separately join as a regular member; the roles are independent.
 
-### 查看、检查与移除
+### Inspecting and removing a relay
 
 ```bash
-xrun relay link --provider cloudflare --name xrun-relay    # 从本机记录读取地址，不联网
-xrun relay check --provider cloudflare --name xrun-relay   # 检查连通和协议，最多 30 秒
+xrun relay link --provider cloudflare --name xrun-relay    # Read the local record; no network
+xrun relay check --provider cloudflare --name xrun-relay   # Check connectivity and protocol; up to 30 s
 xrun relay remove --provider cloudflare --name xrun-relay --purge
 xrun relay link --provider local
 xrun relay remove --provider local
 ```
 
-`relay check` 不重新授权，不上传代码，也不创建网络。删除 Cloudflare 中转必须加 `--purge`，会永久删除 Worker、全部中转数据和流量统计；只接受本机有部署记录、且远端归属标记匹配的实例。删除失败可以重复执行；删除开始后如需重新部署，请换一个名称。`remove --provider local` 卸载服务，保留配置和统计。`xrun relay run --provider local` 在前台运行已配置的本地中转，用于调试或交给外部进程管理。
+`relay check` does not reauthorize, upload code, or create a network. Removing a Cloudflare relay requires `--purge` and permanently deletes the Worker, all relay data, and traffic statistics. Removal only accepts an instance recorded locally whose remote ownership marker matches. Failed removal can be retried; once removal starts, use a new name for any new deployment. `remove --provider local` uninstalls the service but keeps configuration and statistics. `xrun relay run --provider local` runs the configured local relay in the foreground for debugging or an external process manager.
 
-### 部署进度与自动化
+### Deployment progress and automation
 
-普通模式在 stderr 显示各阶段和耗时，stdout 只输出最终地址和下一步命令。脚本和 AI 使用 `--json`：
+Normal mode writes stages and timing to stderr; stdout contains only the final address and next command. Scripts and AI agents should use `--json`:
 
 ```bash
 xrun relay deploy --provider cloudflare --name xrun-relay --no-browser --json
 xrun relay check --provider cloudflare --name xrun-relay --json
 ```
 
-- stdout 只有一条最终 JSON，stderr 是逐行 JSON 事件。进度事件的 `event` 为 `deployment_progress`，包含 `operation_id`、`sequence`、`timestamp_ms`、`stage`、`status`、`elapsed_ms` 和 `stage_elapsed_ms`；等待授权时附 `authorization_url`，需要选择账号时附 `accounts`，中转保存后附 `deployment` 和 `next_command`。事件中不含授权码或令牌。请按阶段和错误码判断，不要解析提示文字。
-- `--no-browser` 只是不自动打开浏览器，命令仍会等待授权，最长 5 分钟。授权页必须在运行命令的同一台机器上打开，回调使用 `127.0.0.1` 的 8976、8977 或 8978 端口。
-- 无人值守部署可以用 `CLOUDFLARE_API_TOKEN` 提供 API Token，并用 `--account` 或 `CLOUDFLARE_ACCOUNT_ID` 指定账号；令牌不会写入部署记录。JSON 模式下有多个账号但未指定时，返回 `INTERACTIVE_REQUIRED`。
-- 结果包含 `deployed`、`ready`、`authorization_cleanup` 和 `next_command`。Worker 已保存、但连接检查或授权清理失败时，stdout 仍返回已创建的中转和 `error`，退出码非零。此时不要换名重新部署：先运行 `relay check`，恢复后执行 `xrun up --relay <地址> --name <设备名> --json`。
-- Ctrl+C 取消操作并以 130 退出，已有的部署记录保留，用同一 `--name` 即可继续。强制退出或授权撤销失败时，可以在 Cloudflare 账号中手动撤销 xrun 的授权。
-- `--dry-run --json` 只检查内置的 Worker，不登录，也不修改 Cloudflare。
-- 各阶段耗时记录在 `~/.xrun/deployment.log`（约 1 MiB 封顶），不含授权地址、令牌或错误正文。
+- stdout contains one final JSON object; stderr contains newline-delimited JSON events. Progress events use `event: deployment_progress` and include `operation_id`, `sequence`, `timestamp_ms`, `stage`, `status`, `elapsed_ms`, and `stage_elapsed_ms`. They include `authorization_url` while waiting for authorization, `accounts` when account selection is needed, and `deployment` and `next_command` after saving the relay. Events contain no authorization codes or tokens. Use stages and error codes rather than parsing message text.
+- `--no-browser` only disables automatic browser opening. The command still waits for authorization for up to 5 minutes. Open the authorization page on the same machine running the command; the callback uses port 8976, 8977, or 8978 on `127.0.0.1`.
+- For unattended deployment, provide an API token through `CLOUDFLARE_API_TOKEN` and an account through `--account` or `CLOUDFLARE_ACCOUNT_ID`. The token is not written to deployment records. In JSON mode, multiple accounts without an explicit selection return `INTERACTIVE_REQUIRED`.
+- Results include `deployed`, `ready`, `authorization_cleanup`, and `next_command`. If the Worker was saved but connectivity checks or authorization cleanup fail, stdout still returns the created relay and an `error`, and the command exits nonzero. Keep the same deployment name: run `relay check` first, then `xrun up --relay <address> --name <device-name> --json` once it is ready.
+- Ctrl+C cancels the operation and exits with code 130. Saved deployment records remain; continue with the same `--name`. After a forced exit or failed authorization revocation, you can manually revoke xrun's authorization in your Cloudflare account.
+- `--dry-run --json` only checks the embedded Worker without signing in or changing Cloudflare.
+- Stage timings are recorded in `~/.xrun/deployment.log`, capped at approximately 1 MiB, without authorization URLs, tokens, or error bodies.
 
-## 访问权限
+## Access control
 
-xrun 把三件事分开：管理设备决定**谁是成员**（邀请、撤销），目标设备决定**谁能访问自己**，中转只负责转发。成员身份本身不带任何执行、文件、截图或转发权限。
+xrun separates three responsibilities: the manager decides **who is a member** through invitations and revocations; each target decides **who may access it**; the relay forwards connections. Membership alone grants no execution, file, screenshot, or forwarding permissions.
 
-在目标设备上授权，例如允许 mac-pro 访问本机：
+Grant access on the target device. For example, allow macbook to access this machine:
 
 ```bash
-xrun allow-from mac-pro    # 允许
-xrun deny-from mac-pro     # 拒绝，并关闭它的现有会话
-xrun allow-from --all      # 信任所有成员，包括以后加入的
-xrun deny-from --all       # 关闭全体信任，保留单独的允许和拒绝
-xrun daemon pause          # 暂停全部远程访问
-xrun daemon resume         # 按原授权恢复
+xrun allow-from macbook    # Allow access
+xrun deny-from macbook     # Deny access and close existing sessions
+xrun allow-from --all      # Trust all members, including future members
+xrun deny-from --all       # Disable all-member trust; retain individual allows and denials
+xrun daemon pause         # Pause all remote access
+xrun daemon resume        # Resume with existing permissions
 ```
 
-- **允许访问，就是交出目标设备当前用户的权限**：执行命令、读写文件、截图和端口转发。只授权可信的设备。
-- 判断顺序：未撤销的成员 → 本机未暂停 → 未被单独拒绝 → 在允许列表中，或开启了全体信任。授权保存在本机，重启后保留。
-- 授权是单向的，双向访问需要两台设备分别 `allow-from` 对方。`xrun invite --allow`（或 `up --allow`）只是请求新设备允许管理设备访问，由新设备确认；邀请从不让新成员获得访问管理设备的权限。
-- 管理设备默认拒绝远程操作，可以逐台 `allow-from`，但不接受 `allow-from --all`（返回 `MANAGER_PROTECTED`）。被允许的设备能接触管理设备上的网络管理密钥，请格外谨慎。
-- 设备名只是别名，授权和记录都使用不可变的设备 ID；命令也接受 32 位十六进制的设备 ID。
-- `deny-from` 和暂停会关闭现有会话、流式执行和端口转发；已受理的可靠任务继续运行。
+- **Allowing access grants the target's current-user permissions**: running commands, reading and writing files, capturing screenshots, and forwarding ports. Only allow trusted devices.
+- Checks run in this order: non-revoked member → local access not paused → no individual denial → individually allowed or all-member trust enabled. Permissions are local and survive restarts.
+- Access is directional. For mutual access, run `allow-from` for the other device on each machine. `xrun invite --allow` (or `up --allow`) merely asks the new device to allow the manager, subject to consent on that device. An invitation never grants the new member access to the manager.
+- The manager rejects remote operations by default. It accepts individual `allow-from` permissions but rejects `allow-from --all` with `MANAGER_PROTECTED`. An allowed device can access the network management keys on the manager, so grant access carefully.
+- Names are aliases. Permissions and records use immutable device IDs; commands also accept 32-character hexadecimal device IDs.
+- Denial and pausing close existing sessions, streaming executions, and port forwards. Accepted reliable jobs continue running.
 
-撤销成员只能在管理设备上执行：
+Only the manager can revoke a member:
 
 ```bash
-xrun revoke win1
+xrun revoke windows
 ```
 
-管理设备签署新的成员清单，同步给中转和在线设备，并列出尚未确认收到的设备。收到更新的设备立即拒绝被撤销的设备；已受理的任务不会被取消或回滚。离线设备上线后才能收到更新，需要立即阻断时，在目标设备上执行 `deny-from` 或暂停访问。被撤销的密钥不能重新加入。
+The manager signs a new roster, distributes it to the relay and online devices, and lists devices that have not acknowledged it. Devices that receive the update immediately reject the revoked device. Accepted jobs are not canceled or rolled back. Offline devices receive the update when they reconnect. For immediate blocking, deny the source or pause access on the target. A revoked key cannot rejoin.
 
-### 安全模型
+### Security model
 
-- 设备之间在中转隧道内建立双向 TLS，用网络自己的根证书验证身份。命令、参数、环境变量、输入输出、文件和截图只有通信两端可见。
-- 中转能看到网络 ID、连接时出示的成员证书、来源 IP、在线状态、连接时间和流量大小；它保存网络归属、管理设备签名的成员清单（设备 ID、名称、密钥指纹和撤销状态）及其有效期，以及流量统计。中转不能伪造成员、授予权限或解密业务数据，但可以中断连接或延迟转发更新。
-- 网络根私钥只在管理设备上。丢失后无法再签发或撤销成员，请用 `xrun network backup` 加密备份。
-- 本机数据目录 `~/.xrun` 包含私钥、数据库和日志，应按敏感数据保管。远端输出原样传回，终端控制字符和提示注入需要调用方自行防范。
+- Devices establish mutual TLS inside the relay tunnel and verify identities against the network's own root certificate. Only the two endpoints can read commands, arguments, environment variables, input, output, files, and screenshots.
+- The relay can see the network ID, member certificates presented on connection, source IPs, online state, connection times, and traffic sizes. It stores network ownership, the manager-signed roster (device IDs, names, key fingerprints, and revocations), its lease, and traffic statistics. It cannot impersonate members, grant access, or decrypt application data, but it can interrupt connections or delay updates.
+- Only the manager holds the network root private key. Losing it prevents further member issuance or revocation. Create an encrypted backup with `xrun network backup`.
+- The local data directory `~/.xrun` contains private keys, databases, and logs; treat it as sensitive. Remote output is returned verbatim. Callers must handle terminal control characters and prompt injection themselves.
 
-## 网络管理
+## Network management
 
-`xrun network` 管理成员有效期、局域网直连、传输压缩和管理身份。桌面 App 在“设置”中提供相同的选项。
+`xrun network` manages roster leases, LAN direct connections, transfer compression, and the manager identity. The desktop app provides the same options in Settings.
 
-### 成员有效期
+### Roster lease
 
 ```bash
-xrun network lease       # 查看
-xrun network lease 60    # 在管理设备上设为 60 分钟（1–1440）
+xrun network lease       # Read the current lease
+xrun network lease 60    # On the manager, set 60 minutes (1–1440)
 ```
 
-管理设备在线时，大约每过三分之一有效期就续签一次成员清单，默认有效期 15 分钟。设备和中转只接受有效期内的清单：管理设备离线超过有效期后，新的远程操作（包括任务查询）返回 `ROSTER_EXPIRED`；已受理的任务继续运行，本机活动照常可看。管理设备恢复在线后自动续签。
+While online, the manager renews the roster approximately every third of its lease duration. The default lease is 15 minutes. Devices and relays only accept an unexpired roster. Once the manager has been offline past expiry, new remote operations, including job queries, return `ROSTER_EXPIRED`. Accepted jobs continue running, and local activity remains available. Renewal resumes automatically when the manager comes back online.
 
-有效期越长，管理设备可以离线越久；但中转如果扣住撤销更新，旧清单也能继续使用更久。各设备的时钟应保持同步。此外，成员证书最长有效 365 天，剩余不足 30 天时自动续期，续期同样需要管理设备在线。
+A longer lease lets the manager stay offline longer, but also lets a relay withhold revocation updates for longer. Keep device clocks synchronized. Member certificates are valid for at most 365 days and renew automatically when fewer than 30 days remain; renewal also requires the manager online.
 
-### 局域网直连
+### LAN direct connections
 
 ```bash
-xrun network direct                 # 列出本机内网 IPv4 接口和当前设置
-xrun network direct 192.168.1.10    # 在该内网地址上启用直连
+xrun network direct                 # List local private IPv4 interfaces and current settings
+xrun network direct 192.168.1.10    # Enable direct connections on this private address
 xrun network direct --off
 ```
 
-两台设备都选择了同一内网的接口时，连接会优先尝试直连。直连只在所选地址的随机端口上监听，不扫描网络，也不做 UPnP；地址只通过已认证的加密连接交换，身份验证和授权与走中转时相同。直连失败时，在发送请求前自动改走中转。直连流量不计入中转统计，设备信息会显示上次连接是“直连”还是“中转”。
+When both devices select interfaces on the same LAN, connections try the direct path first. Direct mode listens on a random port only at the selected address. It does not scan the network or use UPnP. Addresses are exchanged only over authenticated, encrypted connections, with the same identity and permission checks as relay connections. If a direct connection fails, xrun falls back to the relay before sending the request. Direct traffic is excluded from relay statistics. Device information shows whether the last connection was direct or relayed.
 
-### 传输压缩
+### Transfer compression
 
 ```bash
-xrun network compression          # 查看
-xrun network compression auto     # 默认：至少节省 1/8 时才压缩
-xrun network compression none     # 不压缩
-xrun network compression zstd     # 总是尝试 zstd，但不会让数据变大
+xrun network compression          # Read the current setting
+xrun network compression auto     # Default: compress only when saving at least 1/8
+xrun network compression none     # No compression
+xrun network compression zstd     # Always try zstd, without making data larger
 ```
 
-设置只影响本机发出的文件和日志。PNG、JPEG、WebP、ZIP、GZIP、Zstd 和 MP4 等已压缩格式会直接跳过，压缩也不改变落盘的内容。
+The setting affects only files and logs sent by this device. Already compressed formats such as PNG, JPEG, WebP, ZIP, GZIP, Zstd, and MP4 are skipped. Compression does not change the bytes written to disk.
 
-### 备份与交接管理身份
+### Backing up and handing over management
 
-以下命令在终端中输入隐藏密码，密码至少 12 个字符。自动化可以用 `--password-stdin` 从 stdin 读取一行。备份包含管理身份、网络根私钥和成员数据库快照，不包含 Cloudflare 登录凭据。
+The following commands prompt for a hidden password of at least 12 characters. Automation can use `--password-stdin` to read one line from stdin. Backups contain the manager identity, network root private key, and a member database snapshot. They do not include Cloudflare login credentials.
 
-下文用 CLI 服务命令演示启停；由 App 管理的服务，可在“设置 → 网络与服务”中完成启停。
+The examples use CLI service commands. For an app-managed service, use Settings → Network and service to stop and start it.
 
-#### 备份与恢复
+#### Backup and restore
 
-在当前管理设备上生成加密备份，并将文件和密码分别妥善保存：
+Create an encrypted backup on the current manager, and store the file and password separately:
 
 ```bash
 xrun network backup ./xrun-manager.backup
 ```
 
-需要恢复时，先把备份复制到恢复用的设备，再在该设备上执行：
+To restore, copy the backup to the recovery device, then run these commands there:
 
 ```bash
 xrun daemon stop
@@ -298,20 +300,20 @@ xrun daemon start
 xrun status --json
 ```
 
-新安装、尚未注册服务的设备可以省略 `stop`，恢复后用 `xrun daemon install` 代替 `start`。成功后，`restore` 返回的 `manager_id` 应与 `status --json` 中的 `local.device_id` 一致；服务连接后，`local.daemon_connected` 为 `true`。
+On a new installation with no registered service, omit `stop` and use `xrun daemon install` instead of `start` after restoration. On success, the returned `manager_id` from `restore` should match `local.device_id` in `status --json`. Once connected, `local.daemon_connected` should be `true`.
 
-密码错误或文件损坏时不会覆盖现有身份。恢复会核对中转上的最新成员清单，保留之后发生的撤销，并清空允许访问列表，需要重新 `allow-from`。同一份管理身份恢复到另一台机器后，原机器发现新的管理代次时会删除根私钥并停止服务。
+An incorrect password or damaged file leaves the existing identity intact. Restoration checks the latest roster on the relay, preserves subsequent revocations, and clears the access allowlist; grant access again with `allow-from`. If the same manager identity is restored onto another machine, the original machine deletes its root private key and stops its service when it observes the new authority generation.
 
-#### 交接给已有成员
+#### Handover to an existing member
 
-下面把管理身份交给已加入网络的 Linux 设备 `linux1`。先确认它允许当前管理设备访问，然后在**旧管理设备**上生成并传送交接文件：
+This example hands management to the Linux member `ubuntu`. First confirm that it allows access from the current manager. Then create and transfer the handover file on the **old manager**:
 
 ```bash
-xrun network migrate linux1 --out ./xrun-handover.backup
-xrun linux1 push ./xrun-handover.backup /tmp/xrun-handover.backup --no-overwrite
+xrun network migrate ubuntu --out ./xrun-handover.backup
+xrun ubuntu push ./xrun-handover.backup /tmp/xrun-handover.backup --no-overwrite
 ```
 
-生成文件后，旧管理设备照常工作。文件传送成功后，在 **linux1 本机**停止服务、导入并重新启动：
+The old manager keeps working after the file is created. Once transfer succeeds, run these commands **locally on ubuntu** to stop the service, import the file, and restart:
 
 ```bash
 xrun daemon stop
@@ -320,100 +322,100 @@ xrun daemon start
 xrun status --json
 ```
 
-确认 `restore` 返回的 `manager_id` 与 `status --json` 中的 `local.device_id` 一致，且 `local.daemon_connected` 为 `true`。旧管理设备收到更新后会自动撤销 Cloudflare 登录、删除根私钥，成为普通成员。其他设备的访问授权不会自动转给 linux1，需要在各目标设备上单独 `allow-from linux1`。
+Confirm that `restore` returns a `manager_id` matching `local.device_id` in `status --json`, with `local.daemon_connected` set to `true`. Once the old manager receives the update, it revokes its Cloudflare login, deletes its root private key, and becomes a regular member. Other devices do not automatically grant access to ubuntu; run `allow-from ubuntu` on each target separately.
 
-密码错误或校验失败时保留原有身份，可修正后重新导入。网络始终只有一台管理设备，不支持多管理设备或根密钥轮换。
+An incorrect password or failed validation preserves the existing identity, so you can correct the problem and import again. A network always has one manager. Multiple managers and root key rotation are not supported.
 
-## 执行程序
-
-```bash
-xrun linux1 -C /home/user/demo -- cargo test
-xrun win1 -C 'D:\demo' -- cargo build
-xrun linux1 --env RUST_LOG=info --env MODE=test -C /home/user/demo -- ./demo
-```
-
-`--` 之后的内容原样交给远端程序。xrun 直接启动程序，不经过 Shell，所以管道、重定向和变量展开都由本机 Shell 处理。目标用自己后台服务的 PATH 查找程序（见 `xrun doc config`），找不到时请写完整路径。
-
-需要 Shell 时，用 `--script` 从 stdin 传入脚本，并明确指定 `sh`、`bash`、`zsh`、`powershell`、`pwsh` 或 `cmd`：
+## Running programs
 
 ```bash
-xrun linux1 -C /repo --script bash < ./build.sh
-xrun win1 -C 'D:\demo' --script powershell < ./build.ps1
-printf 'hello\n' | xrun linux1 --stdin -- cat
+xrun ubuntu -C /home/user/demo -- cargo test
+xrun windows -C 'D:\demo' -- cargo build
+xrun ubuntu --env RUST_LOG=info --env MODE=test -C /home/user/demo -- ./demo
 ```
 
-PowerShell 脚本使用 UTF-8；cmd 脚本只接受 ASCII，脚本参数不能包含双引号或换行。Windows 批处理文件需要通过 `--script cmd` 或 `cmd.exe /C` 运行，否则返回 `SHELL_REQUIRED`。
+Arguments after `--` are passed unchanged to the remote program. xrun starts programs directly, without a shell; pipes, redirections, and variable expansion are handled by your local shell. The target searches its background service's PATH (see `xrun doc config`). Use an absolute executable path if it cannot find a program.
 
-| 选项 | 作用 |
+To use a shell, pass a script through stdin with `--script` and explicitly choose `sh`, `bash`, `zsh`, `powershell`, `pwsh`, or `cmd`:
+
+```bash
+xrun ubuntu -C /repo --script bash < ./build.sh
+xrun windows -C 'D:\demo' --script powershell < ./build.ps1
+printf 'hello\n' | xrun ubuntu --stdin -- cat
+```
+
+PowerShell scripts use UTF-8. cmd scripts accept ASCII only, and their arguments cannot contain double quotes or newlines. Run Windows batch files through `--script cmd` or `cmd.exe /C`; direct execution returns `SHELL_REQUIRED`.
+
+| Option | Purpose |
 | --- | --- |
-| `-C <目录>` | 远端绝对工作目录，省略时使用目标的默认目录（默认为主目录） |
-| `--env KEY=VALUE` | 设置远端环境变量，可重复 |
-| `--stdin` | 提交前读完本地 stdin 并一起发送，最多 1 MiB |
-| `--script <shell>` | 从 stdin 读取脚本，最多 1 MiB |
-| `--timeout <秒>` | 超时时间，前台执行默认 1800，0 表示不限 |
-| `--request-id <ID>` | 恢复同一次提交，见 `xrun doc errors` |
-| `-i` | 流式执行，见 `xrun doc streaming` |
+| `-C <directory>` | Absolute remote working directory; defaults to the target's configured directory, initially its home directory |
+| `--env KEY=VALUE` | Set a remote environment variable; repeatable |
+| `--stdin` | Read all local stdin before submission and send it with the request, up to 1 MiB |
+| `--script <shell>` | Read a script from stdin, up to 1 MiB |
+| `--timeout <seconds>` | Execution timeout; foreground default 1800, 0 means unlimited |
+| `--request-id <ID>` | Resume the same submission; see `xrun doc errors` |
+| `-i` | Streaming execution; see `xrun doc streaming` |
 
-前台执行原样输出远端的 stdout 和 stderr，并以远端退出码退出。它是**可靠任务**：一旦受理，目标会执行到结束并保存结果，CLI 断线不影响任务。CLI 会在 30 秒内尝试重连并补读日志，仍无法确认结果时返回 75。
+Foreground execution forwards remote stdout and stderr unchanged and exits with the remote exit code. It is a **reliable job**: once accepted, the target runs it to completion and stores the result, even if the CLI disconnects. The CLI tries to reconnect and catch up on logs for 30 seconds; if it still cannot confirm the result, it exits with code 75.
 
-目标默认最多同时运行 4 个命令（含流式执行），已满时返回 `DEVICE_BUSY`，不排队。本机后台服务运行时，CLI 会复用到同一目标的加密连接，省去重复握手。
+By default, the target runs at most 4 commands concurrently, including streaming execution. It returns `DEVICE_BUSY` when full, without queuing. With the local background service running, the CLI reuses an encrypted connection to the same target to avoid repeated handshakes.
 
-## 任务与日志
+## Jobs and logs
 
-`start` 在任务受理后立即返回任务引用，例如 `linux1/ABC123`；后台任务默认不限时：
+`start` returns a job reference, such as `ubuntu/ABC123`, as soon as the job is accepted. Background jobs have no timeout by default:
 
 ```bash
-xrun linux1 start -C /home/user/demo -- ./server
-xrun linux1 jobs --running
-xrun linux1 jobs ABC123 --json
-xrun linux1 logs ABC123 --tail 40
-xrun linux1 logs ABC123 --follow
-xrun linux1 wait ABC123 --timeout 60
-xrun linux1 kill ABC123
+xrun ubuntu start -C /home/user/demo -- ./server
+xrun ubuntu jobs --running
+xrun ubuntu jobs ABC123 --json
+xrun ubuntu logs ABC123 --tail 40
+xrun ubuntu logs ABC123 --follow
+xrun ubuntu wait ABC123 --timeout 60
+xrun ubuntu kill ABC123
 ```
 
-把 ABC123 换成实际返回的六位 ID，也可以直接使用完整引用。自动化可以用 `start --json` 读取任务 ID。
+Replace ABC123 with the returned six-character ID, or use the complete reference. Automation can get the job ID from `start --json`.
 
-- `jobs` 列出本机在目标上提交的所有操作，包括命令、流式执行、文件传输、截图和端口转发。默认每页 50 条，用 `--limit`、`--offset` 翻页，`--running`、`--request-id` 过滤。指定 ID 时查看单个任务，此时不能使用过滤选项。
-- `logs` 只适用于普通命令。默认读取当前快照；`--follow` 补读后持续跟随；`--after N` 从序号 N 之后读；`--tail N` 只取最后 N 行，由目标端截取。`--after` 和 `--tail` 不能同时使用。
-- `wait` 等到任务结束，再显示最后 40 行（用 `--tail` 修改）。`--timeout` 只限制等待时间，不取消任务；无法确认结果时返回 75。
-- `kill` 请求取消并等待确认。Unix 先发 SIGTERM，5 秒后发 SIGKILL；Windows 结束任务的整个进程树。
-- 每台设备只能查询和控制自己提交的任务。
-- `xrun recent` 列出本机最近 24 小时的提交记录，用于找回 request_id；它不代表远端任务的当前状态。
+- `jobs` lists all operations this device submitted to the target: commands, streaming execution, file transfers, screenshots, and port forwarding. Pages default to 50 entries. Use `--limit` and `--offset` for pagination and `--running` or `--request-id` for filtering. An ID selects one job and cannot be combined with filters.
+- `logs` applies only to regular commands. It reads a current snapshot by default. `--follow` catches up and keeps following; `--after N` starts after sequence N; `--tail N` asks the target for the last N lines. `--after` and `--tail` are mutually exclusive.
+- `wait` waits for completion, then displays the last 40 lines (change with `--tail`). `--timeout` limits the wait without canceling the job. An unconfirmed result returns 75.
+- `kill` requests cancellation and waits for confirmation. Unix sends SIGTERM, then SIGKILL after 5 seconds. Windows terminates the job's entire process tree.
+- Each device can query and control only the jobs it submitted.
+- `xrun recent` lists local submission records from the last 24 hours to recover a request_id. It does not report the current state of the remote job.
 
-| 状态 | 含义 |
+| State | Meaning |
 | --- | --- |
-| `accepted` / `running` | 已受理 / 正在运行 |
-| `succeeded` | 成功 |
-| `failed` | 失败，包括非零退出；结果中保留退出码和错误 |
-| `canceled` / `timed_out` | 已取消 / 已超时，受管理的进程都已停止 |
-| `interrupted` | 文件传输中断，等待用 `resume` 继续 |
-| `lost` | 目标服务崩溃等原因导致结果无法确认，可能已经执行过 |
+| `accepted` / `running` | Accepted / running |
+| `succeeded` | Succeeded |
+| `failed` | Failed, including a nonzero exit; the result retains the exit code and error |
+| `canceled` / `timed_out` | Canceled / timed out; all managed processes have stopped |
+| `interrupted` | A file transfer was interrupted and awaits `resume` |
+| `lost` | The result cannot be confirmed, for example after a target service crash; the operation may have run |
 
-任务不会自动重跑。目标服务正常停止时会取消运行中的任务；崩溃重启后，未完成的任务标记为 `lost`。每个任务最多保存 64 MiB 日志（超出部分标记 `TRUNCATED`），全部日志最多 1 GiB；已结束任务的日志保留 7 天，任务记录本身长期保留。
+Jobs never rerun automatically. A normal target service shutdown cancels running jobs. After a crash and restart, unfinished jobs become `lost`. Logs are limited to 64 MiB per job (excess output is marked `TRUNCATED`) and 1 GiB total. Logs for finished jobs are retained for 7 days; job records themselves are retained indefinitely.
 
-## 自动化与 AI
+## Automation and AI
 
-先用 `xrun doc --list` 找章节、用 `xrun help <命令>` 确认参数。组网完成后，以下流程可用于 AI agent 和脚本；示例目标是已授权的 Linux 设备 `linux1`。
+Use `xrun doc --list` to find topics and `xrun help <command>` to check arguments. After networking is configured, AI agents and scripts can follow this workflow. The example target is an authorized Linux device named `ubuntu`.
 
-### 提交、查询与等待
+### Submit, query, and wait
 
-**1. 检查本机与目标。** 在发起操作的设备上执行：
+**1. Check the local device and target.** Run these on the initiating device:
 
 ```bash
 xrun status --json
-xrun linux1 info --json
+xrun ubuntu info --json
 ```
 
-`status` 用于发现设备和检查本机状态；它正常退出时仍可能带有非空的 `server_error`，此时先处理发现错误。确认 `info` 返回的 `online` 为 `true` 后再提交。首次组网见 `xrun doc quickstart`，Cloudflare 自动部署见 `xrun doc relay`。
+Use `status` for discovery and local state. Even a successful exit may contain a non-null `server_error`; resolve that discovery error first. Confirm that `info` returns `online: true` before submitting. See `xrun doc quickstart` for initial setup and `xrun doc relay` for automated Cloudflare deployment.
 
-**2. 提交任务。** 为每个新任务生成并保存一个唯一的 `request_id`，重试时沿用。下面的 UUID 仅作示例：
+**2. Submit a job.** Generate and save a unique `request_id` for each new job and reuse it for retries. This UUID is only an example:
 
 ```bash
-xrun linux1 start --json --request-id 9cb402ae-47fa-4a58-94ac-e84ffac87ca9 -- echo xrun-ok
+xrun ubuntu start --json --request-id 9cb402ae-47fa-4a58-94ac-e84ffac87ca9 -- echo xrun-ok
 ```
 
-退出码为 0 表示任务已受理。stdout 是 Job 对象，例如（仅保留关键字段）：
+Exit code 0 means the job was accepted. stdout is a Job object, for example (key fields only):
 
 ```json
 {
@@ -423,14 +425,14 @@ xrun linux1 start --json --request-id 9cb402ae-47fa-4a58-94ac-e84ffac87ca9 -- ec
 }
 ```
 
-**3. 用返回的 `job_id` 查询或等待。** 将 ABC123 换成实际值：
+**3. Query or wait using the returned `job_id`.** Replace ABC123 with the actual value:
 
 ```bash
-xrun linux1 jobs ABC123 --json
-xrun linux1 wait ABC123 --timeout 60 --json
+xrun ubuntu jobs ABC123 --json
+xrun ubuntu wait ABC123 --timeout 60 --json
 ```
 
-`jobs <ID>` 返回 Job 对象，`jobs --request-id <ID>` 返回 Job 数组，`wait` 返回包含 `job`、`logs` 和 `logs_error` 的对象。任务成功后，`wait` 的 stdout 例如（仅保留关键字段）：
+`jobs <ID>` returns a Job object, `jobs --request-id <ID>` returns an array of Jobs, and `wait` returns an object containing `job`, `logs`, and `logs_error`. After success, `wait` stdout looks like this (key fields only):
 
 ```json
 {
@@ -446,11 +448,11 @@ xrun linux1 wait ABC123 --timeout 60 --json
 }
 ```
 
-日志中的 Base64 解码为 `xrun-ok\n`。`start` 成功后还需检查最终的 `job.state` 和 `job.result`；`wait` 的退出码反映任务结果。`logs_error` 表示读取日志遇到问题，不改变已确认的任务结果。
+The Base64 log data decodes to `xrun-ok\n`. A successful `start` still requires checking the final `job.state` and `job.result`. The exit code of `wait` reflects the job result. `logs_error` reports a log-reading problem and does not change a confirmed job result.
 
-### 失败后的下一步
+### What to do after failure
 
-例如，`wait --timeout 60 --json` 等待超时，退出码为 75、stdout 为空，stderr 返回：
+For example, when `wait --timeout 60 --json` times out, it exits with 75, leaves stdout empty, and writes this to stderr:
 
 ```json
 {
@@ -460,140 +462,140 @@ xrun linux1 wait ABC123 --timeout 60 --json
 }
 ```
 
-等待超时不会取消或重新启动任务。根据操作选择下一步：
+A wait timeout does not cancel or restart the job. Choose the next step based on the operation:
 
-| 情况 | 下一步 |
+| Situation | Next step |
 | --- | --- |
-| `start` 返回 75，尚未拿到 `job_id` | 用原 `request_id` 执行 `jobs --request-id <ID> --json`；找到后查询或等待该 Job |
-| `wait` 返回 75，尚无已确认的终态 Job | 再次查询或等待同一个 Job |
-| 已确认 `failed`、`timed_out` 或 `canceled` | 读取结果和日志，决定是否用新的 `request_id` 发起新任务 |
-| `lost` 或 `DB_RESET` | 结果无法确认，核实实际操作结果后再决定是否重新执行 |
-| 文件传输中断 | 使用 `xrun <设备> resume <request_id>`，见 `xrun doc files` |
+| `start` returns 75 before a `job_id` is known | Query `jobs --request-id <ID> --json` with the original `request_id`, then query or wait for the matching Job |
+| `wait` returns 75 without a confirmed terminal Job | Query or wait for the same Job again |
+| Confirmed `failed`, `timed_out`, or `canceled` | Read the result and logs, then decide whether to submit a new job with a new `request_id` |
+| `lost` or `DB_RESET` | The result is unknown; verify the actual outcome before deciding whether to execute again |
+| Interrupted file transfer | Use `xrun <device> resume <request_id>`; see `xrun doc files` |
 
-先检查 stdout 中是否已有终态 Job：远端程序本身也可能返回 75，此时按已确认的任务结果处理。查不到 Job 不代表操作未执行。需要恢复同一次命令提交时，保持原目标、参数、输入和 `request_id`，见 `xrun doc errors`；不要因为查询失败就换新 ID 重跑。
+First check whether stdout already contains a terminal Job. A remote program can itself exit with 75; in that case, use the confirmed job result. Not finding a Job does not prove the operation never ran. To resume the same command submission, keep the original target, arguments, input, and `request_id`; see `xrun doc errors`. A failed query is not a reason to rerun with a new ID.
 
-stdout 和 stderr 分开读取，按退出码、结构化字段和错误码判断。stderr 可能包含多条诊断或进度事件，部分参数错误仍为文本，不要把整段 stderr 当成一个 JSON。安装脚本使用 `ok` 字段，上述 CLI 命令直接返回各自的数据结构。
+Read stdout and stderr separately and interpret exit codes, structured fields, and error codes. stderr may contain multiple diagnostics or progress events; some argument errors are still plain text, so do not parse all of stderr as a single JSON object. Installer scripts use an `ok` field, while the CLI commands above directly return their own data structures.
 
-## 文件与截图
+## Files and screenshots
 
-push 和 pull 一次传一个文件，参数按“源、目标”的顺序：
-
-```bash
-xrun linux1 pull /home/user/demo/config.json ./config.json --json
-xrun linux1 push ./config.json /home/user/demo/config.json --expect '<pull 返回的 sha256>'
-xrun linux1 push ./result.txt /home/user/demo/out/result.txt --mkdir
-xrun linux1 pull /repo/config.json -               # 输出到 stdout
-printf 'hello\n' | xrun linux1 push - /repo/note.txt
-```
-
-- 原样传输字节，不转换编码、BOM 或换行。按 64 KiB 分块传输，文件大小没有固定上限。完整接收并通过 SHA-256 校验后才原子替换目标，传输中断不会损坏已有文件。
-- 远端相对路径相对于 `-C` 或目标的默认目录，本地相对路径相对于当前目录。`--mkdir` 创建远端父目录。pull 省略本地路径时保存到临时文件，stdout 输出它的绝对路径。
-- `--expect <sha256>` 只在远端文件仍是该内容时覆盖，否则返回 `STALE`；`--no-overwrite` 要求目标不存在，否则返回 `ALREADY_EXISTS`。两者不能同时使用。
-- 上传内容与远端文件完全相同时跳过数据传输，但仍记录一次操作。
-- pull 保存到本地时拒绝写入符号链接；push 写入远端时跟随符号链接。
-- 传输中断后，CLI 会提示 `xrun <设备> resume <request_id>`。24 小时内可以从首次传输时保存的副本继续同一次传输；网络、数据库、身份或内容摘要变化时拒绝继续。源文件已经改动时，请重新 push。push 的响应丢失时不会自动重发，请先 pull 确认目标内容。
-- 传输目录可以把 tar 与流式执行组合使用，见 `xrun doc streaming`；查看目录用远端命令，例如 `xrun linux1 -- ls -la /repo`。
-
-截图拍摄目标的主显示器：
+push and pull transfer one file at a time, with arguments in source–destination order:
 
 ```bash
-xrun win1 screenshot ./screen.png
-xrun win1 screenshot ./screen.jpg --format jpeg --max-width 1600 --quality 80
+xrun ubuntu pull /home/user/demo/config.json ./config.json --json
+xrun ubuntu push ./config.json /home/user/demo/config.json --expect '<sha256 returned by pull>'
+xrun ubuntu push ./result.txt /home/user/demo/out/result.txt --mkdir
+xrun ubuntu pull /repo/config.json -               # Write to stdout
+printf 'hello\n' | xrun ubuntu push - /repo/note.txt
 ```
 
-默认保存原始尺寸的 PNG。`--format` 可选 `png`、`jpeg`、`webp`；`--quality`（1–100）只用于 JPEG 和 WebP；`--max-width` 只缩小、不放大。省略路径时保存到临时文件，stdout 输出路径，可以直接交给 AI 看图。
+- Bytes are transferred unchanged, without encoding, BOM, or newline conversion. Transfers use 64 KiB chunks with no fixed total file size limit. The destination is replaced atomically only after complete reception and SHA-256 verification. Interrupted transfers leave existing files intact.
+- Remote relative paths use `-C` or the target's default directory; local relative paths use the current directory. `--mkdir` creates remote parent directories. If pull omits its local path, it saves to a temporary file and prints the absolute path to stdout.
+- `--expect <sha256>` overwrites only if the remote file still has that hash; otherwise it returns `STALE`. `--no-overwrite` requires the destination not to exist, otherwise returning `ALREADY_EXISTS`. These options are mutually exclusive.
+- Uploading content identical to the remote file skips data transfer but still records an operation.
+- pull refuses to write through a local symbolic link; push follows remote symbolic links.
+- After interruption, the CLI suggests `xrun <device> resume <request_id>`. Within 24 hours, the transfer can continue from the copy saved at the first attempt. Changes to the network, database, identity, or content digest prevent resumption. If the source file has changed, start a new push. A lost push response is not automatically retried; pull first to verify the destination.
+- To transfer directories, combine tar with streaming execution; see `xrun doc streaming`. List a directory with a remote command such as `xrun ubuntu -- ls -la /repo`.
 
-| 平台 | 要求 |
+Screenshots capture the target's primary display:
+
+```bash
+xrun windows screenshot ./screen.png
+xrun windows screenshot ./screen.jpg --format jpeg --max-width 1600 --quality 80
+```
+
+The default is a full-resolution PNG. `--format` accepts `png`, `jpeg`, or `webp`; `--quality` (1–100) applies to JPEG and WebP only; `--max-width` scales down but never up. If the path is omitted, the image is saved to a temporary file and its path is printed to stdout, ready for an AI agent to inspect.
+
+| Platform | Requirements |
 | --- | --- |
-| macOS | 服务运行在用户登录会话中，并已获得“屏幕录制”权限，否则返回 `PERMISSION_DENIED` |
-| Windows | 服务运行在交互桌面中；锁屏时返回 `SCREEN_LOCKED` |
-| Linux | 仅支持 X11；Wayland 返回 `SCREENSHOT_UNAVAILABLE`，没有图形会话返回 `NO_DISPLAY` |
+| macOS | The service must run in a logged-in user session with Screen Recording permission; otherwise `PERMISSION_DENIED` |
+| Windows | The service must run on an interactive desktop; a locked screen returns `SCREEN_LOCKED` |
+| Linux | X11 only; Wayland returns `SCREENSHOT_UNAVAILABLE`, and no graphical session returns `NO_DISPLAY` |
 
-网页截图不依赖桌面：在远端运行项目自己的无头浏览器脚本，再用 pull 取回图片。目标设备会为收发的文件和截图保留一份附件副本，见 `xrun doc desktop`。
+Web screenshots do not require a desktop: run the project's own headless browser script remotely and pull the image back. The target retains attachment copies of transferred files and screenshots; see `xrun doc desktop`.
 
-## 流式执行
+## Streaming execution
 
-`-i` 实时传递 stdin、stdout 和 stderr，适合大量输入或与本地管道组合，输入没有 1 MiB 的限制：
+`-i` streams stdin, stdout, and stderr in real time. Use it for large inputs or local pipelines without the 1 MiB input limit:
 
 ```bash
-xrun linux1 -i -- cat < ./large.bin > ./copy.bin
-xrun linux1 -i -C /repo -- tar -cf - artifacts > ./artifacts.tar
+xrun ubuntu -i -- cat < ./large.bin > ./copy.bin
+xrun ubuntu -i -C /repo -- tar -cf - artifacts > ./artifacts.tar
 ```
 
-- 不提供终端（PTY），不能运行交互式 Shell 或全屏程序。
-- 本地 stdin 结束后，远端 stdin 随之关闭，输出继续传回。默认超时 1800 秒。
-- Ctrl+C（返回 130）或断线都会结束远端进程，不会自动重跑。需要断线后继续运行时，请使用普通执行或 `start`。
-- 会创建一条任务记录，可以使用 `jobs`、`wait` 和 `kill`；但输出不保存，`logs` 返回 `LOG_UNAVAILABLE`。
-- 不能与 `start`、`--json`、`--stdin`、`--script` 或 `--request-id` 同时使用。
+- No terminal (PTY) is provided, so interactive shells and full-screen programs are unsupported.
+- Local stdin EOF closes remote stdin; output continues to stream back. The default timeout is 1800 seconds.
+- Ctrl+C (exit code 130) or disconnection terminates the remote process without automatic reruns. Use regular execution or `start` if the job must survive disconnection.
+- A job record is created and supports `jobs`, `wait`, and `kill`, but output is not stored. `logs` returns `LOG_UNAVAILABLE`.
+- Cannot be combined with `start`, `--json`, `--stdin`, `--script`, or `--request-id`.
 
-## 端口转发
+## Port forwarding
 
-`forward` 把远端的回环端口映射到本机的回环端口，例如在本机浏览器中访问远端的开发服务：
+`forward` maps a remote loopback port to a local loopback port, for example to open a remote development server in your browser:
 
 ```bash
-xrun linux1 forward 8080:3000       # 本机 127.0.0.1:8080 → linux1 的 127.0.0.1:3000
-xrun linux1 forward 3000            # 两端使用相同端口
-xrun linux1 forward 0:3000 --json   # 由系统分配本地端口，JSON 返回 local_address
+xrun ubuntu forward 8080:3000       # Local 127.0.0.1:8080 → ubuntu's 127.0.0.1:3000
+xrun ubuntu forward 3000            # Same port on both ends
+xrun ubuntu forward 0:3000 --json   # Let the OS choose a local port; JSON returns local_address
 ```
 
-- 本机只监听 `127.0.0.1`，目标只连接自己的 `127.0.0.1`（失败时尝试 `::1`），不能访问对方网络中的其他主机。
-- 命令保持前台运行，Ctrl+C 结束监听和所有连接。中断的连接不会恢复，新的连接会重新接通。
-- 每条 TCP 连接占用一个中转会话，每个转发最多 32 条连接；Cloudflare 中转每个网络最多 8 个会话。
-- 本机的其他进程也能访问这个端口。目标暂停访问、拒绝或撤销来源时，转发连接随即关闭。
+- The local listener binds only to `127.0.0.1`. The target connects only to its own `127.0.0.1` (trying `::1` on failure), never other hosts on its network.
+- The command stays in the foreground. Ctrl+C closes the listener and all connections. Interrupted connections are not restored; new connections can reconnect.
+- Each TCP connection uses one relay session, with up to 32 connections per forward. Cloudflare relays allow up to 8 sessions per network.
+- Other local processes can also access the port. Forwarded connections close when the target pauses access, denies the source, or receives its revocation.
 
-## 桌面 App
+## Desktop app
 
-macOS 和 Windows 的桌面 App 负责组网、授权、后台服务和本机活动，也可以向其他设备执行命令、传输文件和截图，安装见 `xrun doc install`。App 只运行一个实例，关闭窗口后留在菜单栏或系统托盘中。
+The macOS and Windows desktop app manages networks, permissions, background services, and local activity. It can also run commands, transfer files, and take screenshots on other devices. See `xrun doc install` for installation. Only one app instance runs at a time; closing the window leaves it in the menu bar or system tray.
 
-**连接设备。** 未加入网络时，App 显示“连接你的设备”：
+**Connect devices.** Before joining a network, the app shows **Connect your devices**:
 
-- **接入码**：输入中转地址和接入码，或粘贴短链接。
-- **使用链接**：粘贴部署链接或成员邀请，自动识别是创建还是加入。
-- **新建网络**：点击“授权并创建”，在浏览器授权 Cloudflare 后，App 自动部署中转、创建网络并启动服务。“中转选项”中可以修改中转名称和区域；有多个账号时先选择账号。中转已部署但网络创建失败时，重试会继续使用这个中转。
+- **Access code**: enter the relay address and access code, or paste a short link.
+- **Use a link**: paste a deployment link or member invitation; the app detects whether to create or join a network.
+- **New network**: click **Authorize and create**. After browser authorization with Cloudflare, the app deploys the relay, creates the network, and starts the service. **Relay options** lets you change the relay name and region; choose an account first if several are available. If the relay was deployed but network creation failed, retry reuses that relay.
 
-加入时可以勾选“允许管理设备访问本机”；不勾选则明确拒绝，即使邀请中附带了访问请求。本机名称默认使用主机名。已有的 CLI 身份会直接沿用。
+When joining, you can select **Allow the manager to access this device**. Leaving it unchecked explicitly denies access even if the invitation requests it. The device name defaults to the hostname. An existing CLI identity is reused.
 
-**界面。** 侧栏包含“设备”“活动”“设置”三个页面和本机卡片（名称、角色、状态和“暂停访问”按钮），点击卡片进入网络设置。需要系统授权、后台服务已停止或远程访问已暂停时，页面顶部会提示并提供对应操作。
+**Interface.** The sidebar contains Devices, Activity, Settings, and a local device card showing name, role, state, and a pause-access button. Click the card to open network settings. If system approval is needed, the service is stopped, or remote access is paused, a banner provides the appropriate action.
 
-- **设备**：列出网络中的其他设备，可以按在线状态筛选和搜索。每台设备显示系统、架构和短 ID，“允许访问本机”开关控制它能否访问本机。在线设备可以直接“执行命令”“传输文件”和“截图”，前提是对方允许本机访问。菜单中可以查看设备 ID、版本、最近在线时间和上次连接方式（直连／中转），管理设备还可以撤销成员；已撤销的成员单独折叠显示。管理设备通过“邀请设备”生成接入码，并可复制接入命令或短链接。页面底部显示今日流量，点击“详情”查看趋势和各设备统计。
-- **执行命令**：填写命令、解释器、远程工作目录和超时，查看输出、状态和退出码，可以取消任务。关闭窗口不影响已受理的任务；“最近提交”保留 24 小时内的最近 20 条，结果不确定时可以查询结果，不会重复执行。
-- **传输文件**：上传或下载单个文件，可以创建目录、允许覆盖；中断的传输可以“继续”或“放弃”。
-- **截图**：可选原图 PNG、省流，或自定义格式、最大宽度和画质。
-- **活动**：其他设备在本机执行的所有操作，按日期分组，可以按进行中、失败筛选，并搜索当前页。详情显示工作目录、耗时、退出结果和输出；文件和截图附件可以预览（8 MiB 以内的 PNG/JPEG、1 MiB 以内的文本），或另存为。活动读取本机数据库，服务停止或断网时也能查看。
-- **设置**：
-  - 通用：语言（跟随系统、中文、English）、局域网直连、省流量、登录时显示 xrun 图标、隐藏菜单栏／托盘图标。
-  - 活动与附件：附件保留时间，默认 30 天，0 表示长期保留。
-  - 执行环境：默认工作目录、同时运行的任务数和 PATH，保存后对新任务生效。
-  - 网络与服务：网络信息、允许全体成员访问本机、启动或停止服务、成员有效期（管理设备）、本机部署的中转（授权账号、记住登录、复制部署链接）、管理身份（备份、交接、恢复）和移除后台服务。
-  - 关于：版本、系统和数据目录。
+- **Devices**: lists other network devices with search and online-state filters. Each device shows its OS, architecture, and short ID. Its access switch controls whether it may access this machine. For online devices that allow your device, you can run commands, transfer files, and capture screenshots. The device menu shows the ID, version, last-seen time, and last connection type (direct or relayed); the manager can also revoke members. Revoked members are collapsed separately. The manager can generate access codes and copy a connection command or short link from **Invite device**. Today's traffic appears at the bottom; **Details** shows trends and per-device statistics.
+- **Run command**: enter the command, interpreter, remote working directory, and timeout; view output, state, and exit code, or cancel the job. Closing the dialog does not affect an accepted job. Recent submissions retains up to 20 entries from the last 24 hours; uncertain results can be queried without executing again.
+- **Transfer files**: upload or download a single file, create directories, and allow overwrites. Interrupted transfers can be resumed or abandoned.
+- **Screenshot**: choose original PNG, a bandwidth-saving preset, or a custom format, maximum width, and quality.
+- **Activity**: shows all operations other devices performed on this machine, grouped by date, with running/failed filters and search within the current page. Details include working directory, duration, exit result, and output. File and screenshot attachments can be previewed (PNG/JPEG up to 8 MiB, text up to 1 MiB) or saved elsewhere. Activity reads the local database and remains available with the service stopped or network disconnected.
+- **Settings**:
+  - General: language (system, Chinese, English), LAN direct connections, compression, showing the xrun icon at login, and hiding the menu bar/tray icon.
+  - Activity and attachments: attachment retention, 30 days by default; 0 means indefinite.
+  - Execution environment: default working directory, concurrent jobs, and PATH. Changes affect new jobs.
+  - Network and service: network information, all-member access, service start/stop, roster lease (manager only), locally deployed relays (account authorization, remembered login, deployment link), manager identity backup/handover/restore, and background service removal.
+  - About: version, system, and data directory.
 
-**菜单栏与托盘。** 菜单显示本机状态，提供“打开 xrun”“活动”“设置…”，以及随状态变化的主操作：加入网络…、启动服务、暂停访问或恢复访问。Windows 上双击图标也能打开窗口。隐藏图标后，重新打开 App 即可恢复。
+**Menu bar and tray.** The menu shows local state, links to open xrun, Activity, and Settings, and a primary action based on current state: join a network, start the service, pause access, or resume access. Double-clicking the Windows tray icon also opens the window. If you hide the icon, reopening the app restores it.
 
-**后台服务。** 执行和传输由独立的后台服务完成：
+**Background service.** A separate service handles execution and transfers:
 
-- “退出 xrun”只退出界面，服务继续运行。
-- “停止服务”（设置 → 网络与服务）正常结束服务，并取消本机正在运行的任务；下次登录时服务会再次启动。
-- “移除后台服务”取消登录启动，保留本机数据。
-- macOS 通过系统登录项注册服务，首次可能需要在“系统设置 → 通用 → 登录项”中允许 xrun；截图需要“屏幕录制”权限。更换 App 后，下次启动服务时会重新登记当前程序。
-- Windows 的服务运行在当前用户的登录会话中，不显示控制台窗口。
-- 从 CLI 安装的服务切换到 App：先执行 `xrun daemon stop`，再在 App 中启动服务，App 会替换服务注册。
+- Quitting xrun closes the interface while the service keeps running.
+- Stopping the service (Settings → Network and service) shuts it down normally and cancels jobs running locally. The service starts again at the next login.
+- Removing the background service disables automatic startup while preserving local data.
+- macOS registers the service through system login items. You may need to allow xrun in System Settings → General → Login Items. Screenshots require Screen Recording permission. After replacing the app, the next service start registers the current executable again.
+- On Windows, the service runs in the current user's login session without a console window.
+- To switch from a CLI-installed service to the app, run `xrun daemon stop`, then start the service in the app. The app replaces the service registration.
 
-## 配置与服务
+## Configuration and services
 
-`connect`、`up` 和 `join` 默认安装后台服务，以当前用户身份运行：Linux 为 systemd 用户服务（并启用 linger），macOS 为 LaunchAgent，Windows 为登录时运行的计划任务。桌面 App 使用自己的服务注册，见 `xrun doc desktop`。
+`connect`, `up`, and `join` install a background service by default, running as the current user: a systemd user service with linger on Linux, a LaunchAgent on macOS, or a scheduled task at login on Windows. The desktop app registers its own service; see `xrun doc desktop`.
 
 ```bash
-xrun daemon install      # 注册并启动服务（需要已有设备身份）
+xrun daemon install      # Register and start the service; requires an existing device identity
 xrun daemon start
-xrun daemon stop         # 正常停止，取消本机运行中的任务
-xrun daemon uninstall    # 移除注册，保留数据
-xrun daemon              # 在前台运行
-xrun daemon reset        # 服务停止时重建任务库，保留设备身份
+xrun daemon stop         # Stop normally and cancel jobs running locally
+xrun daemon uninstall    # Remove registration, keep data
+xrun daemon              # Run in the foreground
+xrun daemon reset        # Rebuild the job database while stopped, keeping the device identity
 ```
 
-没有 systemd 用户会话的 Linux 容器，用 `--no-daemon` 加入，再由外部进程管理器运行 `xrun daemon`。`status` 中的 `daemon_installed` 只表示服务注册存在，请结合 `daemon_running` 和 `daemon_connected` 判断。
+For Linux containers without a systemd user session, join with `--no-daemon`, then run `xrun daemon` under an external process manager. In `status`, `daemon_installed` only indicates service registration. Check `daemon_running` and `daemon_connected` as well.
 
-配置、身份和数据库位于 `~/.xrun`（Windows 为 `%USERPROFILE%\.xrun`），只有当前用户可以访问。执行环境和授权写在 `daemon.toml` 中：
+Configuration, identities, and databases are stored in `~/.xrun` (`%USERPROFILE%\.xrun` on Windows), accessible only to the current user. Execution settings and permissions are stored in `daemon.toml`:
 
 ```toml
 allow_from = ["b63c4960932e4b46afdb8028e9490cc8"]
@@ -605,113 +607,113 @@ attachment_retention_days = 30
 PATH = "/home/user/.cargo/bin:/home/user/.local/bin:/usr/local/bin:/usr/bin:/bin"
 ```
 
-- 修改后对新任务生效，无需重启服务；程序保存设置时会保留其他字段。路径中的 `~` 不会展开，请写目标用户的实际主目录；Windows 的 PATH 用分号分隔。
-- 后台服务通常不加载交互 Shell 的配置，工具链目录（如 `~/.cargo/bin`）需要写进 `[env]` 的 PATH。
-- 任务继承服务的环境，但不继承这些构建变量：`CARGO_TARGET_DIR`、`CARGO_BUILD_TARGET`、`RUSTUP_TOOLCHAIN`、`RUST_RECURSION_COUNT`、`RUSTC`、`RUSTDOC`、`RUSTC_WRAPPER`、`RUSTC_WORKSPACE_WRAPPER`、`RUSTFLAGS`、`CARGO_ENCODED_RUSTFLAGS`。需要时写入 `[env]`，或用 `--env` 传入。
-- `max_concurrent_jobs` 是同时运行的命令数，范围 1–64。
-- 目标设备为收发的文件和截图保留独立的附件副本。`attachment_retention_days` 默认 30，0 表示长期保留，最大 3650；每 10 分钟清理一次到期的副本，活动摘要保留。
+- Changes affect new jobs without restarting the service. Saving settings through xrun preserves other fields. `~` in paths is not expanded; use the target user's actual home path. Windows PATH entries use semicolons.
+- Background services usually do not load interactive shell configuration. Add toolchain directories such as `~/.cargo/bin` to PATH in `[env]`.
+- Jobs inherit the service environment except these build variables: `CARGO_TARGET_DIR`, `CARGO_BUILD_TARGET`, `RUSTUP_TOOLCHAIN`, `RUST_RECURSION_COUNT`, `RUSTC`, `RUSTDOC`, `RUSTC_WRAPPER`, `RUSTC_WORKSPACE_WRAPPER`, `RUSTFLAGS`, and `CARGO_ENCODED_RUSTFLAGS`. Set them in `[env]` or pass `--env` when needed.
+- `max_concurrent_jobs` limits concurrent commands to 1–64.
+- The target keeps independent attachment copies of transferred files and screenshots. `attachment_retention_days` defaults to 30, accepts 0 for indefinite retention, and has a maximum of 3650. Expired copies are cleaned every 10 minutes; activity summaries remain.
 
-服务日志与任务日志不同：macOS 上 CLI 安装的服务写入 `~/.xrun/daemon-service.log`，Linux 用 `journalctl --user -u xrun-daemon.service` 查看，其他情况请查看外部进程管理器的日志。
+Service logs are separate from job logs. CLI-installed services on macOS write to `~/.xrun/daemon-service.log`. On Linux, use `journalctl --user -u xrun-daemon.service`. For other setups, consult your external process manager's logs.
 
-## 状态与排错
+## Status and troubleshooting
 
 ```bash
-xrun status --json          # 本机服务、授权和在线设备
-xrun linux1 info --json     # 连接目标，读取系统、版本、主机名和默认目录
-xrun recent --json          # 本机最近的提交
+xrun status --json          # Local service, permissions, and connected devices
+xrun ubuntu info --json     # Connect to the target and read OS, version, hostname, and default directory
+xrun recent --json          # Recent local submissions
 xrun traffic --period today
 ```
 
-`status` 的在线状态来自中转，只说明设备连着中转，不保证能执行命令；要确认目标是否可用，请用 `info`。突然断网的设备通常在 45–60 秒后显示为离线。
+Online state in `status` comes from the relay and only means the device is connected to it; it does not guarantee command execution. Use `info` to check target availability. A device that suddenly loses connectivity typically appears offline after 45–60 seconds.
 
-`--json` 的数据写到 stdout，诊断信息写到 stderr。前台执行不支持 `--json`，原样传递远端的输出。
+`--json` writes data to stdout and diagnostics to stderr. Foreground execution does not support `--json` and forwards remote output unchanged.
 
-### 退出码
+### Exit codes
 
-| 退出码 | 含义 |
+| Exit code | Meaning |
 | --- | --- |
-| 0–255 | 远端程序的退出码（Windows 上大于 255 时为 1，完整值在任务结果中） |
-| 128+N | 远端进程被信号 N 结束 |
-| 124 | 超时，进程已停止 |
-| 130 | Ctrl+C：已确认取消，或请求尚未受理 |
-| 75 | **结果未确认**：请求可能已经送达，先查询再决定是否重试 |
-| 125 | 连接、身份、授权或执行层错误 |
-| 2 | 本地参数错误 |
-| 1 | 文件、截图等操作已确认失败 |
+| 0–255 | Remote program exit code (values above 255 on Windows map to 1; the full value remains in the job result) |
+| 128+N | Remote process terminated by signal N |
+| 124 | Execution timed out; the process has stopped |
+| 130 | Ctrl+C: cancellation confirmed or request not yet accepted |
+| 75 | **Unconfirmed result**: the request may have arrived; query before deciding whether to retry |
+| 125 | Connection, identity, permission, or execution-layer error |
+| 2 | Local argument error |
+| 1 | Confirmed failure of an operation such as a file transfer or screenshot |
 
-远端程序也可能返回这些数值，请结合 stderr 中的 `[xrun]` 诊断、错误码和任务状态判断。
+Remote programs may also return these values. Interpret them alongside `[xrun]` diagnostics on stderr, error codes, and job state.
 
-### 结果未确认（75）
+### Unconfirmed result (75)
 
-先查询，不要直接重新执行：
+Query first instead of immediately running again:
 
 ```bash
-xrun recent                                   # 找到 request_id
-xrun win1 jobs --request-id '<request_id>'
-xrun win1 wait <任务ID>
+xrun recent                                   # Find the request_id
+xrun windows jobs --request-id '<request_id>'
+xrun windows wait <job-id>
 ```
 
-要恢复同一次提交，用原参数、原输入和原 `--request-id` 重新执行：目标按来源和请求 ID 去重，已受理的请求不会再次运行。普通调用总会生成新的 request_id。目标的任务库已重建时返回 `DB_RESET`。
+To resume the same submission, rerun with the original arguments, input, and `--request-id`. The target deduplicates by source and request ID, so an accepted request does not run twice. A normal invocation always generates a new request_id. If the target's job database has been rebuilt, it returns `DB_RESET`.
 
-Ctrl+C 会尝试取消可靠任务，无法确认时返回 75；SIGTERM 和 SIGHUP 不会取消已提交的任务。
+Ctrl+C tries to cancel a reliable job and returns 75 if cancellation cannot be confirmed. SIGTERM and SIGHUP do not cancel submitted jobs.
 
-### 流量统计
+### Traffic statistics
 
-`xrun traffic` 查询中转记录的流量，不需要本机服务运行。管理设备可以看到全网总量和各设备明细，其他成员只能看到自己。`--period` 可选 `today`、`month`（默认）和 `all`，按 UTC 日期统计；设备明细用 `--limit`（1–256）和 `--offset` 翻页，JSON 中的 `next_offset` 指向下一页。
+`xrun traffic` reads relay traffic counters without requiring the local service to run. The manager can view network totals and device details; other members can only view themselves. `--period` accepts `today`, `month` (default), or `all`, based on UTC dates. Paginate device details with `--limit` (1–256) and `--offset`; JSON `next_offset` points to the next page.
 
-统计的是设备之间的加密数据（含 TLS 握手和协议开销），不含认证、确认和心跳。入站指设备发给中转的数据，出站指中转发给设备的数据；计算转发量时只看出站，不要与入站相加。统计从中转开始运行时累积，更换中转不会合并，直连流量也不计入。录入出错时报告 `complete: false`。这些数字不是计费账单，xrun 也没有流量额度或限速。
+Counters cover encrypted data between devices, including TLS handshakes and protocol overhead, but exclude relay authentication, acknowledgments, and heartbeats. Inbound means device-to-relay; outbound means relay-to-device. Use outbound alone for forwarded volume rather than adding inbound and outbound. Statistics accumulate from relay startup, do not merge across relay replacements, and exclude direct connections. Recording errors report `complete: false`. These figures are not a billing statement. xrun does not impose traffic quotas or rate limits.
 
-### 常见错误码
+### Common error codes
 
-| 错误码 | 处理 |
+| Error code | Action |
 | --- | --- |
-| `SOURCE_NOT_ALLOWED` | 在目标设备上 `allow-from <来源>` |
-| `ACCESS_PAUSED` | 目标暂停了访问，在目标上 `xrun daemon resume` |
-| `ROSTER_EXPIRED` | 管理设备离线超过成员有效期，启动管理设备的服务 |
-| `DEVICE_OFFLINE` | 检查目标服务、中转和网络；xrun 不排队执行 |
-| `DEVICE_BUSY` | 目标同时运行的命令已满，稍后用原 request_id 重试 |
-| `DEVICE_REVOKED` | 目标或本机已被撤销 |
-| `INVALID_CODE`、`CODE_EXPIRED`、`CODE_LOCKED` | 核对中转地址和接入码；过期或次数用完时重新生成 |
-| `CODE_IN_USE`、`PAIRING_BUSY` | 接入码正被其他设备使用，为这台设备生成新码，或稍后重试 |
-| `RELAY_CLAIMED` | 中转已属于另一个网络，向该网络的管理设备索取邀请 |
-| `RELAY_UNCLAIMED` | 中转尚未绑定网络，在管理设备上创建网络，或启动管理设备的服务 |
-| `NOT_MANAGER`、`MANAGER_PROTECTED` | 只能在管理设备上执行；管理设备不接受全体信任 |
-| `VERSION_MISMATCH` | 本机 CLI、App 与服务版本不一致，或设备之间协议不兼容；统一升级并重启服务 |
-| `PROGRAM_NOT_FOUND`、`SHELL_REQUIRED` | 检查目标的 PATH 或写完整路径；批处理使用 `--script cmd` |
-| `INVALID_CWD` | `-C` 需要是目标上存在的绝对目录 |
-| `STALE`、`ALREADY_EXISTS` | 远端文件已变化或已存在，先 pull 确认 |
-| `PERMISSION_DENIED`、`SCREEN_LOCKED`、`NO_DISPLAY` | 缺少截图权限、屏幕已锁定或没有图形会话 |
-| `INTERACTIVE_REQUIRED` | 需要交互终端，或补充 `--account`、`--password-stdin` 等参数 |
-| `DB_RESET` | 目标的任务库已重建，原任务无法查询或重放 |
-| `DB_SCHEMA_MISMATCH` | 数据库格式与程序版本不符，程序不会改动原数据，见 `xrun doc upgrade` |
+| `SOURCE_NOT_ALLOWED` | Run `allow-from <source>` on the target |
+| `ACCESS_PAUSED` | Access is paused on the target; run `xrun daemon resume` there |
+| `ROSTER_EXPIRED` | The manager has been offline past lease expiry; start its service |
+| `DEVICE_OFFLINE` | Check the target service, relay, and network; xrun does not queue execution |
+| `DEVICE_BUSY` | The target's command slots are full; retry later with the original request_id |
+| `DEVICE_REVOKED` | The target or local device was revoked |
+| `INVALID_CODE`, `CODE_EXPIRED`, `CODE_LOCKED` | Check the relay address and code; generate a new code if expired or attempts are exhausted |
+| `CODE_IN_USE`, `PAIRING_BUSY` | Another device is using the code; generate a new one for this device or retry later |
+| `RELAY_CLAIMED` | The relay belongs to another network; ask its manager for an invitation |
+| `RELAY_UNCLAIMED` | The relay has no network yet; create one on the manager or start its service |
+| `NOT_MANAGER`, `MANAGER_PROTECTED` | The operation requires the manager, or the manager rejects all-member trust |
+| `VERSION_MISMATCH` | Local CLI/app/service versions differ, or device protocols are incompatible; update consistently and restart services |
+| `PROGRAM_NOT_FOUND`, `SHELL_REQUIRED` | Check the target's PATH or use an absolute path; use `--script cmd` for batch files |
+| `INVALID_CWD` | `-C` must name an existing absolute directory on the target |
+| `STALE`, `ALREADY_EXISTS` | The remote file changed or already exists; pull and inspect it first |
+| `PERMISSION_DENIED`, `SCREEN_LOCKED`, `NO_DISPLAY` | Missing screenshot permission, a locked screen, or no graphical session |
+| `INTERACTIVE_REQUIRED` | Use an interactive terminal or provide options such as `--account` or `--password-stdin` |
+| `DB_RESET` | The target's job database was rebuilt; old jobs cannot be queried or replayed |
+| `DB_SCHEMA_MISMATCH` | The database format does not match the program version; existing data is untouched. See `xrun doc upgrade`. |
 
-## 升级与移除
+## Upgrading and removal
 
-当前仍为预发布版本（`-rc`），不同 RC 之间不保证协议或数据兼容。升级时，将所有设备上的 CLI、App、后台服务，以及中转统一到同一 RC 版本后再继续操作。
+xrun is still a prerelease (`-rc`). Protocol and data compatibility between RC versions is not guaranteed. Before continuing operations after an upgrade, update the CLI, app, background service, and relay across all devices to the same RC version.
 
-同一台设备上的 CLI、App 和后台服务必须是同一版本，替换程序后需要重启服务。当前协议、签名格式和数据库 schema 的编号均为 1，共用编号不代表不同 RC 可以混用。正式版的兼容范围和升级方式会在正式发布时明确。
+The CLI, app, and background service on one device must have the same version. Restart the service after replacing executables. Protocol, signature format, and database schema numbers are currently all 1; a shared number does not mean different RCs can be mixed. Stable-release compatibility and upgrade policies will be defined at the stable release.
 
 ```bash
-xrun daemon stop       # 会取消运行中的任务，请先等它们结束
-# 替换程序，或运行新版本的安装脚本
+xrun daemon stop       # Cancels running jobs; let them finish first
+# Replace the executable or run the new version's installer
 xrun --version
 xrun daemon start
 xrun status
 ```
 
-安装脚本会自动停止服务并替换程序。桌面 App 更新后打开时，会停止版本不符的服务，换用新版本重新启动；原本已停止的服务保持停止。
+Installer scripts stop the service and replace executables automatically. When an updated desktop app opens, it stops a mismatched service and restarts it with the new version. A service that was already stopped remains stopped.
 
-移除服务和数据：
+Remove services and data:
 
 ```bash
-xrun down            # 移除本机服务，保留数据
-xrun down --purge    # 交互确认后删除本机身份和全部数据
+xrun down            # Remove local services, keep data
+xrun down --purge    # Delete the local identity and all data after interactive confirmation
 ```
 
-- Linux 上 `down` 同时移除本机的中转服务。由 App 管理的服务，请在 App 中“移除后台服务”。
-- 管理设备执行 `--purge` 会删除网络根私钥，之后无法再签发或撤销成员；除非能从备份恢复，否则需要重新创建网络，所有成员重新加入和授权。
-- 成员设备执行 `--purge` 后只能作为新设备重新加入，旧身份应由管理设备撤销。
-- 只想清空任务记录时，停止服务后执行 `xrun daemon reset`：设备身份保留，旧的任务引用不能用于新库。
-- 遇到 `DB_SCHEMA_MISMATCH` 时，不要删除身份文件或 `roster.db`，后者保存着最新的撤销状态。
+- On Linux, `down` also removes the local relay service. For an app-managed service, use the app's background service removal action.
+- On the manager, `--purge` deletes the network root private key, preventing further member issuance or revocation. Unless a backup can restore it, create a new network and have every member rejoin and grant access again.
+- After a member runs `--purge`, it can only rejoin as a new device. The manager should revoke its old identity.
+- To clear job records only, stop the service and run `xrun daemon reset`. The device identity remains, and old job references cannot be used with the new database.
+- For `DB_SCHEMA_MISMATCH`, do not delete identity files or `roster.db`; the latter stores the latest revocation state.
 
-卸载程序：macOS 先移除后台服务，再删除 `xrun.app` 和 `~/.local/bin/xrun`；Windows 在系统设置的“应用”中卸载；Linux 删除 `xrun` 程序即可。
+To uninstall: on macOS, remove the background service, then delete `xrun.app` and `~/.local/bin/xrun`; on Windows, uninstall from Apps in system settings; on Linux, delete the `xrun` executable.
