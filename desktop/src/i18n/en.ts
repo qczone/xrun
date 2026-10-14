@@ -1,5 +1,22 @@
 /** English is the default and defines the complete set of message keys. */
 export const en = {
+  "lightweight.title": "Lightweight mode",
+  "lightweight.automatic": "Automatic lightweight mode",
+  "lightweight.hint":
+    "Release the interface after closing the window. Background tasks keep running.",
+  "lightweight.delay": "Enter after",
+  "lightweight.immediately": "Immediately",
+  "lightweight.seconds": "{count} seconds",
+  "lightweight.minute": "1 minute",
+  "lightweight.minutes": "{count} minutes",
+  "lightweight.enter": "Enter now",
+  "lightweight.protectedHint":
+    "Waits for active operations and unsaved settings. Open xrun to restore the interface.",
+  "lightweight.loadFailed": "Could not read lightweight settings",
+  "lightweight.saveFailed": "Could not save lightweight settings",
+  "lightweight.enterFailed": "Could not enter lightweight mode",
+  "operation.save_lightweight_settings": "Saving lightweight settings…",
+  "operation.enter_lightweight": "Entering lightweight mode…",
   "settings.direct": "Local network",
   "settings.directHint":
     "Listen on the selected private interface and prefer direct peers.",

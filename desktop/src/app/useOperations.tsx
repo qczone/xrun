@@ -1,6 +1,7 @@
 import { t, type PlainMessageKey } from "../i18n";
 import {
   createContext,
+  useCallback,
   useContext,
   useEffect,
   useState,
@@ -18,6 +19,7 @@ import { errorCode, errorText } from "../errors";
 export interface InteractionState {
   busy: boolean;
   confirming: boolean;
+  windowGuards: Set<string>;
 }
 export function useOperationController(
   page: DesktopPage,
@@ -26,6 +28,14 @@ export function useOperationController(
   interactionState: RefObject<InteractionState>,
   clearStatusError: () => void,
 ) {
+  const keepWindow = useCallback(
+    (owner: string, active: boolean) => {
+      const guards = interactionState.current.windowGuards;
+      if (active) guards.add(owner);
+      else guards.delete(owner);
+    },
+    [interactionState],
+  );
   const [pending, setPending] = useState<PendingOperation | null>(null);
   const [error, setError] = useState<{
     page: DesktopPage;
@@ -153,6 +163,7 @@ export function useOperationController(
     stop,
     confirm,
     reportError,
+    keepWindow,
   };
 }
 export const OperationsContext = createContext<ReturnType<
@@ -162,4 +173,12 @@ export function useOperations() {
   const operations = useContext(OperationsContext);
   if (!operations) throw new Error("Operation provider is missing");
   return operations;
+}
+
+export function useKeepWindow(owner: string, active: boolean) {
+  const { keepWindow } = useOperations();
+  useEffect(() => {
+    keepWindow(owner, active);
+    return () => keepWindow(owner, false);
+  }, [owner, active, keepWindow]);
 }

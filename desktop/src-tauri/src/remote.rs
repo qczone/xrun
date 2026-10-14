@@ -1,6 +1,6 @@
 //! Authorized remote commands; no shell is executed on the desktop host.
 use super::{app::Desktop, error::CommandError};
-use tauri::State;
+use tauri::{Manager, State};
 use tauri_plugin_dialog::DialogExt;
 use xrun::{
     client::remote::{self, CommandRequest, Output, Receipt},
@@ -12,6 +12,8 @@ pub(super) async fn choose_screenshot_destination<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
     format: ScreenshotFormat,
 ) -> Result<Option<String>, CommandError> {
+    let lightweight = app.state::<super::lightweight::Lightweight>();
+    let _dialog = lightweight.dialog();
     let (tx, rx) = tokio::sync::oneshot::channel();
     app.dialog()
         .file()
@@ -140,6 +142,8 @@ pub(super) async fn choose_transfer_file<R: tauri::Runtime>(
     upload: bool,
     name: String,
 ) -> Result<Option<String>, CommandError> {
+    let lightweight = app.state::<super::lightweight::Lightweight>();
+    let _dialog = lightweight.dialog();
     let (tx, rx) = tokio::sync::oneshot::channel();
     let dialog = app.dialog().file().set_file_name(name);
     let chosen = move |path| {

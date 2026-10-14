@@ -6,6 +6,7 @@ mod commands;
 mod connection;
 mod error;
 mod language;
+mod lightweight;
 mod platform;
 mod remote;
 mod tray;

@@ -3,7 +3,7 @@ use super::{
     app::{Desktop, record},
     error::CommandError,
 };
-use tauri::State;
+use tauri::{Manager, State};
 use tauri_plugin_dialog::DialogExt;
 use xrun::client::network::BackupInfo;
 
@@ -12,6 +12,8 @@ pub(super) async fn choose_authority_archive<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
     save: bool,
 ) -> Result<Option<String>, CommandError> {
+    let lightweight = app.state::<super::lightweight::Lightweight>();
+    let _dialog = lightweight.dialog();
     let (sender, receiver) = tokio::sync::oneshot::channel();
     let dialog = app
         .dialog()

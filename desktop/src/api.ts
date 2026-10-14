@@ -9,6 +9,11 @@ export interface DesktopNavigation {
   page: DesktopPage;
 }
 
+export interface LightweightSettings {
+  enabled: boolean;
+  delay_seconds: number;
+}
+
 export interface LocalStatus {
   joined: boolean;
   device_id: string | null;
@@ -304,7 +309,9 @@ export type PendingOperation =
   | "logout_cloudflare"
   | "create_cloudflare_network"
   | "remote_submit"
-  | "remote_cancel";
+  | "remote_cancel"
+  | "save_lightweight_settings"
+  | "enter_lightweight";
 
 export interface CloudflareAccount {
   id: string;
@@ -411,9 +418,30 @@ export interface Revocation {
   sync_error: string | null;
 }
 
+let activeDialogs = 0;
+
+async function withDialog<T>(operation: () => Promise<T>): Promise<T> {
+  activeDialogs++;
+  try {
+    return await operation();
+  } finally {
+    activeDialogs--;
+  }
+}
+
 export const api = {
+  hasOpenDialog: () => activeDialogs > 0,
+  lightweightSettings: () =>
+    invoke<LightweightSettings>("lightweight_settings"),
+  saveLightweightSettings: (preferences: LightweightSettings) =>
+    invoke<LightweightSettings>("save_lightweight_settings", { preferences }),
+  enterLightweight: () => invoke<void>("enter_lightweight"),
+  releaseWindow: (generation: number, page: DesktopPage) =>
+    invoke<void>("release_window", { generation, page }),
   chooseAuthorityArchive: (save: boolean) =>
-    invoke<string | null>("choose_authority_archive", { save }),
+    withDialog(() =>
+      invoke<string | null>("choose_authority_archive", { save }),
+    ),
   exportAuthority: (path: string, password: string, device: string | null) =>
     invoke<AuthorityBackup>("export_authority", { path, password, device }),
   restoreAuthority: (path: string, password: string) =>
@@ -481,7 +509,9 @@ export const api = {
   remoteSubmit: (device: string, command: RemoteCommand) =>
     invoke<CommandJob>("remote_submit", { device, command }),
   chooseScreenshotDestination: (format: ScreenshotFormat) =>
-    invoke<string | null>("choose_screenshot_destination", { format }),
+    withDialog(() =>
+      invoke<string | null>("choose_screenshot_destination", { format }),
+    ),
   remoteScreenshot: (
     device: string,
     path: string,
@@ -501,7 +531,9 @@ export const api = {
     invoke<DesktopNavigation | null>("desktop_navigation"),
   status: () => invoke<Status>("status"),
   chooseTransferFile: (upload: boolean, name: string) =>
-    invoke<string | null>("choose_transfer_file", { upload, name }),
+    withDialog(() =>
+      invoke<string | null>("choose_transfer_file", { upload, name }),
+    ),
   fileReceipts: (device: string) =>
     invoke<TransferReceipt[]>("remote_file_receipts", { device }),
   fileUpload: (device: string, local: string, options: UploadOptions) =>
@@ -542,7 +574,8 @@ export const api = {
       devices: Device[] | null;
       server_error: { code: string; message: string } | null;
     }>("devices"),
-  chooseDirectory: () => invoke<string | null>("choose_directory"),
+  chooseDirectory: () =>
+    withDialog(() => invoke<string | null>("choose_directory")),
   action: (request: ActionRequest) =>
     invoke<void>(request.command, "args" in request ? request.args : {}),
   activity: (before: string | null, filter: ActivityFilter) =>
@@ -555,7 +588,7 @@ export const api = {
   attachment: (id: string) =>
     invoke<AttachmentPreview>("activity_attachment", { id }),
   saveAttachment: (id: string) =>
-    invoke<string | null>("save_activity_attachment", { id }),
+    withDialog(() => invoke<string | null>("save_activity_attachment", { id })),
   output: (dbId: string, job: string, after: number | null) =>
     invoke<JobOutput>("job_output", { dbId, job, after }),
 };

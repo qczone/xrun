@@ -1,6 +1,22 @@
 import type { en } from "./en";
 
 export const zh = {
+  "lightweight.title": "轻量模式",
+  "lightweight.automatic": "自动轻量模式",
+  "lightweight.hint": "关闭窗口后释放界面，后台任务继续运行。",
+  "lightweight.delay": "进入延迟",
+  "lightweight.immediately": "立即",
+  "lightweight.seconds": "{count} 秒",
+  "lightweight.minute": "1 分钟",
+  "lightweight.minutes": "{count} 分钟",
+  "lightweight.enter": "立即进入",
+  "lightweight.protectedHint":
+    "有操作进行中或设置未保存时暂缓进入。打开 xrun 即可恢复界面。",
+  "lightweight.loadFailed": "轻量模式设置未能读取",
+  "lightweight.saveFailed": "轻量模式设置未能保存",
+  "lightweight.enterFailed": "未能进入轻量模式",
+  "operation.save_lightweight_settings": "正在保存轻量模式设置…",
+  "operation.enter_lightweight": "正在进入轻量模式…",
   "settings.direct": "局域网直连",
   "settings.directHint": "仅监听所选内网地址，同网段优先直连。",
   "settings.directOff": "关闭",

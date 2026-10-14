@@ -1,4 +1,4 @@
-import { useOperations } from "../app/useOperations";
+import { useKeepWindow, useOperations } from "../app/useOperations";
 import {
   useCallback,
   useEffect,
@@ -17,6 +17,7 @@ import { Select } from "../components/Select";
 import { Icon } from "../components/Icon";
 import { ErrorNotice } from "../components/ErrorNotice";
 import { LanguageSelect } from "../components/LanguageSelect";
+import { LightweightSettings } from "../components/LightweightSettings";
 import { NetworkSettings } from "./settings/NetworkSettings";
 import { errorText, osName } from "../format";
 import { t } from "../i18n";
@@ -84,6 +85,12 @@ export function SettingsPage({
   const dirty =
     settings !== null &&
     JSON.stringify(execution) !== JSON.stringify(settings.execution);
+  useKeepWindow(
+    "settings-draft",
+    dirty ||
+      (settings !== null &&
+        Number(retention) !== settings.attachment_retention_days),
+  );
   const disabled = busy || !joined || !settings;
   const local = status?.local;
   const service = status?.service;
@@ -108,6 +115,7 @@ export function SettingsPage({
         <h2>{t("settings.general")}</h2>
         <div className="settings-card">
           <LanguageSelect />
+          <LightweightSettings />
           <div className="setting-row">
             <span>
               <strong>{t("settings.direct")}</strong>

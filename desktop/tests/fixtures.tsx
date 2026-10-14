@@ -45,12 +45,13 @@ export async function fixture(
     preference: "system" as LanguagePreference,
     language: resolveLanguage(locale),
   };
+  let lightweightSettings = { enabled: true, delay_seconds: 30 };
   const status: Status = {
     local: {
       joined,
       device_id: "self",
       name: "mac1",
-      version: "0.1.0-rc.10",
+      version: "0.1.0-rc.11",
       daemon_running: true,
       daemon_connected: true,
       remote_access_paused: false,
@@ -147,6 +148,14 @@ export async function fixture(
           : value;
       }
       switch (command) {
+        case "lightweight_settings":
+          return structuredClone(lightweightSettings);
+        case "save_lightweight_settings":
+          lightweightSettings = args.preferences as typeof lightweightSettings;
+          return structuredClone(lightweightSettings);
+        case "enter_lightweight":
+        case "release_window":
+          return null;
         case "cloudflare_remembered_login":
           return false;
         case "logout_cloudflare":

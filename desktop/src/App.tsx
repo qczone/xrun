@@ -11,6 +11,7 @@ import { ActivityPage } from "./pages/Activity";
 import { useStatus } from "./app/useStatus";
 import { useWindowVisible } from "./app/useWindowVisible";
 import { useTrayNavigation } from "./app/useTrayNavigation";
+import { useLightweight } from "./app/useLightweight";
 import { useDevices } from "./app/useDevices";
 import { ConfirmationDialog, useConfirmation } from "./app/useConfirmation";
 import {
@@ -32,7 +33,9 @@ export function App() {
   const interactionState = useRef<InteractionState>({
     busy: false,
     confirming: false,
+    windowGuards: new Set(),
   });
+  useLightweight(page, interactionState);
   const visible = useWindowVisible();
   const statusController = useStatus(interactionState, visible);
   const confirmation = useConfirmation(interactionState);

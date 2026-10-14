@@ -56,7 +56,8 @@ fn different_ipc_version_restarts_the_daemon_without_replacing_current_history()
             endpoint["version"] = "previous-release".into();
             config::atomic_private_write(&endpoint_path, &serde_json::to_vec(&endpoint)?)?;
             let (_app, window) = build_app();
-            assert!(invoke(&window, "activity_history", json!({"filter":"all"})).is_ok());
+            let history = invoke(&window, "activity_history", json!({"filter":"all"}));
+            assert!(history.is_ok(), "{history:?}");
             let exited = old.wait()?;
             anyhow::ensure!(
                 exited.success(),
@@ -125,7 +126,8 @@ fn different_ipc_protocol_restarts_the_daemon_without_replacing_current_history(
             endpoint["protocol"] = 0.into();
             config::atomic_private_write(&endpoint_path, &serde_json::to_vec(&endpoint)?)?;
             let (_app, window) = build_app();
-            assert!(invoke(&window, "activity_history", json!({"filter":"all"})).is_ok());
+            let history = invoke(&window, "activity_history", json!({"filter":"all"}));
+            assert!(history.is_ok(), "{history:?}");
             let exited = old.wait()?;
             anyhow::ensure!(
                 exited.success(),

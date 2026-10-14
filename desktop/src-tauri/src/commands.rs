@@ -3,6 +3,7 @@ use super::{
     app::{Desktop, DesktopNavigation, Status, ensure_current_service, local_status, record},
     error::{self, CommandError},
     language::{LanguagePreference, LanguageSettings, LanguageState},
+    lightweight::{self, Lightweight},
     platform, tray,
 };
 use tauri::{Manager, State};
@@ -85,6 +86,8 @@ async fn save_membership_lease<R: tauri::Runtime>(
 async fn choose_directory<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
 ) -> Result<Option<String>, CommandError> {
+    let lightweight = app.state::<Lightweight>();
+    let _dialog = lightweight.dialog();
     let (tx, rx) = tokio::sync::oneshot::channel();
     app.dialog()
         .file()
@@ -219,6 +222,8 @@ async fn save_activity_attachment<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
     id: String,
 ) -> Result<Option<String>, CommandError> {
+    let lightweight = app.state::<Lightweight>();
+    let _dialog = lightweight.dialog();
     ensure_current_service(&app)
         .await
         .map_err(CommandError::from_error)?;
@@ -452,8 +457,13 @@ fn hide_icon<R: tauri::Runtime>(app: tauri::AppHandle<R>) -> Result<(), CommandE
 pub(super) fn register<R: tauri::Runtime>(builder: tauri::Builder<R>) -> tauri::Builder<R> {
     builder
         .manage(LanguageState::default())
+        .manage(Lightweight::default())
         .manage(Desktop::default())
         .invoke_handler(tauri::generate_handler![
+            lightweight::lightweight_settings,
+            lightweight::save_lightweight_settings,
+            lightweight::enter_lightweight,
+            lightweight::release_window,
             super::authority::choose_authority_archive,
             super::authority::export_authority,
             super::authority::restore_authority,

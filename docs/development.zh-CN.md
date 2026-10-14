@@ -58,6 +58,7 @@ bun run --cwd desktop build:ui     # 只构建前端
 - macOS 本地包默认使用 ad-hoc 签名，可用 `APPLE_SIGNING_IDENTITY` 指定签名身份。正式包在 Package 工作流中用 Developer ID 签名、公证并附加票据后再打包 ZIP。Windows 安装包目前未签名。
 - 开发模式可以在界面中启动和停止 daemon，复用本机身份和配置，日志写入 `~/.xrun/daemon-dev.log`；退出界面后 daemon 继续运行，也不设置登录启动。登录启动需要打包后的 App。
 - `tauri.macos.conf.json` 指定 App，`tauri.windows.conf.json` 指定 NSIS。bundle identifier 为 `sh.xrun`，macOS 后台服务标签为 `sh.xrun.daemon`。
+- `lightweight.rs` 管理 WebView 创建、空闲计时与销毁。主窗口设置 `create: false`，由原生菜单按需创建。释放前等待前端确认空闲，覆盖跨多个 IPC 调用的操作；本机同时检查窗口代次、动作与文件对话框，拒绝重新打开后迟到的确认。设置保存在 `desktop-lightweight.json`，原生菜单栏宿主和 daemon 独立于 WebView。原生 UI 测试覆盖后台冷启动、释放和反复重建。
 
 **终端 CLI。** macOS App 启动时把 `~/.local/bin/xrun` 链接到包内 helper，并在 zsh（`.zprofile`、`.zshrc`，遵循 `ZDOTDIR`）和 Bash 的配置中添加幂等的 PATH 块；`--install-cli` 不打开界面执行同样的配置，供安装脚本调用。开发模式、挂载磁盘和 AppTranslocation 位置不修改终端配置。Linux 安装脚本以同样的方式配置 PATH。Windows 包中 `cli/xrun.exe` 是控制台 CLI，根目录的 `xrun.exe` 是无控制台的 helper；安装器通过 App 的 `--install-cli` 写入 `HKCU\Environment\Path`，并用 `.xrun-cli-path.json` 记录自己添加的项，卸载时只移除该项。配置失败时报告 `CLI_INSTALL_FAILED`，Windows 安装器退出码为 34。
 

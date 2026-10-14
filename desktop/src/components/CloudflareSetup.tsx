@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { api, type CloudflareAccount, type RelayDeployment } from "../api";
-import { useOperations } from "../app/useOperations";
+import { useKeepWindow, useOperations } from "../app/useOperations";
 import { t } from "../i18n";
 import { errorText } from "../errors";
 import { useDeploymentProgress } from "../app/useDeploymentProgress";
@@ -36,6 +36,10 @@ export function CloudflareSetup({
   const [savedRelays, setSavedRelays] = useState<RelayDeployment[]>([]);
   const [savedError, setSavedError] = useState<string | null>(null);
   const [nameConflict, setNameConflict] = useState(false);
+  useKeepWindow(
+    "cloudflare-account-selection",
+    accounts !== null && deployment === null,
+  );
   const advanced = useRef<HTMLDetailsElement>(null);
   useEffect(() => {
     let active = true;

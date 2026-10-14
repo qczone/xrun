@@ -2,11 +2,11 @@
 use super::{
     app::{Desktop, DesktopPage, navigate, record},
     language::{Language, LanguageState},
-    platform,
+    lightweight, platform,
 };
 use std::sync::Mutex;
 use tauri::{
-    Emitter, Manager,
+    Manager,
     menu::{Menu, MenuItem, PredefinedMenuItem},
     tray::{MouseButton, TrayIconBuilder, TrayIconEvent},
 };
@@ -16,11 +16,12 @@ struct TrayMenu<R: tauri::Runtime> {
     action: Mutex<PrimaryAction>,
 }
 
-fn labels(language: Language) -> [(&'static str, &'static str); 4] {
+fn labels(language: Language) -> [(&'static str, &'static str); 5] {
     [
         ("show", language.text("Open xrun", "打开 xrun")),
         ("activity", language.text("Activity", "活动")),
         ("settings", language.text("Settings", "设置")),
+        ("lightweight", language.text("Lightweight mode", "轻量模式")),
         ("quit", language.text("Quit xrun", "退出 xrun")),
     ]
 }
@@ -52,6 +53,8 @@ fn update_menu<R: tauri::Runtime>(
                         !view.action.changes_service()
                             || app.state::<Desktop>().action.try_lock().is_ok(),
                     )?;
+                } else if id == "lightweight" {
+                    item.set_enabled(app.get_webview_window("main").is_some())?;
                 }
             }
         }
@@ -66,22 +69,13 @@ pub(super) fn hide<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> tauri::Resul
     if let Some(tray) = app.tray_by_id("xrun") {
         tray.set_visible(false)?;
     }
-    if let Some(window) = app.get_webview_window("main") {
-        window.hide()?;
-        window.emit("xrun-window-visible", false)?;
-    }
-    Ok(())
+    lightweight::hide(app, false)
 }
 pub(super) fn present<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
     if let Some(tray) = app.tray_by_id("xrun") {
         let _ = tray.set_visible(true);
     }
-    if let Some(window) = app.get_webview_window("main") {
-        if window.show().is_ok() && window.unminimize().is_ok() {
-            let _ = window.emit("xrun-window-visible", true);
-        }
-        let _ = window.set_focus();
-    }
+    lightweight::present(app);
 }
 
 pub(super) fn menu_event<R: tauri::Runtime>(
@@ -92,6 +86,9 @@ pub(super) fn menu_event<R: tauri::Runtime>(
         "show" => present(app),
         "activity" => navigate(app, DesktopPage::Activity),
         "settings" => navigate(app, DesktopPage::Settings),
+        "lightweight" => {
+            let _ = record(app, lightweight::hide(app, true).map_err(Into::into));
+        }
         "quit" => app.exit(0),
         "service" => {
             // Execute the action shown in the menu. An older Pause label must
@@ -375,7 +372,14 @@ pub(crate) mod tests {
         assert_eq!(
             ids,
             [
-                "device", "state", "show", "activity", "settings", "service", "quit"
+                "device",
+                "state",
+                "show",
+                "activity",
+                "settings",
+                "lightweight",
+                "service",
+                "quit"
             ]
         );
         for id in ["device", "state"] {

@@ -1,6 +1,6 @@
 //! Native state, feedback and application lifecycle assembly.
-use super::{commands, error::CommandError, platform, tray};
-use serde::Serialize;
+use super::{commands, error::CommandError, lightweight, platform, tray};
+use serde::{Deserialize, Serialize};
 use std::sync::Mutex;
 use tauri::{Emitter, Manager};
 #[derive(Default)]
@@ -13,7 +13,7 @@ pub(super) struct Desktop {
     service_prepared: tokio::sync::OnceCell<()>,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub(super) enum DesktopPage {
     Devices,
@@ -24,23 +24,28 @@ pub(super) enum DesktopPage {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
 pub(super) struct DesktopNavigation {
     revision: u64,
-    page: DesktopPage,
+    pub(super) page: DesktopPage,
 }
 
 pub(super) fn navigate<R: tauri::Runtime>(app: &tauri::AppHandle<R>, page: DesktopPage) {
-    let request = {
-        let state = app.state::<Desktop>();
-        let mut navigation = state.navigation.lock().unwrap();
-        let request = DesktopNavigation {
-            revision: navigation.map_or(1, |previous| previous.revision + 1),
-            page,
-        };
-        *navigation = Some(request);
-        request
-    };
+    let request = remember_page(app, page);
     // Retain the last request so a click during WebView startup is not lost.
     let _ = app.emit("xrun-desktop-navigation", request);
     tray::present(app);
+}
+
+pub(super) fn remember_page<R: tauri::Runtime>(
+    app: &tauri::AppHandle<R>,
+    page: DesktopPage,
+) -> DesktopNavigation {
+    let state = app.state::<Desktop>();
+    let mut navigation = state.navigation.lock().unwrap();
+    let request = DesktopNavigation {
+        revision: navigation.map_or(1, |previous| previous.revision + 1),
+        page,
+    };
+    *navigation = Some(request);
+    request
 }
 
 pub(super) async fn ensure_current_service<R: tauri::Runtime>(
@@ -125,6 +130,7 @@ pub(super) fn app_builder<R: tauri::Runtime>(
             tauri::async_runtime::spawn(async move {
                 loop {
                     let _ = tray::refresh(&handle);
+                    lightweight::tick(&handle);
                     tokio::time::sleep(std::time::Duration::from_secs(2)).await;
                 }
             });
@@ -134,28 +140,51 @@ pub(super) fn app_builder<R: tauri::Runtime>(
             Ok(())
         })
         .on_window_event(|window, event| {
+            if window.label() != "main" {
+                return;
+            }
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
                 api.prevent_close();
-                let _ = window.hide();
-                let _ = window.emit("xrun-window-visible", false);
+                let _ = lightweight::hide(window.app_handle(), false);
             } else if matches!(
                 event,
                 tauri::WindowEvent::Focused(_) | tauri::WindowEvent::Resized(_)
             ) && let (Ok(visible), Ok(minimized)) =
                 (window.is_visible(), window.is_minimized())
             {
+                if visible && !minimized {
+                    window
+                        .app_handle()
+                        .state::<lightweight::Lightweight>()
+                        .visible();
+                }
                 let _ = window.emit("xrun-window-visible", visible && !minimized);
             }
         })
 }
 
 pub(super) fn run_event<R: tauri::Runtime>(app: &tauri::AppHandle<R>, event: tauri::RunEvent) {
+    handle_event(app, &event);
+}
+
+fn handle_event<R: tauri::Runtime>(app: &tauri::AppHandle<R>, event: &tauri::RunEvent) {
+    match event {
+        tauri::RunEvent::ExitRequested {
+            code: None, api, ..
+        } => api.prevent_exit(),
+        tauri::RunEvent::WindowEvent {
+            label,
+            event: tauri::WindowEvent::Destroyed,
+            ..
+        } if label == "main" => {
+            lightweight::destroyed(app);
+        }
+        _ => {}
+    }
     #[cfg(target_os = "macos")]
     if let tauri::RunEvent::Reopen { .. } = event {
         tray::present(app);
     }
-    #[cfg(not(target_os = "macos"))]
-    let _ = (app, event);
 }
 
 #[cfg(all(test, target_os = "macos"))]
@@ -191,6 +220,7 @@ pub(crate) mod tests {
             let exe = temp.path().join("ui-test");
             std::fs::copy(std::env::current_exe()?, &exe)?;
             for scenario in [
+                "lightweight",
                 "background",
                 "foreground",
                 "joined",
@@ -291,9 +321,10 @@ pub(crate) mod tests {
 
         fn scenario_child(scenario: &str) -> Result<()> {
             let joined = scenario == "joined";
-            let background = scenario == "background";
+            let background = scenario == "background" || scenario == "lightweight";
             let bundled = scenario == "bundled";
             let returning = scenario == "authorization-return";
+            let lightweight = scenario == "lightweight";
             if joined {
                 seed(&relay_config(&config::home_dir()?)?)?;
             }
@@ -303,133 +334,152 @@ pub(crate) mod tests {
             }
             let mut context = mock_context(noop_assets());
             context.config_mut().identifier = "sh.xrun.native-tests".into();
+            context.config_mut().app.windows =
+                serde_json::from_str::<tauri::Config>(include_str!("../tauri.conf.json"))?
+                    .app
+                    .windows;
             // Production setup and callbacks, using the real Cocoa/Wry runtime. The
             // single-instance plugin is omitted so an installed xrun is never contacted.
             let app = app_builder(tauri::Builder::default(), background).build(context)?;
-            tauri::WebviewWindowBuilder::new(&app, "main", Default::default())
-                .visible(false)
-                .build()?;
-            let code = app.run_return(move |app, event| match event {
-                tauri::RunEvent::Ready => {
-                    assert!(app.tray_by_id("xrun").is_some());
-                    let home = config::home_dir().unwrap();
-                    let cli = home.join(".local/bin/xrun");
-                    if bundled {
-                        assert_eq!(
-                            std::fs::read_link(cli).unwrap(),
-                            std::env::current_exe().unwrap().with_file_name("xrun")
-                        );
-                        let output = Command::new("/bin/zsh")
-                            .args(["-lc", "xrun --version"])
-                            .env("PATH", "/usr/bin:/bin:/usr/sbin:/sbin")
-                            .output()
-                            .unwrap();
-                        assert!(output.status.success());
-                        assert_eq!(
-                            String::from_utf8(output.stdout).unwrap().trim(),
-                            format!("xrun {}", xrun::protocol::VERSION)
-                        );
-                    } else {
-                        assert!(!cli.exists());
+            let code = app.run_return(move |app, event| {
+                handle_event(app, &event);
+                if lightweight {
+                    if matches!(event, tauri::RunEvent::Ready) {
+                        super::super::super::lightweight::tests::exercise_native(app.clone());
                     }
-                    super::super::super::tray::tests::verify_language_switch(app).unwrap();
-                    let window = app.get_webview_window("main").unwrap();
-                    assert_eq!(window.is_visible().unwrap(), !background && !joined);
-                    select(app, "show");
-                    assert!(window.is_visible().unwrap());
-                    tray::hide(app).unwrap();
-                    assert!(!window.is_visible().unwrap());
-                    select(app, "show");
-                    assert!(window.is_visible().unwrap());
-                    select(app, "activity");
-                    assert_eq!(
-                        app.state::<Desktop>()
-                            .navigation
-                            .lock()
-                            .unwrap()
-                            .unwrap()
-                            .page,
-                        DesktopPage::Activity
-                    );
-                    select(app, "settings");
-                    assert_eq!(
-                        app.state::<Desktop>()
-                            .navigation
-                            .lock()
-                            .unwrap()
-                            .unwrap()
-                            .page,
-                        DesktopPage::Settings
-                    );
-                    run_event(app, tauri::RunEvent::Resumed);
-                    select(app, "unrecognized-menu-id");
-                    window.close().unwrap();
+                    return;
                 }
-                tauri::RunEvent::WindowEvent {
-                    event: tauri::WindowEvent::CloseRequested { .. },
-                    ..
-                } => {
-                    let app = app.clone();
-                    tauri::async_runtime::spawn(async move {
-                        // Closing the window must hide it and retain the tray process.
-                        tokio::time::sleep(Duration::from_millis(50)).await;
-                        let handle = app.clone();
-                        app.run_on_main_thread(move || {
-                            let window = handle.get_webview_window("main").unwrap();
-                            assert!(!window.is_visible().unwrap());
-                            if returning {
-                                super::super::super::connection::progress(
-                                    &handle,
-                                    Some("owned-native-return".into()),
-                                    "cloudflare_accounts",
-                                )
-                                .report(
-                                    xrun::client::relay::DeploymentStage::AuthorizationReceived,
-                                    xrun::client::relay::ProgressStatus::Completed,
-                                    0,
-                                    Default::default(),
-                                );
-                            } else {
-                                select(&handle, "service");
-                            }
-                        })
-                        .unwrap();
-                        tokio::time::timeout(Duration::from_secs(5), async {
-                            loop {
-                                let missing_helper = app
-                                    .state::<Desktop>()
-                                    .error
-                                    .lock()
-                                    .unwrap()
-                                    .as_ref()
-                                    .is_some_and(|e| e.code == "HELPER_NOT_FOUND");
-                                let setup_visible = app
-                                    .get_webview_window("main")
+                match event {
+                    tauri::RunEvent::Ready => {
+                        assert!(app.tray_by_id("xrun").is_some());
+                        let home = config::home_dir().unwrap();
+                        let cli = home.join(".local/bin/xrun");
+                        if bundled {
+                            assert_eq!(
+                                std::fs::read_link(cli).unwrap(),
+                                std::env::current_exe().unwrap().with_file_name("xrun")
+                            );
+                            let output = Command::new("/bin/zsh")
+                                .args(["-lc", "xrun --version"])
+                                .env("PATH", "/usr/bin:/bin:/usr/sbin:/sbin")
+                                .output()
+                                .unwrap();
+                            assert!(output.status.success());
+                            assert_eq!(
+                                String::from_utf8(output.stdout).unwrap().trim(),
+                                format!("xrun {}", xrun::protocol::VERSION)
+                            );
+                        } else {
+                            assert!(!cli.exists());
+                        }
+                        super::super::super::tray::tests::verify_language_switch(app).unwrap();
+                        if background || joined {
+                            assert!(app.get_webview_window("main").is_none());
+                        } else {
+                            assert!(
+                                app.get_webview_window("main")
                                     .unwrap()
                                     .is_visible()
-                                    .unwrap();
-                                if (joined && missing_helper) || (!joined && setup_visible) {
-                                    break;
-                                }
-                                tokio::time::sleep(Duration::from_millis(20)).await;
-                            }
-                        })
-                        .await
-                        .unwrap();
-                        if !joined {
-                            assert!(app.state::<Desktop>().error.lock().unwrap().is_none());
-                            let directory = config::device_dir().unwrap();
-                            assert!(!directory.join("identity.toml").exists());
-                            assert!(!directory.join("daemon.initialized").exists());
+                                    .unwrap()
+                            );
                         }
-                        assert!(!xrun::client::local_status().unwrap().daemon_running);
-                        let _ = record(&app, Ok(()));
-                        // Allow the production status updater to complete a second pass.
-                        tokio::time::sleep(Duration::from_millis(2100)).await;
-                        select(&app, "quit");
-                    });
+                        select(app, "show");
+                        let window = app.get_webview_window("main").unwrap();
+                        assert!(window.is_visible().unwrap());
+                        tray::hide(app).unwrap();
+                        assert!(!window.is_visible().unwrap());
+                        select(app, "show");
+                        assert!(window.is_visible().unwrap());
+                        select(app, "activity");
+                        assert_eq!(
+                            app.state::<Desktop>()
+                                .navigation
+                                .lock()
+                                .unwrap()
+                                .unwrap()
+                                .page,
+                            DesktopPage::Activity
+                        );
+                        select(app, "settings");
+                        assert_eq!(
+                            app.state::<Desktop>()
+                                .navigation
+                                .lock()
+                                .unwrap()
+                                .unwrap()
+                                .page,
+                            DesktopPage::Settings
+                        );
+                        run_event(app, tauri::RunEvent::Resumed);
+                        select(app, "unrecognized-menu-id");
+                        window.close().unwrap();
+                    }
+                    tauri::RunEvent::WindowEvent {
+                        event: tauri::WindowEvent::CloseRequested { .. },
+                        ..
+                    } => {
+                        let app = app.clone();
+                        tauri::async_runtime::spawn(async move {
+                            // Closing the window must hide it and retain the tray process.
+                            tokio::time::sleep(Duration::from_millis(50)).await;
+                            let handle = app.clone();
+                            app.run_on_main_thread(move || {
+                                let window = handle.get_webview_window("main").unwrap();
+                                assert!(!window.is_visible().unwrap());
+                                if returning {
+                                    super::super::super::connection::progress(
+                                        &handle,
+                                        Some("owned-native-return".into()),
+                                        "cloudflare_accounts",
+                                    )
+                                    .report(
+                                        xrun::client::relay::DeploymentStage::AuthorizationReceived,
+                                        xrun::client::relay::ProgressStatus::Completed,
+                                        0,
+                                        Default::default(),
+                                    );
+                                } else {
+                                    select(&handle, "service");
+                                }
+                            })
+                            .unwrap();
+                            tokio::time::timeout(Duration::from_secs(5), async {
+                                loop {
+                                    let missing_helper = app
+                                        .state::<Desktop>()
+                                        .error
+                                        .lock()
+                                        .unwrap()
+                                        .as_ref()
+                                        .is_some_and(|e| e.code == "HELPER_NOT_FOUND");
+                                    let setup_visible = app
+                                        .get_webview_window("main")
+                                        .unwrap()
+                                        .is_visible()
+                                        .unwrap();
+                                    if (joined && missing_helper) || (!joined && setup_visible) {
+                                        break;
+                                    }
+                                    tokio::time::sleep(Duration::from_millis(20)).await;
+                                }
+                            })
+                            .await
+                            .unwrap();
+                            if !joined {
+                                assert!(app.state::<Desktop>().error.lock().unwrap().is_none());
+                                let directory = config::device_dir().unwrap();
+                                assert!(!directory.join("identity.toml").exists());
+                                assert!(!directory.join("daemon.initialized").exists());
+                            }
+                            assert!(!xrun::client::local_status().unwrap().daemon_running);
+                            let _ = record(&app, Ok(()));
+                            // Allow the production status updater to complete a second pass.
+                            tokio::time::sleep(Duration::from_millis(2100)).await;
+                            select(&app, "quit");
+                        });
+                    }
+                    _ => {}
                 }
-                _ => {}
             });
             assert_eq!(code, 0);
             assert!(!config::instance_running(

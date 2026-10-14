@@ -563,13 +563,15 @@ When joining, you can select **Allow the manager to access this device**. Leavin
 - **Screenshot**: choose original PNG, a bandwidth-saving preset, or a custom format, maximum width, and quality.
 - **Activity**: shows all operations other devices performed on this machine, grouped by date, with running/failed filters and search within the current page. Details include working directory, duration, exit result, and output. File and screenshot attachments can be previewed (PNG/JPEG up to 8 MiB, text up to 1 MiB) or saved elsewhere. Activity reads the local database and remains available with the service stopped or network disconnected.
 - **Settings**:
-  - General: language (system, Chinese, English), LAN direct connections, compression, showing the xrun icon at login, and hiding the menu bar/tray icon.
+  - General: language (system, Chinese, English), automatic lightweight mode and delay, LAN direct connections, compression, showing the xrun icon at login, and hiding the menu bar/tray icon.
   - Activity and attachments: attachment retention, 30 days by default; 0 means indefinite.
   - Execution environment: default working directory, concurrent jobs, and PATH. Changes affect new jobs.
   - Network and service: network information, all-member access, service start/stop, roster lease (manager only), locally deployed relays (account authorization, remembered login, deployment link), manager identity backup/handover/restore, and background service removal.
   - About: version, system, and data directory.
 
-**Menu bar and tray.** The menu shows local state, links to open xrun, Activity, and Settings, and a primary action based on current state: join a network, start the service, pause access, or resume access. Double-clicking the Windows tray icon also opens the window. If you hide the icon, reopening the app restores it.
+**Menu bar and tray.** The menu shows local state, links to open xrun, Activity, Settings, and Lightweight mode, and a primary action based on current state: join a network, start the service, pause access, or resume access. Double-clicking the Windows tray icon also opens the window. If you hide the icon, reopening the app restores it.
+
+**Lightweight mode.** Background startup creates no webview. By default, closing the window releases the window and webview after 30 seconds, keeping the native tray host and independent daemon running. Change or disable the delay in General settings, or enter manually from the tray or Settings. Reopening cancels the timer or recreates the interface on the last page. Authorization, submissions, confirmation dialogs, file dialogs, and unsaved execution or attachment-retention settings defer release; save those settings after reopening to allow it. Other temporary dialogs and inputs reset when the interface is recreated. Device connections and accepted background jobs continue running.
 
 **Background service.** A separate service handles execution and transfers:
 
