@@ -112,7 +112,7 @@ export async function prepareRelease(
     checksums.push(`${digest}  ${file}`);
   }
   await writeFile(join(output, "SHA256SUMS"), `${checksums.join("\n")}\n`);
-  const repository = process.env.GITHUB_REPOSITORY ?? "qczone/xrun";
+  const repository = process.env.GITHUB_REPOSITORY ?? "xrun-sh/xrun";
   const base = `https://github.com/${repository}/releases/download/v${version}`;
   const downloads = [
     ["Mac · Apple Silicon", "xrun-app-darwin-arm64.zip"],

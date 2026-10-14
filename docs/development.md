@@ -105,7 +105,7 @@ Linux 自动安装脚本配置同样的 zsh 和 Bash 用户配置文件；PATH �
 
 Windows 安装包在 `cli/xrun.exe` 中包含控制台版 CLI，根目录 `xrun.exe` 仍是无控制台 daemon helper。NSIS 安装后调用 App 的 `--install-cli` 写入 `HKCU\Environment\Path`，保留原有注册表类型、未展开的变量和长 PATH，并广播环境更新。安装器通过 `.xrun-cli-path.json` 记录自己添加的项，卸载准备成功后只移除该项；预先存在的用户 PATH 项不归安装器所有。配置失败返回安装器退出码 34 和 `CLI_INSTALL_FAILED`。Windows 安装回归同时检查 PowerShell / CMD 按名称运行 CLI、重复安装、卸载清理和配置失败。
 
-macOS 服务启动排查可调用已放在固定位置的 App：`/Applications/xrun.app/Contents/MacOS/xrun-desktop --start-service`。该入口复用界面的服务启动流程并输出本机状态，不打开窗口、不重新组网。SMAppService 的 `enabled` 仅说明登记和授权状态，不能证明 launchd 已保存当前 helper 的签名；更新程序后按 Apple SDK 要求先注销再重新登记。已在运行的服务不会被重复启动，等待批准时返回 `APPROVAL_REQUIRED`。可用 `launchctl print gui/$(id -u)/dev.qczone.xrun.daemon` 核对登记与进程状态；本地测试使用 ad-hoc 签名，不能把本地服务检查描述为正式包公证验收。
+macOS 服务启动排查可调用已放在固定位置的 App：`/Applications/xrun.app/Contents/MacOS/xrun-desktop --start-service`。该入口复用界面的服务启动流程并输出本机状态，不打开窗口、不重新组网。SMAppService 的 `enabled` 仅说明登记和授权状态，不能证明 launchd 已保存当前 helper 的签名；更新程序后按 Apple SDK 要求先注销再重新登记。已在运行的服务不会被重复启动，等待批准时返回 `APPROVAL_REQUIRED`。可用 `launchctl print gui/$(id -u)/sh.xrun.daemon` 核对登记与进程状态；本地测试使用 ad-hoc 签名，不能把本地服务检查描述为正式包公证验收。
 
 ## 验证
 

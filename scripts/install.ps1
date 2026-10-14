@@ -105,7 +105,7 @@ try {
     }
     $InstallDir = [IO.Path]::GetFullPath($InstallDir)
     if ($InstallDir.Contains('"') -or $InstallDir -match '[\r\n]') { Fail-Install 'INVALID_ARGUMENT' 'Invalid installation directory.' }
-    if (-not $BaseUrl) { $BaseUrl = "https://github.com/qczone/xrun/releases/download/v$Version" }
+    if (-not $BaseUrl) { $BaseUrl = "https://github.com/xrun-sh/xrun/releases/download/v$Version" }
     if ($BaseUrl -notmatch '^https://') { Fail-Install 'INVALID_ARGUMENT' 'BaseUrl must use HTTPS.' }
     $workDir = Join-Path ([IO.Path]::GetTempPath()) "xrun-download-$([Guid]::NewGuid())"
     [void](New-Item -ItemType Directory -Path $workDir)

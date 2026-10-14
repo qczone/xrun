@@ -2,7 +2,7 @@
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "xrun",
   "version": "0.1.0-rc.9",
-  "identifier": "dev.qczone.xrun",
+  "identifier": "sh.xrun",
   "build": {
     "beforeDevCommand": "bun run dev:ui",
     "beforeBuildCommand": "bun run build:ui",
@@ -28,6 +28,7 @@
     "active": true,
     "targets": "all",
     "category": "DeveloperTool",
+    "publisher": "xrun-sh",
     "shortDescription": "Run programs on your paired devices",
     "license": "MIT",
     "externalBin": ["binaries/xrun"],
@@ -36,7 +37,7 @@
       "minimumSystemVersion": "13.0",
       "signingIdentity": "-",
       "infoPlist": "Info.plist",
-      "files": { "Library/LaunchAgents/dev.qczone.xrun.daemon.plist": "resources/dev.qczone.xrun.daemon.plist" }
+      "files": { "Library/LaunchAgents/sh.xrun.daemon.plist": "resources/sh.xrun.daemon.plist" }
     },
     "windows": { "nsis": { "installMode": "currentUser", "installerHooks": "resources/installer.nsh" } }
   }

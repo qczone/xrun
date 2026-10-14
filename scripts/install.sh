@@ -109,7 +109,7 @@ platform="$system-$architecture"
 if [[ -z "$install_dir" ]]; then
   if [[ "$component" == app ]]; then install_dir="$HOME/Applications"; else install_dir="$HOME/.local/bin"; fi
 fi
-if [[ -z "$base_url" ]]; then base_url="https://github.com/qczone/xrun/releases/download/v$version"; fi
+if [[ -z "$base_url" ]]; then base_url="https://github.com/xrun-sh/xrun/releases/download/v$version"; fi
 [[ "$base_url" == https://* ]] || fail INVALID_ARGUMENT 'base-url must use HTTPS.'
 work_dir=$(mktemp -d "${TMPDIR:-/tmp}/xrun-download.XXXXXX")
 

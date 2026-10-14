@@ -109,7 +109,7 @@ pub fn state() -> Result<ServiceStatus> {
     }
     // These services are resolved relative to the calling App's main bundle.
     let agent = unsafe {
-        SMAppService::agentServiceWithPlistName(&NSString::from_str("dev.qczone.xrun.daemon.plist"))
+        SMAppService::agentServiceWithPlistName(&NSString::from_str(&format!("{LABEL}.plist")))
     };
     let main = unsafe { SMAppService::mainAppService() };
     Ok(service_state(
@@ -128,14 +128,14 @@ pub fn register_agent() -> Result<()> {
         ));
     }
     let service = unsafe {
-        SMAppService::agentServiceWithPlistName(&NSString::from_str("dev.qczone.xrun.daemon.plist"))
+        SMAppService::agentServiceWithPlistName(&NSString::from_str(&format!("{LABEL}.plist")))
     };
     enable_agent(&*service)
 }
 
 pub fn unregister_agent() -> Result<()> {
     let service = unsafe {
-        SMAppService::agentServiceWithPlistName(&NSString::from_str("dev.qczone.xrun.daemon.plist"))
+        SMAppService::agentServiceWithPlistName(&NSString::from_str(&format!("{LABEL}.plist")))
     };
     set_enabled(&*service, false)
 }

@@ -8,7 +8,7 @@ use std::path::PathBuf;
 use std::{path::Path, time::Duration};
 
 #[cfg(target_os = "macos")]
-pub(crate) const APP_DAEMON_LABEL: &str = "dev.qczone.xrun.daemon";
+pub(crate) const APP_DAEMON_LABEL: &str = "sh.xrun.daemon";
 
 async fn command(program: &str, args: &[&str]) -> Result<()> {
     let mut cmd = tokio::process::Command::new(program);
@@ -104,7 +104,7 @@ pub(crate) async fn uninstall(kind: &str) -> Result<()> {
 fn unit_path(kind: &str) -> Result<PathBuf> {
     Ok(config::home_dir()?
         .join("Library/LaunchAgents")
-        .join(format!("com.xrun.{kind}.plist")))
+        .join(format!("sh.xrun.cli.{kind}.plist")))
 }
 #[cfg(target_os = "macos")]
 fn xml(s: &str) -> String {
@@ -129,7 +129,7 @@ pub(crate) async fn install_with_executable(kind: &str, exe: &Path) -> Result<()
         r#"<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0"><dict>
-<key>Label</key><string>com.xrun.daemon</string>
+<key>Label</key><string>sh.xrun.cli.daemon</string>
 <key>ProgramArguments</key><array><string>{}</string><string>daemon</string></array>
 <key>RunAtLoad</key><true/>
 <key>KeepAlive</key><dict><key>SuccessfulExit</key><false/></dict>
@@ -145,7 +145,7 @@ pub(crate) async fn install_with_executable(kind: &str, exe: &Path) -> Result<()
     let changed = previous.as_deref() != Some(text.as_bytes());
     let domain = format!("gui/{}", unsafe { libc::getuid() });
     let loaded = tokio::process::Command::new("launchctl")
-        .args(["print", &format!("{domain}/com.xrun.daemon")])
+        .args(["print", &format!("{domain}/sh.xrun.cli.daemon")])
         .output()
         .await?
         .status
@@ -160,7 +160,7 @@ pub(crate) async fn install_with_executable(kind: &str, exe: &Path) -> Result<()
     if loaded && changed {
         command(
             "launchctl",
-            &["bootout", &format!("{domain}/com.xrun.daemon")],
+            &["bootout", &format!("{domain}/sh.xrun.cli.daemon")],
         )
         .await?;
     }
@@ -175,7 +175,7 @@ pub(crate) async fn install_with_executable(kind: &str, exe: &Path) -> Result<()
     // starts that service while leaving an already-running daemon undisturbed.
     command(
         "launchctl",
-        &["kickstart", &format!("{domain}/com.xrun.daemon")],
+        &["kickstart", &format!("{domain}/sh.xrun.cli.daemon")],
     )
     .await
 }
@@ -183,7 +183,7 @@ pub(crate) async fn install_with_executable(kind: &str, exe: &Path) -> Result<()
 pub(crate) async fn uninstall(kind: &str) -> Result<()> {
     let path = unit_path(kind)?;
     if path.exists() {
-        let domain = format!("gui/{}/com.xrun.{kind}", unsafe { libc::getuid() });
+        let domain = format!("gui/{}/sh.xrun.cli.{kind}", unsafe { libc::getuid() });
         let _ = command("launchctl", &["bootout", &domain]).await;
         std::fs::remove_file(path)?;
     }
@@ -250,7 +250,7 @@ pub(crate) async fn start(kind: &str) -> Result<()> {
         .await;
         command(
             "launchctl",
-            &["kickstart", &format!("{domain}/com.xrun.{kind}")],
+            &["kickstart", &format!("{domain}/sh.xrun.cli.{kind}")],
         )
         .await
     }

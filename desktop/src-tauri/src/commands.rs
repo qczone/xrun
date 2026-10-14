@@ -619,7 +619,7 @@ pub(crate) mod tests {
                 );
                 assert!(
                     !root
-                        .join("Library/LaunchAgents/com.xrun.daemon.plist")
+                        .join("Library/LaunchAgents/sh.xrun.cli.daemon.plist")
                         .exists()
                 );
                 assert_eq!(invoke(&window, "stop", json!({})), Ok(Value::Null));

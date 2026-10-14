@@ -32,7 +32,7 @@ CLI 和 daemon 是同一个 Rust 二进制，运行已构建程序不需要 Rust
 
 按设备架构选择对应包：`x86_64` 即 AMD64，Intel Mac 使用这一版；`arm64` 对应 Apple Silicon、Windows ARM 和 ARM Linux。每个包只包含一种架构。
 
-从 [Release](https://github.com/qczone/xrun/releases) 下载对应系统和架构的文件。Linux 手动安装时，将压缩包中的 `xrun` 放到 `~/.local/bin/` 并加入 PATH。服务注册当前二进制的绝对路径，请将程序放到固定位置。
+从 [Release](https://github.com/xrun-sh/xrun/releases) 下载对应系统和架构的文件。Linux 手动安装时，将压缩包中的 `xrun` 放到 `~/.local/bin/` 并加入 PATH。服务注册当前二进制的绝对路径，请将程序放到固定位置。
 
 macOS 解压 App ZIP 后得到 `xrun.app`，双击即可打开，无需安装向导。长期使用建议先放到 `/Applications` 或 `~/Applications`，再打开 App。首次打开会自动把包内 CLI 链接到 `~/.local/bin/xrun`，并配置 zsh 和 Bash 的用户 PATH。重新打开终端即可运行 `xrun --version`，无需先加入网络。已有的独立 CLI 或其他 CLI 链接会保留；重复打开 App 不会重复添加 PATH 配置。macOS 在临时隔离位置运行下载的 App 时不会创建永久 CLI 入口，请先将 App 移到固定目录。
 
@@ -45,12 +45,12 @@ Windows EXE 安装器同时安装桌面 App 和终端 CLI，并自动将安装�
 从相应版本的 Release 下载安装脚本。例如 macOS / Linux：
 
 ```bash
-curl -fL https://github.com/qczone/xrun/releases/download/v0.1.0-rc.9/install.sh -o install.sh
+curl -fL https://github.com/xrun-sh/xrun/releases/download/v0.1.0-rc.9/install.sh -o install.sh
 bash install.sh --version 0.1.0-rc.9
 ```
 
 ```powershell
-Invoke-WebRequest https://github.com/qczone/xrun/releases/download/v0.1.0-rc.9/install.ps1 -OutFile install.ps1
+Invoke-WebRequest https://github.com/xrun-sh/xrun/releases/download/v0.1.0-rc.9/install.ps1 -OutFile install.ps1
 powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File .\install.ps1 -Version 0.1.0-rc.9
 ```
 
@@ -58,7 +58,7 @@ powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File .\instal
 
 macOS 默认识别设备的真实架构，即使终端通过 Rosetta 运行也会选择 arm64 包。已安装 Rosetta 的 Apple Silicon Mac 可用 `--arch x86_64` 安装 Intel 版，例如 `bash install.sh --version 0.1.0-rc.9 --arch x86_64`；Intel Mac 不支持安装 arm64 版。Windows 和 Linux 按系统架构自动选择原生包。
 
-默认下载地址是 `https://github.com/qczone/xrun/releases/download/v<完整版本>/`。`--base-url`／`-BaseUrl` 可指定其他 HTTPS 产物目录。每个目录需包含对应的 `xrun-<系统>-<架构>.json` 清单及其引用的文件，系统为 `darwin`、`windows` 或 `linux`，架构为 `x86_64` 或 `arm64`。安装时不需要 Bun；产物准备见 [开发与发布](development.md#发布与内置文档)。
+默认下载地址是 `https://github.com/xrun-sh/xrun/releases/download/v<完整版本>/`。`--base-url`／`-BaseUrl` 可指定其他 HTTPS 产物目录。每个目录需包含对应的 `xrun-<系统>-<架构>.json` 清单及其引用的文件，系统为 `darwin`、`windows` 或 `linux`，架构为 `x86_64` 或 `arm64`。安装时不需要 Bun；产物准备见 [开发与发布](development.md#发布与内置文档)。
 
 离线安装或验收本地打包产物时，用 `--source-dir`／`-SourceDir` 指定产物目录。例如 macOS：
 

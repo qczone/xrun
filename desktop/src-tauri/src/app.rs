@@ -209,7 +209,7 @@ pub(crate) mod tests {
                         r#"<?xml version="1.0"?>
                         <plist version="1.0"><dict>
                             <key>CFBundleIdentifier</key>
-                            <string>dev.qczone.xrun.native-tests</string>
+                            <string>sh.xrun.native-tests</string>
                             <key>CFBundleExecutable</key><string>ui-test</string>
                         </dict></plist>"#,
                     )?;
@@ -302,7 +302,7 @@ pub(crate) mod tests {
                 assert!(!status.development && !status.installed && !status.app_at_login);
             }
             let mut context = mock_context(noop_assets());
-            context.config_mut().identifier = "dev.qczone.xrun.native-tests".into();
+            context.config_mut().identifier = "sh.xrun.native-tests".into();
             // Production setup and callbacks, using the real Cocoa/Wry runtime. The
             // single-instance plugin is omitted so an installed xrun is never contacted.
             let app = app_builder(tauri::Builder::default(), background).build(context)?;
