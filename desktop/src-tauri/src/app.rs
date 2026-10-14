@@ -278,7 +278,10 @@ pub(crate) mod tests {
                     .stdout(Stdio::piped())
                     .stderr(Stdio::piped())
                     .spawn()?;
-                let deadline = Instant::now() + Duration::from_secs(25);
+                // The bundled scenario also queries macOS Service Management,
+                // whose system replies can take several seconds on shared runners.
+                let timeout = if scenario == "bundled" { 60 } else { 25 };
+                let deadline = Instant::now() + Duration::from_secs(timeout);
                 while child.try_wait()?.is_none() {
                     if Instant::now() >= deadline {
                         child.kill()?;

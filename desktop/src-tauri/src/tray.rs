@@ -31,6 +31,20 @@ pub(super) fn refresh<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> tauri::Re
     update_menu(app, language, menu_view(language, current_status()))
 }
 
+pub(super) fn refresh_lightweight<R: tauri::Runtime>(
+    app: &tauri::AppHandle<R>,
+) -> tauri::Result<()> {
+    if let Some(menu) = app.try_state::<TrayMenu<R>>()
+        && let Some(item) = menu
+            .menu
+            .get("lightweight")
+            .and_then(|item| item.as_menuitem().cloned())
+    {
+        item.set_enabled(app.get_webview_window("main").is_some())?;
+    }
+    Ok(())
+}
+
 fn update_menu<R: tauri::Runtime>(
     app: &tauri::AppHandle<R>,
     language: Language,
@@ -156,7 +170,8 @@ pub(super) fn build<R: tauri::Runtime>(app: &tauri::App<R>) -> tauri::Result<()>
             )?)?;
             menu.append(&PredefinedMenuItem::separator(app)?)?;
         }
-        menu.append(&MenuItem::with_id(app, id, label, true, None::<&str>)?)?;
+        let enabled = id != "lightweight" || app.get_webview_window("main").is_some();
+        menu.append(&MenuItem::with_id(app, id, label, enabled, None::<&str>)?)?;
     }
     app.manage(TrayMenu {
         menu: menu.clone(),
@@ -339,6 +354,16 @@ pub(crate) mod tests {
     }
 
     // Run against the real menu on the process main thread in native_ui.
+    #[cfg(target_os = "macos")]
+    pub(crate) fn assert_lightweight_available<R: tauri::Runtime>(
+        app: &tauri::AppHandle<R>,
+        enabled: bool,
+    ) {
+        let menu = app.state::<TrayMenu<R>>();
+        let item = menu.menu.get("lightweight").unwrap();
+        assert_eq!(item.as_menuitem().unwrap().is_enabled().unwrap(), enabled);
+    }
+
     #[cfg(target_os = "macos")]
     pub(crate) fn verify_language_switch<R: tauri::Runtime>(
         app: &tauri::AppHandle<R>,

@@ -199,7 +199,7 @@ pub(super) fn present<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
             });
             eprintln!("could not open xrun window: {error}");
         }
-        let _ = tray::refresh(&handle);
+        let _ = tray::refresh_lightweight(&handle);
     });
 }
 
@@ -280,7 +280,7 @@ pub(super) fn destroyed<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
     if reopen {
         present(app);
     }
-    let _ = tray::refresh(app);
+    let _ = tray::refresh_lightweight(app);
 }
 
 #[cfg(test)]
@@ -443,10 +443,12 @@ pub(crate) mod tests {
     #[cfg(target_os = "macos")]
     pub(crate) fn exercise_native(app: tauri::AppHandle) {
         assert!(app.get_webview_window("main").is_none());
+        tray::tests::assert_lightweight_available(&app, false);
         tauri::async_runtime::spawn(async move {
             for _ in 0..3 {
                 native_step(&app, |app| {
                     tray::present(app);
+                    tray::tests::assert_lightweight_available(app, true);
                     assert!(
                         app.get_webview_window("main")
                             .unwrap()
@@ -515,6 +517,10 @@ pub(crate) mod tests {
                 })
                 .await;
                 wait_for_window(&app, false).await;
+                native_step(&app, |app| {
+                    tray::tests::assert_lightweight_available(app, false);
+                })
+                .await;
                 assert!(app.tray_by_id("xrun").is_some());
                 assert!(!xrun::client::local_status().unwrap().daemon_running);
                 let directory = xrun::client::services::data_dir().unwrap();
