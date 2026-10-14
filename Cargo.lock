@@ -6842,7 +6842,7 @@ dependencies = [
 
 [[package]]
 name = "xrun"
-version = "0.1.0-rc.11"
+version = "0.1.0-rc.12"
 dependencies = [
  "anyhow",
  "argon2",
@@ -6896,7 +6896,7 @@ dependencies = [
 
 [[package]]
 name = "xrun-desktop"
-version = "0.1.0-rc.11"
+version = "0.1.0-rc.12"
 dependencies = [
  "anyhow",
  "libc",
@@ -6916,6 +6916,13 @@ dependencies = [
  "winreg",
  "xrun",
  "zeroize",
+]
+
+[[package]]
+name = "xrun-launcher"
+version = "0.0.0"
+dependencies = [
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

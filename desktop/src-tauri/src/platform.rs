@@ -1,9 +1,8 @@
-use super::error;
-#[cfg(windows)]
-use anyhow::Context;
-use anyhow::{Result, bail};
+use super::{bridge, error};
+use anyhow::{Context, Result, bail};
 use serde::Serialize;
-use std::path::PathBuf;
+use serde_json::json;
+use std::path::{Path, PathBuf};
 
 #[derive(Serialize)]
 pub struct ServiceStatus {
@@ -12,6 +11,13 @@ pub struct ServiceStatus {
     pub app_at_login: bool,
     pub cli_service_installed: bool,
     pub development: bool,
+}
+
+/// Private data directory shared with the helper; it also holds App preferences.
+pub fn data_dir() -> Result<PathBuf> {
+    let home = std::env::var_os(if cfg!(windows) { "USERPROFILE" } else { "HOME" })
+        .context("HOME/USERPROFILE is unset")?;
+    Ok(PathBuf::from(home).join(".xrun"))
 }
 
 pub fn helper() -> Result<PathBuf> {
@@ -26,6 +32,22 @@ pub fn helper() -> Result<PathBuf> {
     Ok(path)
 }
 
+/// The helper serving App operations. Windows runs the console CLI without a window;
+/// `xrun.exe` beside the App is the windowless launcher used by the service.
+#[cfg(not(test))]
+pub fn bridge_helper() -> Result<PathBuf> {
+    #[cfg(windows)]
+    {
+        let cli = std::env::current_exe()?
+            .with_file_name("cli")
+            .join("xrun.exe");
+        if cli.is_file() {
+            return Ok(cli);
+        }
+    }
+    helper()
+}
+
 pub async fn check_helper() -> Result<()> {
     let helper = helper()?;
     let mut cmd = tokio::process::Command::new(&helper);
@@ -35,7 +57,7 @@ pub async fn check_helper() -> Result<()> {
     let out = cmd.output().await?;
     if !out.status.success()
         || String::from_utf8_lossy(&out.stdout).trim()
-            != format!("xrun {}", xrun::protocol::VERSION)
+            != format!("xrun {}", env!("CARGO_PKG_VERSION"))
     {
         bail!(error::failure(
             "HELPER_VERSION_MISMATCH",
@@ -49,21 +71,16 @@ pub async fn start() -> Result<()> {
     check_helper().await?;
     prepare_service().await?;
     let helper = helper()?;
-    if xrun::client::services::daemon_running()? {
+    if bridge::get("daemon_running", json!({})).await? {
         return Ok(());
     }
-    xrun::client::services::initialize_daemon()?;
+    bridge::call("initialize_daemon", json!({})).await?;
     start_service(&helper).await
 }
 
 pub async fn prepare_service() -> Result<()> {
-    let (restart, pending) = tokio::task::spawn_blocking(|| -> Result<_> {
-        Ok((
-            xrun::client::services::daemon_restart_required()?,
-            xrun::client::services::daemon_restart_pending()?,
-        ))
-    })
-    .await??;
+    let restart: bool = bridge::get("daemon_restart_required", json!({})).await?;
+    let pending: bool = bridge::get("daemon_restart_pending", json!({})).await?;
     if !restart && !pending {
         return Ok(());
     }
@@ -71,21 +88,26 @@ pub async fn prepare_service() -> Result<()> {
     check_helper().await?;
     let helper = helper()?;
     if restart {
-        xrun::client::services::stop_daemon_for_restart().await?;
+        bridge::call("stop_daemon_for_restart", json!({})).await?;
     }
-    if !xrun::client::services::daemon_running()? {
+    if !bridge::get::<bool>("daemon_running", json!({})).await? {
         start_service(&helper).await?;
     }
-    xrun::client::services::finish_daemon_restart()?;
+    bridge::call("finish_daemon_restart", json!({})).await?;
     Ok(())
 }
 
-async fn start_service(helper: &std::path::Path) -> Result<()> {
-    let directory = xrun::client::services::data_dir()?;
-    let previous = xrun::client::services::daemon_state(&directory)?.generation;
+/// Readiness of the daemon owning `directory`, by default the shared data directory.
+pub async fn daemon_state(directory: Option<&Path>) -> Result<bridge::DaemonState> {
+    let directory = directory.map(|path| path.to_string_lossy());
+    bridge::get("daemon_state", json!({ "directory": directory })).await
+}
+
+async fn start_service(helper: &Path) -> Result<()> {
+    let previous = daemon_state(None).await?.generation;
     start_impl(helper).await?;
     for _ in 0..120 {
-        let state = xrun::client::services::daemon_state(&directory)?;
+        let state = daemon_state(None).await?;
         if state.running && state.generation.is_some() && state.generation != previous {
             return Ok(());
         }
@@ -131,7 +153,7 @@ pub fn install_cli() -> Result<()> {
     {
         return Ok(());
     }
-    let directory = xrun::client::services::data_dir()?;
+    let directory = data_dir()?;
     let home = directory.parent().ok_or_else(|| {
         error::failure(
             "CLI_INSTALL_FAILED",
@@ -147,14 +169,14 @@ pub fn install_cli() -> Result<()> {
     })
 }
 #[cfg(target_os = "macos")]
-async fn start_impl(helper: &std::path::Path) -> Result<()> {
+async fn start_impl(helper: &Path) -> Result<()> {
     if mac::development()? {
-        return mac::start_dev_daemon(helper, &xrun::client::services::data_dir()?).await;
+        return mac::start_dev_daemon(helper, &data_dir()?).await;
     }
     // Explicit Start transfers a stopped CLI LaunchAgent to App ownership.
     mac::register_agent()?;
     // Preserve the existing registration if the App signature or approval fails.
-    xrun::client::services::uninstall_daemon().await?;
+    bridge::call("uninstall_daemon", json!({})).await?;
     let domain = format!("gui/{}/{}", unsafe { libc::getuid() }, mac::LABEL);
     let out = tokio::process::Command::new("launchctl")
         .args(["kickstart", &domain])
@@ -170,11 +192,12 @@ async fn start_impl(helper: &std::path::Path) -> Result<()> {
 }
 #[cfg(target_os = "macos")]
 pub async fn remove() -> Result<()> {
-    xrun::client::services::stop_daemon().await?;
+    bridge::call("stop_daemon", json!({})).await?;
     if !mac::development()? {
         mac::unregister_agent()?;
     }
-    xrun::client::services::uninstall_daemon().await
+    bridge::call("uninstall_daemon", json!({})).await?;
+    Ok(())
 }
 #[cfg(target_os = "macos")]
 pub fn autostart(enabled: bool) -> Result<()> {
@@ -186,7 +209,7 @@ pub fn status() -> Result<ServiceStatus> {
     bail!("UNSUPPORTED_PLATFORM: desktop App requires macOS or Windows")
 }
 #[cfg(not(any(windows, target_os = "macos")))]
-async fn start_impl(_helper: &std::path::Path) -> Result<()> {
+async fn start_impl(_helper: &Path) -> Result<()> {
     bail!(error::failure(
         "UNSUPPORTED_PLATFORM",
         "desktop App requires macOS or Windows"

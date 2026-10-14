@@ -1,15 +1,16 @@
 [package]
 name = "xrun"
-version = "0.1.0-rc.11"
+version = "0.1.0-rc.12"
 edition = "2024"
 
 [workspace]
-members = ["desktop/src-tauri"]
+members = ["desktop/src-tauri", "desktop/launcher"]
 default-members = ["."]
 resolver = "3"
 
-[features]
-desktop-helper = []
+# Released executables carry no symbol table; panic locations remain.
+[profile.release]
+strip = "symbols"
 
 # Some Rust/LLVM versions misalign stripped proc-macro dylibs on macOS 27.
 [profile.dev.build-override]
@@ -67,7 +68,7 @@ zeroize = { version = "1.9.1", features = ["derive", "serde"] }
 zstd = { version = "0.14.2", default-features = false }
 
 [target."cfg(windows)".dependencies]
-windows-sys = { version = "0.61.2", features = ["Win32_Foundation", "Win32_Security", "Win32_Security_Authorization", "Win32_System_Threading", "Win32_System_JobObjects", "Win32_System_SystemInformation", "Win32_System_Pipes", "Win32_Storage_FileSystem"] }
+windows-sys = { version = "0.61.2", features = ["Win32_Foundation", "Win32_Security", "Win32_Security_Authorization", "Win32_System_Threading", "Win32_System_JobObjects", "Win32_System_SystemInformation", "Win32_System_Pipes", "Win32_System_Console", "Win32_Storage_FileSystem"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 x11-dl = "2.21"

@@ -52,20 +52,23 @@ fn startup_key() -> Result<winreg::RegKey> {
 }
 pub(crate) fn status() -> Result<ServiceStatus> {
     Ok(ServiceStatus {
-        installed: xrun::client::services::daemon_installed()?,
+        installed: bridge::get_blocking("daemon_installed", json!({}))?,
         approval_required: false,
         app_at_login: startup_key()?.get_value::<String, _>("xrun").is_ok(),
         cli_service_installed: false,
         development: false,
     })
 }
-pub(crate) async fn start_impl(helper: &std::path::Path) -> Result<()> {
+pub(crate) async fn start_impl(helper: &Path) -> Result<()> {
     // Register-ScheduledTask -Force updates the old CLI task's executable path.
-    xrun::client::services::install_daemon_with_executable(helper).await
+    let executable = helper.to_string_lossy();
+    bridge::call("install_daemon", json!({ "executable": executable })).await?;
+    Ok(())
 }
 pub(crate) async fn remove() -> Result<()> {
-    xrun::client::services::stop_daemon().await?;
-    xrun::client::services::uninstall_daemon().await
+    bridge::call("stop_daemon", json!({})).await?;
+    bridge::call("uninstall_daemon", json!({})).await?;
+    Ok(())
 }
 pub(crate) fn autostart(enabled: bool) -> Result<()> {
     let key = startup_key()?;

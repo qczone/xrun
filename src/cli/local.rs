@@ -226,6 +226,7 @@ pub(super) async fn run(cli: LocalCli) -> Result<i32> {
             }
         }
         Local::Server => run_relay().await?,
+        Local::AppBridge => crate::bridge::run().await?,
         Local::Daemon { operation } => match operation {
             None => daemon::run().await?,
             Some(DaemonCommand::Install) => {

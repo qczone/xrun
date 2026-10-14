@@ -182,6 +182,9 @@ pub(super) enum Local {
     /// Internal service entry point for the Linux relay
     #[command(hide = true)]
     Server,
+    /// Private backend of the desktop App, exchanging JSON lines on stdin and stdout
+    #[command(name = crate::bridge::COMMAND, hide = true)]
+    AppBridge,
     /// Run the daemon or manage its service and task database
     Daemon {
         #[command(subcommand)]

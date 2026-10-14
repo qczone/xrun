@@ -1,11 +1,33 @@
 //! Authorized remote commands; no shell is executed on the desktop host.
-use super::{app::Desktop, error::CommandError};
+use super::{app::Desktop, bridge, error::CommandError};
+use serde::Deserialize;
+use serde_json::{Value, json};
 use tauri::{Manager, State};
 use tauri_plugin_dialog::DialogExt;
-use xrun::{
-    client::remote::{self, CommandRequest, Output, Receipt},
-    protocol::{Job, ScreenshotFormat, ScreenshotOptions},
-};
+
+/// Requested screenshot encoding; here it only names the file being saved.
+#[derive(Clone, Copy, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(super) enum ScreenshotFormat {
+    Png,
+    Jpeg,
+    Webp,
+}
+impl ScreenshotFormat {
+    fn extension(self) -> &'static str {
+        match self {
+            Self::Png => "png",
+            Self::Jpeg => "jpg",
+            Self::Webp => "webp",
+        }
+    }
+}
+
+async fn remote(method: &str, params: Value) -> Result<Value, CommandError> {
+    bridge::call(method, params)
+        .await
+        .map_err(CommandError::from_error)
+}
 
 #[tauri::command]
 pub(super) async fn choose_screenshot_destination<R: tauri::Runtime>(
@@ -36,55 +58,51 @@ pub(super) async fn remote_screenshot(
     state: State<'_, Desktop>,
     device: String,
     path: String,
-    options: ScreenshotOptions,
-) -> Result<remote::ScreenshotDownload, CommandError> {
+    options: Value,
+) -> Result<Value, CommandError> {
     let _guard = state.action.lock().await;
-    remote::screenshot(&device, std::path::Path::new(&path), options)
-        .await
-        .map_err(CommandError::from_error)
+    let params = json!({"device": device, "path": path, "options": options});
+    remote("remote_screenshot", params).await
 }
 
 #[tauri::command]
 pub(super) async fn remote_submit(
     state: State<'_, Desktop>,
     device: String,
-    command: CommandRequest,
-) -> Result<Job, CommandError> {
+    command: Value,
+) -> Result<Value, CommandError> {
     let _guard = state.action.lock().await;
-    remote::submit(&device, command)
-        .await
-        .map_err(CommandError::from_error)
+    remote(
+        "remote_submit",
+        json!({"device": device, "command": command}),
+    )
+    .await
 }
 
 #[tauri::command]
-pub(super) fn remote_recent(device: String) -> Result<Vec<Receipt>, CommandError> {
-    remote::recent(&device).map_err(CommandError::from_error)
+pub(super) async fn remote_recent(device: String) -> Result<Value, CommandError> {
+    remote("remote_recent", json!({ "device": device })).await
 }
 
 #[tauri::command]
-pub(super) async fn remote_query(device: String, request_id: String) -> Result<Job, CommandError> {
-    remote::query(&device, &request_id)
-        .await
-        .map_err(CommandError::from_error)
+pub(super) async fn remote_query(
+    device: String,
+    request_id: String,
+) -> Result<Value, CommandError> {
+    let params = json!({"device": device, "request_id": request_id});
+    remote("remote_query", params).await
 }
 
+/// The helper bounds each query at 30 seconds and reports CONNECT_TIMEOUT.
 #[tauri::command]
 pub(super) async fn remote_output(
     device: String,
     db_id: String,
     job_id: String,
     after: u64,
-) -> Result<Output, CommandError> {
-    tokio::time::timeout(
-        std::time::Duration::from_secs(30),
-        remote::output(&device, &db_id, &job_id, after),
-    )
-    .await
-    .map_err(|_| CommandError {
-        code: "CONNECT_TIMEOUT".into(),
-        message: "task output query timed out".into(),
-    })?
-    .map_err(CommandError::from_error)
+) -> Result<Value, CommandError> {
+    let params = json!({"device": device, "db_id": db_id, "job_id": job_id, "after": after});
+    remote("remote_output", params).await
 }
 
 #[tauri::command]
@@ -93,11 +111,10 @@ pub(super) async fn remote_cancel(
     device: String,
     db_id: String,
     job_id: String,
-) -> Result<Job, CommandError> {
+) -> Result<Value, CommandError> {
     let _guard = state.action.lock().await;
-    remote::cancel(&device, &db_id, &job_id)
-        .await
-        .map_err(CommandError::from_error)
+    let params = json!({"device": device, "db_id": db_id, "job_id": job_id});
+    remote("remote_cancel", params).await
 }
 
 #[cfg(test)]
@@ -164,22 +181,19 @@ pub(super) async fn choose_transfer_file<R: tauri::Runtime>(
         .transpose()
 }
 #[tauri::command]
-pub(super) fn remote_file_receipts(
-    device: String,
-) -> Result<Vec<xrun::client::files::TransferReceipt>, CommandError> {
-    xrun::client::files::recent(&device).map_err(CommandError::from_error)
+pub(super) async fn remote_file_receipts(device: String) -> Result<Value, CommandError> {
+    remote("remote_file_receipts", json!({ "device": device })).await
 }
 #[tauri::command]
 pub(super) async fn remote_file_upload(
     state: State<'_, Desktop>,
     device: String,
     local: String,
-    options: xrun::client::files::UploadOptions,
-) -> Result<xrun::client::files::FileTransfer, CommandError> {
+    options: Value,
+) -> Result<Value, CommandError> {
     let _guard = state.action.lock().await;
-    xrun::client::files::push(&device, std::path::Path::new(&local), options)
-        .await
-        .map_err(CommandError::from_error)
+    let params = json!({"device": device, "local": local, "options": options});
+    remote("remote_file_upload", params).await
 }
 #[tauri::command]
 pub(super) async fn remote_file_download(
@@ -188,22 +202,20 @@ pub(super) async fn remote_file_download(
     remote: String,
     local: String,
     cwd: Option<String>,
-) -> Result<xrun::client::files::FileTransfer, CommandError> {
+) -> Result<Value, CommandError> {
     let _guard = state.action.lock().await;
-    xrun::client::files::pull(&device, &remote, Some(std::path::Path::new(&local)), cwd)
-        .await
-        .map_err(CommandError::from_error)
+    let params = json!({"device": device, "remote": remote, "local": local, "cwd": cwd});
+    self::remote("remote_file_download", params).await
 }
 #[tauri::command]
 pub(super) async fn remote_file_resume(
     state: State<'_, Desktop>,
     device: String,
     request_id: String,
-) -> Result<xrun::client::files::FileTransfer, CommandError> {
+) -> Result<Value, CommandError> {
     let _guard = state.action.lock().await;
-    xrun::client::files::resume(&device, &request_id)
-        .await
-        .map_err(CommandError::from_error)
+    let params = json!({"device": device, "request_id": request_id});
+    remote("remote_file_resume", params).await
 }
 #[tauri::command]
 pub(super) async fn remote_file_cancel(
@@ -212,7 +224,6 @@ pub(super) async fn remote_file_cancel(
     request_id: String,
 ) -> Result<(), CommandError> {
     let _guard = state.action.lock().await;
-    xrun::client::files::cancel(&device, &request_id)
-        .await
-        .map_err(CommandError::from_error)
+    let params = json!({"device": device, "request_id": request_id});
+    remote("remote_file_cancel", params).await.map(drop)
 }

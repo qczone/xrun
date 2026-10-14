@@ -54,13 +54,15 @@ bun run --cwd desktop build:ui     # 只构建前端
 | Windows | `target/release/bundle/nsis/` 下的当前用户安装 EXE |
 
 - 入口 `desktop/scripts/desktop.ts` 先编译配套的 daemon（helper），再调用 Tauri；App 与 helper 的版本必须一致。设置了 `CARGO_TARGET_DIR` 时，产物和缓存放在该目录。
+- App 不链接核心代码：它以 `xrun _app-bridge` 启动包内 CLI，通过 stdin/stdout 交换单行 JSON（`src/bridge.rs` 与 `desktop/src-tauri/src/bridge.rs`）。bridge 先发送 `{"ready":{"version":…}}`，版本不同时 App 报告 `HELPER_VERSION_MISMATCH`。请求带 `id`、`method`、`params`，响应带 `result` 或带错误码的 `error`；Cloudflare 进度和授权事件带请求的 `id`，先于该请求的响应到达。bridge 用 `{"call":…,"method":"start_service"}` 请 App 登记后台服务。App 关闭 stdin 后 bridge 退出，下一次操作时重新连接。桌面测试通过仅用于开发的依赖 `xrun::testing::bridge` 在进程内运行 bridge。
+- 普通 bridge 请求的响应期限为 60 秒，同步状态回调为 10 秒。授权和文件操作改为每 5 秒探测一次 helper、每次允许等待 10 秒，正常响应的长任务可以继续执行。超时会关闭通道并让待处理请求失败，下次操作再启动 helper，不重放失败的操作。独立写入线程避免管道写满后阻塞超时处理；协议输出不会被子进程继承。
 - `--target` 在同一系统内选择架构，例如在 Apple Silicon 上先执行 `rustup target add x86_64-apple-darwin`，再执行 `bun run --cwd desktop build --target x86_64-apple-darwin`，产物位于 `target/<target>/release/bundle/`。可用的 target 为 `x86_64-apple-darwin`、`aarch64-apple-darwin`、`x86_64-pc-windows-msvc` 和 `aarch64-pc-windows-msvc`。不生成 universal 包，也不支持跨操作系统构建；Windows 交叉编译需要对应架构的 MSVC 工具和 Windows SDK。
 - macOS 本地包默认使用 ad-hoc 签名，可用 `APPLE_SIGNING_IDENTITY` 指定签名身份。正式包在 Package 工作流中用 Developer ID 签名、公证并附加票据后再打包 ZIP。Windows 安装包目前未签名。
 - 开发模式可以在界面中启动和停止 daemon，复用本机身份和配置，日志写入 `~/.xrun/daemon-dev.log`；退出界面后 daemon 继续运行，也不设置登录启动。登录启动需要打包后的 App。
 - `tauri.macos.conf.json` 指定 App，`tauri.windows.conf.json` 指定 NSIS。bundle identifier 为 `sh.xrun`，macOS 后台服务标签为 `sh.xrun.daemon`。
 - `lightweight.rs` 管理 WebView 创建、空闲计时与销毁。主窗口设置 `create: false`，由原生菜单按需创建。释放前等待前端确认空闲，覆盖跨多个 IPC 调用的操作；本机同时检查窗口代次、动作与文件对话框，拒绝重新打开后迟到的确认。设置保存在 `desktop-lightweight.json`，原生菜单栏宿主和 daemon 独立于 WebView。原生 UI 测试覆盖后台冷启动、释放和反复重建。
 
-**终端 CLI。** macOS App 启动时把 `~/.local/bin/xrun` 链接到包内 helper，并在 zsh（`.zprofile`、`.zshrc`，遵循 `ZDOTDIR`）和 Bash 的配置中添加幂等的 PATH 块；`--install-cli` 不打开界面执行同样的配置，供安装脚本调用。开发模式、挂载磁盘和 AppTranslocation 位置不修改终端配置。Linux 安装脚本以同样的方式配置 PATH。Windows 包中 `cli/xrun.exe` 是控制台 CLI，根目录的 `xrun.exe` 是无控制台的 helper；安装器通过 App 的 `--install-cli` 写入 `HKCU\Environment\Path`，并用 `.xrun-cli-path.json` 记录自己添加的项，卸载时只移除该项。配置失败时报告 `CLI_INSTALL_FAILED`，Windows 安装器退出码为 34。
+**终端 CLI。** macOS App 启动时把 `~/.local/bin/xrun` 链接到包内 helper，并在 zsh（`.zprofile`、`.zshrc`，遵循 `ZDOTDIR`）和 Bash 的配置中添加幂等的 PATH 块；`--install-cli` 不打开界面执行同样的配置，供安装脚本调用。开发模式、挂载磁盘和 AppTranslocation 位置不修改终端配置。Linux 安装脚本以同样的方式配置 PATH。Windows 包中 `cli/xrun.exe` 是控制台 CLI，也是唯一一份核心；根目录的 `xrun.exe` 是无控制台的 `desktop/launcher` helper，以相同参数和标准句柄隐藏运行 `cli\xrun.exe`、返回其退出码，并在自身被结束时通过 job object 结束 CLI；安装器通过 App 的 `--install-cli` 写入 `HKCU\Environment\Path`，并用 `.xrun-cli-path.json` 记录自己添加的项，卸载时只移除该项。配置失败时报告 `CLI_INSTALL_FAILED`，Windows 安装器退出码为 34。
 
 **macOS 服务排查。** `/Applications/xrun.app/Contents/MacOS/xrun-desktop --start-service` 复用界面的启动流程并输出状态，不打开窗口；`launchctl print gui/$(id -u)/sh.xrun.daemon` 查看登记和进程状态。SMAppService 的 `enabled` 只说明登记和授权状态，不能证明 launchd 已保存当前 helper 的签名；更新程序后按 Apple 的要求先注销再重新登记。本地 ad-hoc 包的检查不能代替正式公证包的验收。
 

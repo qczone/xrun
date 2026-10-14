@@ -1,9 +1,11 @@
 //! Tray visibility, actions and user-visible service status.
 use super::{
     app::{Desktop, DesktopPage, navigate, record},
+    bridge,
     language::{Language, LanguageState},
     lightweight, platform,
 };
+use serde_json::json;
 use std::sync::Mutex;
 use tauri::{
     Manager,
@@ -130,16 +132,21 @@ pub(super) fn menu_event<R: tauri::Runtime>(
                 };
                 let _ = refresh(&app);
                 let result = match action {
-                    PrimaryAction::Start => match xrun::client::local_status() {
-                        Ok(status) if !status.joined => {
-                            navigate(&app, DesktopPage::Devices);
-                            Ok(())
+                    PrimaryAction::Start => {
+                        match bridge::get::<bridge::LocalStatus>("local_status", json!({})).await {
+                            Ok(status) if !status.joined => {
+                                navigate(&app, DesktopPage::Devices);
+                                Ok(())
+                            }
+                            Ok(_) => platform::start().await,
+                            Err(error) => Err(error),
                         }
-                        Ok(_) => platform::start().await,
-                        Err(error) => Err(error),
-                    },
-                    PrimaryAction::Pause => xrun::client::pause_access(true).await,
-                    PrimaryAction::Resume => xrun::client::pause_access(false).await,
+                    }
+                    PrimaryAction::Pause | PrimaryAction::Resume => {
+                        let paused = action == PrimaryAction::Pause;
+                        let params = json!({ "paused": paused });
+                        bridge::call("pause_access", params).await.map(drop)
+                    }
                     PrimaryAction::Join | PrimaryAction::Inspect => unreachable!(),
                 };
                 let _ = record(&app, result);
@@ -207,7 +214,7 @@ pub(super) fn build<R: tauri::Runtime>(app: &tauri::App<R>) -> tauri::Result<()>
 }
 
 struct TrayStatus {
-    local: xrun::client::LocalStatus,
+    local: bridge::LocalStatus,
     service: platform::ServiceStatus,
 }
 
@@ -215,7 +222,7 @@ fn current_status() -> anyhow::Result<TrayStatus> {
     // The tray needs only local service state. Do not reopen and verify the full
     // signed member roster on every background status tick.
     Ok(TrayStatus {
-        local: xrun::client::local_status()?,
+        local: bridge::get_blocking("local_status", json!({}))?,
         service: platform::status()?,
     })
 }

@@ -1,15 +1,34 @@
 //! Tauri command adaptation and serialized local actions.
 use super::{
     app::{Desktop, DesktopNavigation, Status, ensure_current_service, local_status, record},
+    bridge,
     error::{self, CommandError},
     language::{LanguagePreference, LanguageSettings, LanguageState},
     lightweight::{self, Lightweight},
     platform, tray,
 };
+use serde_json::{Value, json};
 use tauri::{Manager, State};
 use tauri_plugin_clipboard_manager::ClipboardExt;
 use tauri_plugin_dialog::DialogExt;
-use xrun::client::{ExecutionSettings, Invitation, Revocation, Settings};
+
+/// A helper operation whose failure the caller reports without recording it.
+async fn read(method: &str, params: Value) -> Result<Value, CommandError> {
+    bridge::call(method, params)
+        .await
+        .map_err(CommandError::from_error)
+}
+
+/// A change serialized with other local actions; its outcome feeds the status view.
+async fn change<R: tauri::Runtime>(
+    app: &tauri::AppHandle<R>,
+    state: &Desktop,
+    method: &str,
+    params: Value,
+) -> Result<Value, CommandError> {
+    let _guard = state.action.lock().await;
+    record(app, bridge::call(method, params).await)
+}
 
 #[tauri::command]
 fn language_settings(language: State<'_, LanguageState>) -> LanguageSettings {
@@ -29,13 +48,13 @@ fn set_language<R: tauri::Runtime>(
     Ok(settings)
 }
 #[tauri::command]
-fn settings() -> Result<Settings, CommandError> {
-    xrun::client::settings().map_err(CommandError::from_error)
+async fn settings() -> Result<Value, CommandError> {
+    read("settings", json!({})).await
 }
 
 #[tauri::command]
-fn private_interfaces() -> Result<Vec<xrun::lan::Interface>, CommandError> {
-    xrun::lan::interfaces().map_err(CommandError::from_error)
+async fn private_interfaces() -> Result<Value, CommandError> {
+    read("private_interfaces", json!({})).await
 }
 #[tauri::command]
 async fn save_direct_connection<R: tauri::Runtime>(
@@ -43,32 +62,34 @@ async fn save_direct_connection<R: tauri::Runtime>(
     state: State<'_, Desktop>,
     address: Option<std::net::Ipv4Addr>,
 ) -> Result<(), CommandError> {
-    let _guard = state.action.lock().await;
-    record(&app, xrun::client::save_direct_connection(address).await)
+    let params = json!({ "address": address });
+    change(&app, &state, "save_direct_connection", params)
+        .await
+        .map(drop)
 }
 
 #[tauri::command]
 async fn save_traffic_compression<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
     state: State<'_, Desktop>,
-    compression: xrun::protocol::Compression,
+    compression: Value,
 ) -> Result<(), CommandError> {
-    let _guard = state.action.lock().await;
-    record(
-        &app,
-        xrun::client::save_traffic_compression(compression).await,
-    )
+    let params = json!({ "compression": compression });
+    change(&app, &state, "save_traffic_compression", params)
+        .await
+        .map(drop)
 }
 
 #[tauri::command]
 async fn save_settings<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
     state: State<'_, Desktop>,
-    execution: ExecutionSettings,
+    execution: Value,
 ) -> Result<(), CommandError> {
-    let _guard = state.action.lock().await;
-    let result = xrun::client::save_settings(execution);
-    record(&app, result)
+    let params = json!({ "execution": execution });
+    change(&app, &state, "save_settings", params)
+        .await
+        .map(drop)
 }
 
 #[tauri::command]
@@ -77,9 +98,10 @@ async fn save_membership_lease<R: tauri::Runtime>(
     state: State<'_, Desktop>,
     minutes: u16,
 ) -> Result<(), CommandError> {
-    let _guard = state.action.lock().await;
-    let result = xrun::client::save_membership_lease(minutes).await;
-    record(&app, result)
+    let params = json!({ "minutes": minutes });
+    change(&app, &state, "save_membership_lease", params)
+        .await
+        .map(drop)
 }
 
 #[tauri::command]
@@ -136,24 +158,16 @@ fn desktop_navigation(state: State<'_, Desktop>) -> Option<DesktopNavigation> {
 }
 
 #[tauri::command]
-async fn devices<R: tauri::Runtime>(
-    app: tauri::AppHandle<R>,
-) -> Result<xrun::client::Status, CommandError> {
+async fn devices<R: tauri::Runtime>(app: tauri::AppHandle<R>) -> Result<Value, CommandError> {
     ensure_current_service(&app)
         .await
         .map_err(CommandError::from_error)?;
-    xrun::client::device_status()
-        .await
-        .map_err(CommandError::from_error)
+    read("device_status", json!({})).await
 }
 
 #[tauri::command]
-async fn traffic(
-    query: xrun::protocol::TrafficQuery,
-) -> Result<xrun::protocol::TrafficReport, CommandError> {
-    xrun::client::traffic(query)
-        .await
-        .map_err(CommandError::from_error)
+async fn traffic(query: Value) -> Result<Value, CommandError> {
+    read("traffic", json!({ "query": query })).await
 }
 
 #[tauri::command]
@@ -162,14 +176,15 @@ async fn job_output<R: tauri::Runtime>(
     db_id: String,
     job: String,
     after: Option<u64>,
-) -> Result<xrun::client::history::JobOutput, CommandError> {
+) -> Result<Value, CommandError> {
     ensure_current_service(&app)
         .await
         .map_err(CommandError::from_error)?;
-    tauri::async_runtime::spawn_blocking(move || xrun::client::history::output(&db_id, &job, after))
-        .await
-        .map_err(CommandError::from_error)?
-        .map_err(CommandError::from_error)
+    read(
+        "job_output",
+        json!({"db_id": db_id, "job": job, "after": after}),
+    )
+    .await
 }
 
 #[tauri::command]
@@ -177,67 +192,58 @@ async fn activity_job<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
     db_id: String,
     id: String,
-) -> Result<xrun::protocol::Job, CommandError> {
+) -> Result<Value, CommandError> {
     ensure_current_service(&app)
         .await
         .map_err(CommandError::from_error)?;
-    tauri::async_runtime::spawn_blocking(move || xrun::client::history::job(&db_id, &id))
-        .await
-        .map_err(CommandError::from_error)?
-        .map_err(CommandError::from_error)
+    read("activity_job", json!({"db_id": db_id, "id": id})).await
 }
 #[tauri::command]
 async fn activity_history<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
     before: Option<String>,
     filter: String,
-) -> Result<xrun::client::history::ActivityPage, CommandError> {
+) -> Result<Value, CommandError> {
     ensure_current_service(&app)
         .await
         .map_err(CommandError::from_error)?;
-    tauri::async_runtime::spawn_blocking(move || {
-        xrun::client::history::activity(before.as_deref(), &filter)
-    })
+    read(
+        "activity_history",
+        json!({"before": before, "filter": filter}),
+    )
     .await
-    .map_err(CommandError::from_error)?
-    .map_err(CommandError::from_error)
 }
 
 #[tauri::command]
 async fn activity_attachment<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
     id: String,
-) -> Result<xrun::client::history::AttachmentPreview, CommandError> {
+) -> Result<Value, CommandError> {
     ensure_current_service(&app)
         .await
         .map_err(CommandError::from_error)?;
-    tauri::async_runtime::spawn_blocking(move || xrun::client::history::attachment(&id))
-        .await
-        .map_err(CommandError::from_error)?
-        .map_err(CommandError::from_error)
+    read("activity_attachment", json!({ "id": id })).await
 }
 
 #[tauri::command]
 async fn save_activity_attachment<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
     id: String,
-) -> Result<Option<String>, CommandError> {
+) -> Result<Option<Value>, CommandError> {
     let lightweight = app.state::<Lightweight>();
     let _dialog = lightweight.dialog();
     ensure_current_service(&app)
         .await
         .map_err(CommandError::from_error)?;
-    let attachment_id = id.clone();
-    let preview = tauri::async_runtime::spawn_blocking(move || {
-        xrun::client::history::attachment(&attachment_id)
-    })
-    .await
-    .map_err(CommandError::from_error)?
-    .map_err(CommandError::from_error)?;
+    let preview = read("activity_attachment", json!({ "id": id })).await?;
+    let name = preview["attachment"]["name"]
+        .as_str()
+        .unwrap_or_default()
+        .to_owned();
     let (tx, rx) = tokio::sync::oneshot::channel();
     app.dialog()
         .file()
-        .set_file_name(&preview.attachment.metadata.name)
+        .set_file_name(name)
         .save_file(move |path| {
             let _ = tx.send(path);
         });
@@ -245,13 +251,8 @@ async fn save_activity_attachment<R: tauri::Runtime>(
         return Ok(None);
     };
     let destination = path.into_path().map_err(CommandError::from_error)?;
-    tauri::async_runtime::spawn_blocking(move || {
-        xrun::client::history::save_attachment(&id, &destination)
-    })
-    .await
-    .map_err(CommandError::from_error)?
-    .map(|path| Some(path.to_string_lossy().into_owned()))
-    .map_err(CommandError::from_error)
+    let params = json!({"id": id, "destination": destination.to_string_lossy()});
+    read("save_activity_attachment", params).await.map(Some)
 }
 
 #[tauri::command]
@@ -260,12 +261,10 @@ async fn save_attachment_retention<R: tauri::Runtime>(
     state: State<'_, Desktop>,
     days: u16,
 ) -> Result<(), CommandError> {
-    let _guard = state.action.lock().await;
-    let result =
-        tauri::async_runtime::spawn_blocking(move || xrun::client::save_attachment_retention(days))
-            .await
-            .map_err(CommandError::from_error)?;
-    record(&app, result)
+    let params = json!({ "days": days });
+    change(&app, &state, "save_attachment_retention", params)
+        .await
+        .map(drop)
 }
 
 #[tauri::command]
@@ -275,14 +274,10 @@ async fn invite<R: tauri::Runtime>(
     allow: bool,
     replace: Option<String>,
     full_link: Option<bool>,
-) -> Result<Invitation, CommandError> {
-    let _guard = state.action.lock().await;
-    let result = if full_link.unwrap_or(false) {
-        xrun::client::invite_link(allow).await
-    } else {
-        xrun::client::invite_code(allow, replace.as_deref()).await
-    };
-    record(&app, result)
+) -> Result<Value, CommandError> {
+    let full_link = full_link.unwrap_or(false);
+    let params = json!({"allow": allow, "replace": replace, "full_link": full_link});
+    change(&app, &state, "invite", params).await
 }
 
 #[tauri::command]
@@ -291,16 +286,20 @@ async fn cancel_invitation<R: tauri::Runtime>(
     state: State<'_, Desktop>,
     invitation_id: String,
 ) -> Result<(), CommandError> {
-    let _guard = state.action.lock().await;
-    record(&app, xrun::client::cancel_invitation(&invitation_id).await)
+    let params = json!({ "invitation_id": invitation_id });
+    change(&app, &state, "cancel_invitation", params)
+        .await
+        .map(drop)
 }
 #[tauri::command]
-fn copy_invitation_command<R: tauri::Runtime>(
+async fn copy_invitation_command<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
     address: String,
     code: String,
 ) -> Result<(), CommandError> {
-    let link = xrun::client::code_link(&address, &code).map_err(CommandError::from_error)?;
+    let link: String = bridge::get("code_link", json!({"address": address, "code": code}))
+        .await
+        .map_err(CommandError::from_error)?;
     let (address, code) = link
         .trim_start_matches("xrun://")
         .split_once('#')
@@ -315,10 +314,8 @@ async fn revoke<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
     state: State<'_, Desktop>,
     device: String,
-) -> Result<Revocation, CommandError> {
-    let _guard = state.action.lock().await;
-    let result = xrun::client::revoke(&device).await;
-    record(&app, result)
+) -> Result<Value, CommandError> {
+    change(&app, &state, "revoke", json!({ "device": device })).await
 }
 
 #[tauri::command]
@@ -329,7 +326,7 @@ fn copy_invitation<R: tauri::Runtime>(
     let result = (|| {
         anyhow::ensure!(
             link.starts_with("xrun://") && link.len() <= 4096,
-            xrun::error::ErrorCode::InvalidLink.error("expected a member invitation")
+            error::failure("INVALID_LINK", "expected a member invitation")
         );
         app.clipboard().write_text(link)?;
         Ok(())
@@ -347,6 +344,26 @@ fn copy_identifier<R: tauri::Runtime>(
         .map_err(CommandError::from_error)
 }
 
+/// Create or join through a link, then start the service for the new identity.
+async fn register_membership<R: tauri::Runtime>(
+    app: &tauri::AppHandle<R>,
+    state: &Desktop,
+    method: &str,
+    link: &str,
+    name: &str,
+) -> Result<(), CommandError> {
+    let _guard = state.action.lock().await;
+    let result = async {
+        bridge::call(method, json!({"link": link.trim(), "name": name.trim()})).await?;
+        bridge::call("initialize_daemon", json!({}))
+            .await
+            .map_err(service_start_error)?;
+        platform::start().await.map_err(service_start_error)
+    }
+    .await;
+    record(app, result)
+}
+
 #[tauri::command]
 async fn create_network<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
@@ -354,14 +371,7 @@ async fn create_network<R: tauri::Runtime>(
     link: String,
     name: String,
 ) -> Result<(), CommandError> {
-    let _guard = state.action.lock().await;
-    let result = async {
-        xrun::client::create_network(link.trim(), Some(name.trim().to_string())).await?;
-        xrun::client::services::initialize_daemon().map_err(service_start_error)?;
-        platform::start().await.map_err(service_start_error)
-    }
-    .await;
-    record(&app, result)
+    register_membership(&app, &state, "create_network", &link, &name).await
 }
 
 #[tauri::command]
@@ -371,14 +381,7 @@ async fn join<R: tauri::Runtime>(
     link: String,
     name: String,
 ) -> Result<(), CommandError> {
-    let _guard = state.action.lock().await;
-    let result = async {
-        xrun::client::join(link.trim(), Some(name.trim().to_string())).await?;
-        xrun::client::services::initialize_daemon().map_err(service_start_error)?;
-        platform::start().await.map_err(service_start_error)
-    }
-    .await;
-    record(&app, result)
+    register_membership(&app, &state, "join", &link, &name).await
 }
 
 #[tauri::command]
@@ -394,8 +397,9 @@ async fn stop<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
     state: State<'_, Desktop>,
 ) -> Result<(), CommandError> {
-    let _guard = state.action.lock().await;
-    record(&app, xrun::client::services::stop_daemon().await)
+    change(&app, &state, "stop_daemon", json!({}))
+        .await
+        .map(drop)
 }
 #[tauri::command]
 async fn remove_service<R: tauri::Runtime>(
@@ -421,13 +425,10 @@ async fn permission<R: tauri::Runtime>(
     device: String,
     allow: bool,
 ) -> Result<(), CommandError> {
-    let _guard = state.action.lock().await;
-    record(
-        &app,
-        xrun::client::set_permission(&device, allow)
-            .await
-            .map(|_| ()),
-    )
+    let params = json!({"device": device, "allow": allow});
+    change(&app, &state, "set_permission", params)
+        .await
+        .map(drop)
 }
 #[tauri::command]
 async fn all_permissions<R: tauri::Runtime>(
@@ -435,9 +436,10 @@ async fn all_permissions<R: tauri::Runtime>(
     state: State<'_, Desktop>,
     allow: bool,
 ) -> Result<(), CommandError> {
-    let _guard = state.action.lock().await;
-    let result = xrun::client::set_all_permissions(allow).await;
-    record(&app, result)
+    let params = json!({ "allow": allow });
+    change(&app, &state, "set_all_permissions", params)
+        .await
+        .map(drop)
 }
 #[tauri::command]
 async fn pause_access<R: tauri::Runtime>(
@@ -445,9 +447,8 @@ async fn pause_access<R: tauri::Runtime>(
     state: State<'_, Desktop>,
     paused: bool,
 ) -> Result<(), CommandError> {
-    let _guard = state.action.lock().await;
-    let result = xrun::client::pause_access(paused).await;
-    record(&app, result)
+    let params = json!({ "paused": paused });
+    change(&app, &state, "pause_access", params).await.map(drop)
 }
 #[tauri::command]
 fn hide_icon<R: tauri::Runtime>(app: tauri::AppHandle<R>) -> Result<(), CommandError> {

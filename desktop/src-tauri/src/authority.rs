@@ -1,11 +1,13 @@
 //! Local encrypted authority actions, serialized with other desktop changes.
 use super::{
     app::{Desktop, record},
+    bridge,
     error::CommandError,
 };
+use serde_json::{Value, json};
 use tauri::{Manager, State};
 use tauri_plugin_dialog::DialogExt;
-use xrun::client::network::BackupInfo;
+use zeroize::Zeroizing;
 
 #[tauri::command]
 pub(super) async fn choose_authority_archive<R: tauri::Runtime>(
@@ -47,26 +49,11 @@ pub(super) async fn export_authority<R: tauri::Runtime>(
     path: String,
     password: String,
     device: Option<String>,
-) -> Result<BackupInfo, CommandError> {
+) -> Result<Value, CommandError> {
     let _guard = state.action.lock().await;
-    let result = tauri::async_runtime::spawn_blocking(move || {
-        let password = zeroize::Zeroizing::new(password);
-        match device {
-            Some(device) => xrun::client::network::migrate_authority(
-                &device,
-                std::path::Path::new(&path),
-                password.as_bytes(),
-            ),
-            None => xrun::client::network::backup_authority(
-                std::path::Path::new(&path),
-                password.as_bytes(),
-            ),
-        }
-    })
-    .await
-    .map_err(anyhow::Error::from)
-    .and_then(|result| result);
-    record(&app, result)
+    let password = Zeroizing::new(password);
+    let params = json!({"path": path, "password": password.as_str(), "device": device});
+    record(&app, bridge::call("export_authority", params).await)
 }
 #[tauri::command]
 pub(super) async fn restore_authority<R: tauri::Runtime>(
@@ -74,26 +61,19 @@ pub(super) async fn restore_authority<R: tauri::Runtime>(
     state: State<'_, Desktop>,
     path: String,
     password: String,
-) -> Result<BackupInfo, CommandError> {
+) -> Result<Value, CommandError> {
     let _guard = state.action.lock().await;
-    let result = async {
-        let password = zeroize::Zeroizing::new(password);
-        let restored = xrun::client::network::restore_authority(
-            std::path::Path::new(&path),
-            password.as_bytes(),
-        )
-        .await?;
-        xrun::client::services::initialize_daemon()?;
-        Ok::<_, anyhow::Error>(restored)
-    }
-    .await;
-    record(&app, result)
+    let password = Zeroizing::new(password);
+    // The helper also initializes daemon storage for the restored identity.
+    let params = json!({"path": path, "password": password.as_str()});
+    record(&app, bridge::call("restore_authority", params).await)
 }
 #[tauri::command]
 pub(super) async fn retire_authority(state: State<'_, Desktop>) -> Result<(), CommandError> {
     let _guard = state.action.lock().await;
-    xrun::client::network::retire_authority()
+    bridge::call("retire_authority", json!({}))
         .await
+        .map(drop)
         .map_err(CommandError::from_error)
 }
 

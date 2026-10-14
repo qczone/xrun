@@ -28,6 +28,7 @@ pub(crate) async fn run() -> i32 {
     if let Some(first) = first
         && !args[first].starts_with('-')
         && !RESERVED.contains(&args[first].as_str())
+        && args[first] != crate::bridge::COMMAND
     {
         let mut position = first + 1;
         while args.get(position).is_some_and(|a| a == "--json") {

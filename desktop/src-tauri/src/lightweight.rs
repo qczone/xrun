@@ -42,7 +42,7 @@ pub(super) struct Lightweight {
 
 impl Default for Lightweight {
     fn default() -> Self {
-        let preferences = xrun::client::services::data_dir()
+        let preferences = super::platform::data_dir()
             .ok()
             .and_then(|directory| std::fs::read(directory.join("desktop-lightweight.json")).ok())
             .and_then(|bytes| serde_json::from_slice::<Preferences>(&bytes).ok())
@@ -138,7 +138,7 @@ pub(super) fn save_lightweight_settings(
 ) -> Result<Preferences, CommandError> {
     state
         .save(
-            &xrun::client::services::data_dir().map_err(CommandError::from_error)?,
+            &super::platform::data_dir().map_err(CommandError::from_error)?,
             preferences,
         )
         .map_err(CommandError::from_error)?;

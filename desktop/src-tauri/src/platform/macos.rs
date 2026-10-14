@@ -3,7 +3,8 @@ use super::*;
 use objc2_foundation::NSString;
 use objc2_service_management::SMAppService;
 
-pub const LABEL: &str = xrun::client::services::APP_DAEMON_LABEL;
+/// The helper's App daemon label, also naming the bundled LaunchAgent plist.
+pub const LABEL: &str = "sh.xrun.daemon";
 
 // Keep native calls at this boundary so approval and failure handling can be
 // verified without registering a service in the test user's login session.
@@ -103,7 +104,7 @@ pub fn state() -> Result<ServiceStatus> {
             installed: false,
             approval_required: false,
             app_at_login: false,
-            cli_service_installed: xrun::client::services::cli_daemon_installed()?,
+            cli_service_installed: bridge::get_blocking("cli_daemon_installed", json!({}))?,
             development: true,
         });
     }
@@ -115,7 +116,7 @@ pub fn state() -> Result<ServiceStatus> {
     Ok(service_state(
         &*agent,
         &*main,
-        xrun::client::services::cli_daemon_installed().unwrap_or(false),
+        bridge::get_blocking("cli_daemon_installed", json!({})).unwrap_or(false),
     ))
 }
 
@@ -163,7 +164,7 @@ pub async fn start_dev_daemon(helper: &std::path::Path, dir: &std::path::Path) -
         .custom_flags(libc::O_NOFOLLOW)
         .open(&log_path)?;
     log.set_permissions(std::fs::Permissions::from_mode(0o600))?;
-    let previous = xrun::client::services::daemon_state(dir)?.generation;
+    let previous = daemon_state(Some(dir)).await?.generation;
     let mut command = tokio::process::Command::new(helper);
     command
         .arg("daemon")
@@ -190,7 +191,7 @@ pub async fn start_dev_daemon(helper: &std::path::Path, dir: &std::path::Path) -
                     format!("daemon exited ({code}); see {}", log_path.display())
                 ));
             }
-            let state = xrun::client::services::daemon_state(dir)?;
+            let state = daemon_state(Some(dir)).await?;
             if state.running && state.generation.is_some() && state.generation != previous {
                 return Ok(());
             }

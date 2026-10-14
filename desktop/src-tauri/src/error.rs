@@ -1,15 +1,36 @@
 //! Serializable command failures; the UI branches on codes, never on prose.
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::fmt;
 
-#[derive(Clone, Debug, Serialize)]
+/// A coded failure, also carried inside error chains. Its Display matches the
+/// helper's `CODE: message`, so wrapped diagnostics read the same as before.
+#[derive(Clone, Debug, Deserialize, Serialize)]
 pub(crate) struct CommandError {
     pub code: String,
     pub message: String,
 }
 impl CommandError {
+    /// Project an error as the helper does: the first code in the chain, otherwise
+    /// STORAGE_ERROR for IO and EXECUTION_ERROR; the message omits a leading code.
     pub(crate) fn from_error(error: impl Into<anyhow::Error>) -> Self {
-        let (code, message) = xrun::error::wire(&error.into());
+        let error = error.into();
+        let code = error
+            .downcast_ref::<Self>()
+            .or_else(|| error.chain().find_map(|e| e.downcast_ref::<Self>()))
+            .map(|e| e.code.clone())
+            .unwrap_or_else(|| {
+                if error.chain().any(|e| e.is::<std::io::Error>()) {
+                    "STORAGE_ERROR".into()
+                } else {
+                    "EXECUTION_ERROR".into()
+                }
+            });
+        let message = format!("{error:#}");
+        let message = message
+            .strip_prefix(&format!("{code}:"))
+            .map(str::trim_start)
+            .unwrap_or(&message)
+            .to_string();
         Self { code, message }
     }
 }
@@ -21,7 +42,11 @@ impl fmt::Display for CommandError {
 impl std::error::Error for CommandError {}
 
 pub(crate) fn failure(code: &str, message: impl Into<String>) -> anyhow::Error {
-    xrun::error::CodedError::from_wire(code, message).into()
+    CommandError {
+        code: code.into(),
+        message: message.into(),
+    }
+    .into()
 }
 
 #[cfg(test)]
@@ -39,5 +64,15 @@ mod tests {
                 .unwrap()
                 .contains("renamed explanation")
         );
+        // Uncoded failures are classified like the helper's.
+        let io = anyhow::Error::from(std::io::Error::other("disk")).context("saving");
+        assert_eq!(CommandError::from_error(io).code, "STORAGE_ERROR");
+        let other = CommandError::from_error(anyhow::anyhow!("unexpected"));
+        assert_eq!(
+            (other.code.as_str(), other.message.as_str()),
+            ("EXECUTION_ERROR", "unexpected")
+        );
+        let coded = CommandError::from_error(failure("HELPER_NOT_FOUND", "reinstall"));
+        assert_eq!(coded.message, "reinstall");
     }
 }

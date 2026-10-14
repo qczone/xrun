@@ -1,6 +1,7 @@
 //! Native state, feedback and application lifecycle assembly.
-use super::{commands, error::CommandError, lightweight, platform, tray};
+use super::{bridge, commands, error::CommandError, lightweight, platform, tray};
 use serde::{Deserialize, Serialize};
+use serde_json::{Value, json};
 use std::sync::Mutex;
 use tauri::{Emitter, Manager};
 #[derive(Default)]
@@ -8,8 +9,6 @@ pub(super) struct Desktop {
     pub(super) action: tokio::sync::Mutex<()>,
     pub(super) error: Mutex<Option<CommandError>>,
     pub(super) navigation: Mutex<Option<DesktopNavigation>>,
-    pub(super) cloudflare_cancel: Mutex<Option<tokio::sync::oneshot::Sender<()>>>,
-    pub(super) cloudflare_authorization: Mutex<Option<String>>,
     service_prepared: tokio::sync::OnceCell<()>,
 }
 
@@ -64,8 +63,8 @@ pub(super) async fn ensure_current_service<R: tauri::Runtime>(
 
 #[derive(Serialize)]
 pub(super) struct Status {
-    pub(super) local: xrun::client::LocalStatus,
-    pub(super) network: Option<xrun::client::NetworkStatus>,
+    pub(super) local: bridge::LocalStatus,
+    pub(super) network: Option<Value>,
     pub(super) service: platform::ServiceStatus,
     pub(super) allow_from: Vec<String>,
     pub(super) deny_from: Vec<String>,
@@ -73,14 +72,13 @@ pub(super) struct Status {
 }
 
 pub(super) fn local_status<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> anyhow::Result<Status> {
-    let snapshot = xrun::client::local_snapshot()?;
+    let snapshot: bridge::Snapshot = bridge::get_blocking("local_snapshot", json!({}))?;
     let mut local = snapshot.local;
     let service = platform::status()?;
     local.daemon_installed = service.installed || service.cli_service_installed;
-    let error = match snapshot.network_error {
-        Some(xrun::protocol::Data::Error { code, message }) => Some(CommandError { code, message }),
-        _ => app.state::<Desktop>().error.lock().unwrap().clone(),
-    };
+    let error = snapshot
+        .network_error
+        .or_else(|| app.state::<Desktop>().error.lock().unwrap().clone());
     Ok(Status {
         local,
         network: snapshot.network,
@@ -134,8 +132,14 @@ pub(super) fn app_builder<R: tauri::Runtime>(
                     tokio::time::sleep(std::time::Duration::from_secs(2)).await;
                 }
             });
-            if !background && !xrun::client::local_status()?.joined {
-                tray::present(app.handle());
+            // Without a readable status (for example a missing helper), show the error.
+            // Recording only failures keeps errors recorded earlier in setup.
+            match bridge::get_blocking::<bridge::LocalStatus>("local_status", json!({})) {
+                Ok(status) if background || status.joined => {}
+                Ok(_) => tray::present(app.handle()),
+                Err(error) => {
+                    let _ = record::<(), _>(app.handle(), Err(error));
+                }
             }
             Ok(())
         })
@@ -179,6 +183,7 @@ fn handle_event<R: tauri::Runtime>(app: &tauri::AppHandle<R>, event: &tauri::Run
         } if label == "main" => {
             lightweight::destroyed(app);
         }
+        tauri::RunEvent::Exit => bridge::shutdown(),
         _ => {}
     }
     #[cfg(target_os = "macos")]
@@ -195,7 +200,7 @@ pub(crate) mod tests {
     };
     use super::*;
     use anyhow::Result;
-    use serde_json::Value;
+    use serde_json::{Value, json};
     use std::{
         process::Command,
         time::{Duration, Instant},
@@ -430,16 +435,14 @@ pub(crate) mod tests {
                                 let window = handle.get_webview_window("main").unwrap();
                                 assert!(!window.is_visible().unwrap());
                                 if returning {
-                                    super::super::super::connection::progress(
+                                    super::super::super::connection::deployment_event(
                                         &handle,
-                                        Some("owned-native-return".into()),
-                                        "cloudflare_accounts",
-                                    )
-                                    .report(
-                                        xrun::client::relay::DeploymentStage::AuthorizationReceived,
-                                        xrun::client::relay::ProgressStatus::Completed,
-                                        0,
-                                        Default::default(),
+                                        "deployment_progress",
+                                        json!({
+                                            "operation_id": "owned-native-return",
+                                            "stage": "authorization_received",
+                                            "status": "completed",
+                                        }),
                                     );
                                 } else {
                                     select(&handle, "service");

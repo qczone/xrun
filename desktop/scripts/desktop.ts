@@ -95,28 +95,27 @@ function main() {
       process.platform,
       process.env.CARGO_BUILD_TARGET,
     );
-  const extension = process.platform === "win32" ? ".exe" : "";
-  const build = [
+  const windows = process.platform === "win32";
+  run("cargo", [
     "build",
     "--locked",
     "-p",
     "xrun",
+    ...(windows ? ["-p", "xrun-launcher"] : []),
     ...targetArgs,
     ...(debug ? [] : ["--release"]),
-  ];
-  run("cargo", build);
+  ]);
   const binaries = resolve(desktop, "src-tauri/binaries");
   mkdirSync(binaries, { recursive: true });
-  if (process.platform === "win32") {
+  if (windows) {
+    // The core ships once, as the console CLI; the helper starts it without a console.
     const cli = resolve(binaries, "cli");
     mkdirSync(cli, { recursive: true });
     copyFileSync(resolve(profileDir, "xrun.exe"), resolve(cli, "xrun.exe"));
-    // The terminal CLI waits and prints normally; the daemon helper has no console.
-    run("cargo", [...build, "--features", "desktop-helper"]);
   }
   copyFileSync(
-    resolve(profileDir, `xrun${extension}`),
-    resolve(binaries, `xrun-${target}${extension}`),
+    resolve(profileDir, windows ? "xrun-launcher.exe" : "xrun"),
+    resolve(binaries, `xrun-${target}${windows ? ".exe" : ""}`),
   );
   if (mode === "build" && !cliArgs.includes("--no-bundle")) {
     // Cargo caches can restore installers from earlier versions alongside a new build.

@@ -25,7 +25,7 @@ pub(crate) struct LanguageState {
 
 impl Default for LanguageState {
     fn default() -> Self {
-        let preference = xrun::client::services::data_dir()
+        let preference = super::platform::data_dir()
             .ok()
             .and_then(|directory| std::fs::read(directory.join("desktop-language.json")).ok())
             .and_then(|bytes| serde_json::from_slice(&bytes).ok())
@@ -54,7 +54,7 @@ impl LanguageState {
     }
 
     pub(crate) fn save(&self, preference: LanguagePreference) -> Result<LanguageSettings> {
-        self.save_to(&xrun::client::services::data_dir()?, preference)
+        self.save_to(&super::platform::data_dir()?, preference)
     }
 
     fn save_to(

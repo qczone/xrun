@@ -25,6 +25,28 @@ pub mod crypto {
         renew_device_request,
     };
 }
+/// Serve the desktop App's bridge in this process, for App tests without a helper binary.
+pub mod bridge {
+    use std::io::{BufReader, PipeReader, PipeWriter};
+    /// Start a bridge on its own runtime thread and return the App's ends of the
+    /// channel. Dropping the writer closes the bridge, as the App's exit does.
+    pub fn spawn() -> std::io::Result<(PipeWriter, BufReader<PipeReader>)> {
+        let (input, requests) = std::io::pipe()?;
+        let (responses, output) = std::io::pipe()?;
+        let runtime = tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(2)
+            .enable_all()
+            .build()?;
+        std::thread::spawn(move || {
+            if let Err(error) =
+                runtime.block_on(crate::bridge::serve(BufReader::new(input), output))
+            {
+                eprintln!("desktop bridge fixture failed: {error:#}");
+            }
+        });
+        Ok((requests, BufReader::new(responses)))
+    }
+}
 /// Launch real daemon fixtures or hold their instance lock while injecting failures.
 pub mod daemon {
     pub use crate::daemon::{instance_lock, run};
