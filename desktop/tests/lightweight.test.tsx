@@ -99,11 +99,15 @@ test("unsaved execution and retention settings defer release until both are save
   });
   await requestRelease();
   expect(calls.some((call) => call.command === "release_window")).toBe(false);
-  fireEvent.submit(document.getElementById("execution-form")!);
+  await act(async () => {
+    fireEvent.submit(document.getElementById("execution-form")!);
+  });
   await screen.findByText("执行环境已保存");
   await requestRelease();
   expect(calls.some((call) => call.command === "release_window")).toBe(false);
-  fireEvent.submit(document.getElementById("retention-form")!);
+  await act(async () => {
+    fireEvent.submit(document.getElementById("retention-form")!);
+  });
   await screen.findByText("附件保留时间已保存");
   await requestRelease(2);
   expect(calls.filter((call) => call.command === "release_window")).toEqual([
