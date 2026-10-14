@@ -244,11 +244,13 @@ impl TestRelay {
                 if self.task.as_ref().is_some_and(|task| task.is_finished()) {
                     match self.task.take().unwrap().await? {
                         Err(error)
-                            if error
-                                .downcast_ref::<std::io::Error>()
-                                .is_some_and(|e| e.kind() == std::io::ErrorKind::AddrInUse) =>
+                            if xrun::error::is(&error, xrun::error::ErrorCode::ServerRunning)
+                                || error
+                                    .downcast_ref::<std::io::Error>()
+                                    .is_some_and(|e| e.kind() == std::io::ErrorKind::AddrInUse) =>
                         {
-                            // Restarted listeners can race sockets still releasing the port.
+                            // Restarts can briefly retain their port or instance lock.
+                            tokio::time::sleep(Duration::from_millis(20)).await;
                             self.task =
                                 Some(tokio::spawn(xrun::testing::relay::run(self.config.clone())));
                         }

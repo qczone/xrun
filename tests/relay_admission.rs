@@ -3,6 +3,32 @@ use anyhow::{Context, Result};
 use common::*;
 use xrun::testing::{crypto, net, protocol::RelayMessage};
 
+#[cfg(target_os = "macos")]
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn relay_restart_waits_for_a_transient_instance_lock() -> Result<()> {
+    let root = tempfile::tempdir()?;
+    let (mut relay, _) = TestRelay::new(&root.path().join("relay")).await?;
+    relay.stop().await?;
+    let lock = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(relay.config.data_dir.join("server.lock"))?;
+    lock.try_lock()?;
+    {
+        let starting = relay.start();
+        tokio::pin!(starting);
+        assert!(
+            tokio::time::timeout(std::time::Duration::from_millis(100), &mut starting)
+                .await
+                .is_err()
+        );
+        drop(lock);
+        starting.await?;
+    }
+    relay.stop().await?;
+    Ok(())
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn first_manager_claim_survives_restart_and_other_devices_need_an_invitation() -> Result<()> {
     let root = tempfile::tempdir()?;
